@@ -49,3 +49,9 @@ Replace fixed mapping tables with the rule engine (§7.5), as lifecycle state ma
 
 Since Plane deletions fire no webhook, implement a periodic background sweep over the `sync_links` table (§1.3) where frequency is a config value. The job must re-fetch each linked Plane issue, mark 404 responses as orphaned, and never treat this deletion as a state transition or deletion webhook. Also ensure this task prunes `applied_ops` entries on their TTL.
 
+### A8 Implement test suites and verification
+**Files:** tests/echo-loop.test.ts, tests/grammar.test.ts, tests/rule-engine.test.ts, tests/smoke.test.ts
+**Depends:** A4, A5, A6, A7
+**Acceptance:** The offline test suite passes completely without errors, and a live smoke test definition is provided separately.
+
+Construct the exhaustive test suite (§10). Write fixture-driven reducer tests for parsing events and evaluating rules. Build the critical echo-loop test to ensure our deduplication mechanics operate flawlessly. Test the commit grammar parsing, idempotency checks, and the critical security test to ensure a commit with a forged `--author` must not act as that user. Include a distinct live smoke test definition.
