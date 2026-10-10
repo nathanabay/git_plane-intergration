@@ -56,3 +56,10 @@
 2026-10-10T20:21:48.333Z dispatch w5 started leaf-1.5.1 as term_72639bf7-a272-46c8-af5b-38eb679a418d
 2026-10-10T20:21:48.426Z dispatch w5 sealed
 2026-10-10T20:26:55Z evidence: plane-webhook-probe.md — label activity carries UUIDs (B6 defect), field-granular echo confirmed
+2026-10-10T20:39:25.148Z dispatch w5 returned leaf-1.5.1
+2026-10-10T20:49:08.808Z dispatch w5b opened: leaf-1.5.1
+2026-10-10T20:49:31.840Z dispatch w5b started leaf-1.5.1 as term_72639bf7-a272-46c8-af5b-38eb679a418d
+2026-10-10T20:49:32.044Z dispatch w5b sealed
+2026-10-10T20:50:20Z live smoke vs test Plane: all write semantics confirmed; defect: identifier endpoint returns 403 for unknown projects, resolveReferences only handles 404
+2026-10-10T20:52:40.599Z dispatch w5b returned leaf-1.5.1
+2026-10-10T20:58:03Z node-1.5 VERIFIED (phase 5: A8 + wiring); all 17 tasks implemented

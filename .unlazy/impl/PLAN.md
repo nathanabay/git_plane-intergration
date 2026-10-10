@@ -88,7 +88,7 @@ Review-loop and commit-pass leaves are added as contract revisions once their ro
 | 1.3.2 | src/ui/**, tests/ui/**, Dockerfile, .dockerignore, docs/impl/agent-gates/leaf-1.3.2.GATES.md | 1.2.1, 1.1.2 | judgment | 3 | VERIFIED |
 | 1.4.1 | defined at wave 4 | 1.3.1 | judgment | 4 | VERIFIED |
 | 1.4.2 | defined at wave 4 | 1.3.1, 1.3.2 | judgment | 4 | VERIFIED |
-| 1.5.1 | src/index.ts, src/app/**, src/sync/github.ts, src/db/**, src/config/**, deploy/git-sync.env.example, tests/a8/**, tests/smoke/**, tests/deploy/**, docs/impl/agent-gates/leaf-1.5.1.GATES.md | 1.4.1, 1.4.2 | judgment | 5 | IN-FLIGHT |
+| 1.5.1 | src/index.ts, src/app/**, src/sync/github.ts, src/db/**, src/config/**, deploy/git-sync.env.example, tests/a8/**, tests/smoke/**, tests/deploy/**, docs/impl/agent-gates/leaf-1.5.1.GATES.md | 1.4.1, 1.4.2 | judgment | 5 | VERIFIED |
 
 Tier maps to a real control: implementers run `agy --model gemini-3.1-pro-high`.
 

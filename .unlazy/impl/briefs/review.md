@@ -37,6 +37,11 @@ any file other than your two outputs.
   Is that compatible with §5 "processed exactly once" and §7.2?
 - B6 mirroring: duplicate-create race and assignee removal (wave 5 was asked to fix both — verify).
 - B2: the web iframe renders while workspace permissions are still loading.
+- A5 `resolveReferences`: on the real Plane, an unknown project key returns **403** (not 404) from the
+  identifier endpoint — see the evidence file's smoke-test section. Confirm the consequence and
+  file it.
+- A8 / B6 labels: the echo-loop test tolerates one extra label write, resting on a belief that Plane
+  label webhooks carry names; the evidence file shows UUIDs. Decide what the correct behaviour is.
 - Smart Commit `#time`: Plane CE has no worklog API, so time is logged as a comment. Acceptable per §7.2?
 
 ## Output — `docs/impl/review-N.md`, in this exact shape (the checker is strict)

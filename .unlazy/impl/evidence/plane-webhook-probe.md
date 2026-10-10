@@ -23,3 +23,25 @@ Findings:
 5. Plane's webhook URL validation rejects hostnames without a dot (`http://sink:8000` → 400
    "Enter a valid URL"). A docker-network target needs a dotted alias, and
    `WEBHOOK_ALLOWED_HOSTS` must name it. Not relevant to production (public HTTPS URL, spec §3).
+
+## Live smoke test run (tests/smoke/live-smoke.test.ts) against the same instance
+
+Through A4's real `PlaneWritePath` with a personal API token, all of these behaved as the spec
+says: create (and the `created` op recorded), update of state + name in one PATCH, comment, link,
+duplicate link URL → `{ ok: true, duplicate: true }` (§3), `update_link` in place, label upsert via
+409 (§3), and the triage-group write rejected before sending (§7.1).
+
+The test's final assertion failed, exposing a real defect:
+
+| `GET /api/v1/workspaces/gitsync-test/issues/<KEY>/` | status | body |
+|---|---|---|
+| `QLL-1` (exists) | 200 | the issue |
+| `QLL-999999` (project exists, sequence does not) | 404 | `{"error": "The requested resource does not exist."}` |
+| `ZZZZ-1` (no such project, or not a member) | **403** | `{"detail": "You do not have permission to perform this action."}` |
+
+`src/parse/references.ts` `resolveReferences` treats only 404 as unknown (line ~122), so a 403
+propagates: any PR or commit mentioning a key that is not a Plane project the service account can
+see (e.g. `Fixes JIRA-12`, or a project it is not a member of) makes the reducer throw, the
+delivery fail and BullMQ retry it. Required: treat 403 from the identifier endpoint as
+unknown/inaccessible, audit it, and keep the smoke test's expectation in line (403 for an
+unknown project).
