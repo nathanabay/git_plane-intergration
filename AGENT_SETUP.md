@@ -107,6 +107,35 @@ Every agent brief must carry these, because each was violated at least once duri
 4. **Never edit `.gitignore`.** `.unlazy/` is tracked so continuing sessions can read it, but never commit `.unlazy/locks/` — leases are per-machine runtime state.
 5. **Commits come after the Claude review**, not during authoring.
 
+## Portability note for new scopes
+
+`.unlazy/implplan/` is published as a **record** of how the plan was produced: PLAN.md with the
+contract inventory at revision 4, the six leaf ledgers with their evidence, every agent brief, the
+append-only `status.log`, and `dispatch.json` covering all eight waves. A fresh clone can read it
+with:
+
+```bash
+node "$HOME"/.claude/skills/unlazy/scripts/gate-check.mjs --status --scope implplan
+# -> ALL MET (34 met) [scope implplan]
+```
+
+`--status` only parses; it executes nothing, so it works on any machine.
+
+**Do not `--reverify` the `implplan` scope on another host.** Seven of its gates embed the
+authoring machine's absolute skill path (`/Users/nathanamare/.claude/skills/unlazy/...`) in their
+`CHECK:` lines, so they would fail on a path lookup rather than on substance. The scope is closed;
+re-running it proves nothing.
+
+**When you open a new scope for implementation, write portable `CHECK:` lines from the start.**
+`CHECK:` runs through `/bin/sh`, so `$HOME` expands:
+
+```
+  CHECK: node "$HOME"/.claude/skills/unlazy/scripts/gate-lint.mjs .unlazy/<scope>/gates/leaf-1.1.1.md
+```
+
+Keep every project oracle repo-relative (`node scripts/verify-*.mjs`) — those already run
+unchanged anywhere, which the clean-clone test confirms.
+
 ## Review cadence
 
 Claude reviews **after both Gemini agents finish**, then again **after their fix-and-commit pass**.
