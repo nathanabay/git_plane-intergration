@@ -2,7 +2,7 @@
 // Verifies the reviewer produced a real, decidable review rather than praise.
 import { readFileSync, existsSync } from "node:fs";
 
-const F = "docs/plan/review-notes.md";
+const F = process.argv[2] || "docs/plan/review-notes.md";
 const fail = (m) => { console.error("FAIL: " + m); process.exit(1); };
 if (!existsSync(F)) fail(`missing review: ${F}`);
 const t = readFileSync(F, "utf8");
