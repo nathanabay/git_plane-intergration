@@ -142,6 +142,85 @@ host. If the cloud session has no SSH access, write A1's artifacts (compose frag
 stanza, env additions) as files in this repo for a human to apply, rather than stubbing the task
 as done.
 
+## Session history (how this got here)
+
+Condensed record of the session that produced these artifacts, kept because the reasoning behind
+several decisions is not recoverable from the files alone.
+
+### 1. Request and scoping
+
+Opened as "create a git integration for Plane". Classified **architectural** (new project, no
+existing flow to modify), so it went through full brainstorming rather than straight to code.
+Clarified to: **two-way sync**, **GitHub**, **self-hosted Plane**, and — after being shown the
+options — **full Linear parity** rather than a smaller first cut.
+
+### 2. Research
+
+- **Plane Pro's GitHub integration is Commercial-only.** `silo` is a closed-source container; it
+  does not exist in the OSS repo. That is the gap this project fills. Flagged once that a Plane
+  Commercial license buys ~80% of this, maintained by someone else; the decision was to own it.
+- **Linear** supplied the ergonomics model: three-tier magic words, branch-aware regex rules,
+  multi-issue PRs. Chosen over Plane Pro's `[WEB-344]` bracket gating.
+- **Jira** supplied Smart Commits grammar and the development panel, plus the security caveat that
+  commit authorship is forgeable.
+- **Trello** contributed Butler's generic trigger→action rule engine, which replaced a fixed
+  state-mapping table. Its GitHub Power-Up itself is display-only and was not a model.
+- **Twilio was evaluated and rejected** — no first-party GitHub issue integration exists, only
+  Zapier-style glue. Recorded so nobody researches it again.
+
+### 3. Live instance inspection
+
+Read directly from `convpss` over SSH rather than assumed: v1.4.2 CE images with no `silo`, the
+host-Caddy/`gateway` network topology, the pre-existing `docker-compose.override.yaml` seam,
+watchtower's label-gating, `API_KEY_RATE_LIMIT`, the empty webhook allowlists, and the six state
+groups with their real per-project names. These are §1.1 and §7.1 of the spec.
+
+### 4. Research agents
+
+Two Gemini 3.1 Pro agents (Orca worktrees `research-plane-api`, `research-github-platform`)
+produced `docs/research/*.md`. Their findings changed the design materially:
+
+- REST API writes **do** fire webhooks (confirmed independently in the deployed container).
+- Plane emits **one webhook per changed field**, which made echo detection field-granular and exact.
+- **Deletions fire no webhook at all** — the reconciliation sweep exists because of this.
+- Duplicate link URL → 400 (no dedupe tracking needed); duplicate label → 409 with the existing id
+  (free upsert); member emails are exposed (user mapping is viable); a PAT carries its owner's full
+  permissions (hence the least-privileged service account).
+- Autolinks need repository `Administration: Write`, so they ship off by default.
+
+### 5. Plan production under unlazy
+
+Run as scope `implplan`: 6 leaves, 1 integration branch, 34 gates, **8 dispatch waves**, ending
+all-met with zero abandonments. Three user amendments arrived mid-flight and were reconciled as
+contract revisions 2–4: every agent must run unlazy; commits come one-per-task after the review;
+Claude must re-review the resulting changes.
+
+Getting two plan parts to verified took **three waves, not one** — authoring, then a defect round,
+then a regression round after one agent deleted its spec citations while its own ledger stayed green.
+
+### 6. Defects that survived a passing gate
+
+The useful part of the record. Each was caught by reading an artifact, never by a gate result:
+
+| Defect | Found by |
+|---|---|
+| Coverage oracle collapsed every `§7.x` into `§7`, leaving the whole feature set unchecked | driver, re-deriving the required set |
+| Commit oracle matched subjects, so **seven empty commits** certified as work | second Claude review, via `git log --numstat` |
+| Placeholder scan rejected "Todo" — a real Plane state name | second Claude review |
+| A4's acceptance **inverted** the echo-dedupe, discarding legitimate human edits | first Claude review |
+| Plane's `X-Plane-Signature` verified by no task, leaving a public unauthenticated ingress | first Claude review |
+| B3 declared `Depends: none` while reading tables another task owned | driver, refuting a "CLOSED" verdict |
+| Spec §8's four-file fork surface is actually six | driver, refuting a "sound" finding against `makeplane/plane` |
+
+Both driver refutation attempts succeeded and changed the outcome. That is why `AGENT_SETUP.md`
+requires the driver to attempt a refutation rather than only confirm.
+
+### 7. Process faults worth not repeating
+
+An agent emptied `.gitignore` and force-added `.unlazy/`; another staged four driver-owned scripts
+into its commit; the driver once sealed a wave containing a leaf whose claim had been refused.
+All three are now explicit rules in `AGENT_SETUP.md`.
+
 ## Git
 
 Remote `origin` → `github.com/nathanabay/git_plane-intergration`.
