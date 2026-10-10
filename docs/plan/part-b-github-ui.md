@@ -21,10 +21,10 @@ Following §8, we fork the Plane `apps/web` frontend, maintaining the six-file f
 
 ### B3 Embedded React configuration app
 **Files:** src/ui/app.tsx, src/ui/api.ts
-**Depends:** none
+**Depends:** A3
 **Acceptance:** The config API rejects unauthenticated writes or users lacking admin/owner roles.
 
-Following §8, all real UI is one React app in this repo with two entry routes (instance-admin and workspace-settings) and a config API. The config API validates the Plane session server-side on every request and re-checks workspace role (admin/owner) on every write. It provides surfaces for repo to project mappings, state mappings and rule sets, sync direction, conflict policies, per-repo Smart Commits toggle, and per-user account linking. It also exposes the interfaces for §7.6 operational features like dry-run, audit log with replay, and backfill UI.
+Following §8, all real UI is one React app in this repo with two entry routes (instance-admin and workspace-settings) and a config API. The config API validates the Plane session server-side on every request and re-checks workspace role (admin/owner) on every write. Its persistence is the A3 configuration tables. It provides surfaces for repo to project mappings, state mappings and rule sets, sync direction, conflict policies, per-repo Smart Commits toggle, and per-user account linking. It also exposes the interfaces for §7.6 operational features like dry-run, audit log with replay, and backfill UI.
 
 ### B4 Smart Commits parser and execution
 **Files:** src/github/smart-commits.ts
