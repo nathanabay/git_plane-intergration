@@ -65,7 +65,9 @@ Facts read from the live host that drive the design:
 ## Verification
 
 The plan was built under an `unlazy` pipeline (scope `implplan`, 34 gates, all met, none abandoned).
-`.unlazy/` is intentionally **untracked** — it is local pipeline state, not source.
+`.unlazy/` is tracked so a continuing session can read `PLAN.md`, the gate ledgers, the agent
+briefs, `status.log` and `dispatch.json`. Only `.unlazy/locks/` is excluded: leases record the
+authoring machine's pid, and a stale lease would refuse a legitimate `--claim` on another host.
 
 Oracles that still run against the artifacts:
 
@@ -111,7 +113,7 @@ Read `docs/plan/IMPLEMENTATION_PLAN.md`, then start at **A1**.
 | Missing | Consequence | What to do |
 |---|---|---|
 | Repo is **private** | Clone fails without auth | Provide a token or add the cloud identity as a collaborator |
-| `.unlazy/` | No gate ledgers, no dispatch history, no leases | Expected. It is local pipeline state. Start a fresh scope if you want gates again. |
+| `.unlazy/locks/` | No leases | Deliberate. Leases hold a pid from the authoring machine; a cloud session must claim its own. The rest of `.unlazy/` **is** tracked and readable. |
 | The `unlazy` skill | Lives at `~/.claude/skills/unlazy`, not in this repo | Optional. `scripts/verify-*.mjs` run standalone and are the real oracles. |
 | SSH access to `convpss` | Cannot reach the live Plane instance | Only matters for A1 (deployment) and A8's live smoke test. Everything else is offline work. |
 
