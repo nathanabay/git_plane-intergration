@@ -19,3 +19,10 @@ Following §8, we fork the Plane `apps/admin` frontend to embed our sync UI. We 
 
 Following §8, we fork the Plane `apps/web` frontend, maintaining the six-file fork limit across both apps. This uses three files to embed the route. It validates the viewer via Plane's API and checks workspace role (admin/owner) before rendering or accepting mapping writes.
 
+### B3 Embedded React configuration app
+**Files:** src/ui/app.tsx, src/ui/api.ts
+**Depends:** none
+**Acceptance:** Serves the config UI via two entry routes for admin and workspace settings.
+
+Following §8, all real UI is one React app in this repo with two entry routes (instance-admin and workspace-settings) and a config API. It provides surfaces for repo to project mappings, state mappings and rule sets, sync direction, conflict policies, per-repo Smart Commits toggle, and per-user account linking. It also exposes the interfaces for section 7.6 operational features like dry-run, audit log with replay, and backfill UI.
+
