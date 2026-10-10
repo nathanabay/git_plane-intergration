@@ -14,3 +14,10 @@ Implement the core deployment structure as defined in the spec (§3). Configure 
 
 Construct the TypeScript service foundation (§4). Integrate `@octokit/webhooks` for GitHub signature validation and explicitly implement HMAC-SHA256 verification of `X-Plane-Signature` for Plane webhooks. Implement `@octokit/app` for installation-token minting and refresh. Establish four separate BullMQ queues on the existing Valkey instance: `inbound:github`, `inbound:plane`, `outbound:plane`, and `outbound:github`. Ensure the HTTP request handler strictly validates signatures, enqueues the payload, and immediately responds with a 200 OK.
 
+### A3 Implement database schemas for echo prevention
+**Files:** src/db/schema.ts, src/db/migrations/001-init.sql
+**Depends:** A1
+**Acceptance:** The PostgreSQL migrations apply cleanly, establishing the mapping, ledger, audit, and config tables.
+
+Design the tables required for echo-loop prevention and mapping (§5, §8). Create the `sync_links` table with `tier` and `created_by` columns to track identity. Create the `applied_ops` table to track a field-granular `op_hash` (whole-object hashing must not be used, as Plane emits webhooks per changed field). Define separate tables for delivery IDs and processed commit SHAs (§5), an orphaned status column (§1.3), the audit log (inbound deliveries, rule matches, outbound calls and results with replay) (§7.6), and the configuration tables (repo↔project mappings, state mappings, rule sets, conflict policy, per-repo toggles, and user map §9).
+
