@@ -40,3 +40,10 @@ Implements the Jira grammar for Smart Commits, supporting `#comment`, `#time`, a
 
 Formats branch names and compiles lifecycle mappings and branch-regex rules into A6 engine rules. Following section 7.1, it maps lifecycle points to states (like In Progress, Done). It relies on A4's single write path to enforce the prohibition against writing into the `triage` group. Plane writes are issued exclusively through A4's client, never directly.
 
+### B6 Two-way issue mirroring logic
+**Files:** src/sync/mirror.ts
+**Depends:** A4, A3
+**Acceptance:** Replicates fields according to conflict policies and sync directions.
+
+Handles the label-gated mechanism for mirroring issues between systems, creating a cross-link confirmation comment. Following section 7.3, it synchronises the field list including title, description, state, assignees, labels, and comments. Enforces the sync direction and resolves collisions using conflict policies (shipping defaults: `source_of_truth:github` for title/description, `last_write_wins` for state and assignees). Plane writes are issued exclusively through A4's client, never directly.
+
