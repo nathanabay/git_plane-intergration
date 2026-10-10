@@ -395,7 +395,7 @@ markdown links ending in "Preview" are surfaced as named shortcuts on the work i
 Plane's schema** — we do not own it. The achievable version is a reserved title prefix
 (`[CI] Build #42`, `[Deploy] production`) that our UI renders with an icon, degrading to readable
 plain text in Plane's native UI. Anything richer requires a Plane fork, which §8 deliberately
-limits to four files.
+limits to six files.
 
 **Autolinks are optional and off by default.** Turning `WEB-344` into a clickable link in GitHub
 uses `POST /repos/{owner}/{repo}/autolinks`, which requires repository **`Administration: Write`**
@@ -459,7 +459,13 @@ Split across the two Plane frontends, per the approved decision:
 - Audit log, dry-run, backfill
 
 **Mechanism:** each fork adds a nav entry and a route component that renders an `<iframe>`
-pointing at our proxied UI. **Four files of fork surface total.** All real UI is one React app
+pointing at our proxied UI. Both frontends use an *explicit* React Router route config
+(`app/routes.ts` imports `index`/`layout`/`route` from `@react-router/dev/routes`), so each app
+also needs its `routes.ts` edited: **three files per app, six files of fork surface total**
+(nav entry, route component, route registration). At v1.4.2 the workspace-settings nav entries
+are defined in `packages/constants/src/settings/workspace.ts` and the admin nav in
+`apps/admin/app/(all)/(dashboard)/sidebar-menu.tsx`; the exact files are recorded with the fork
+patches. All real UI is one React app
 in this repo with two entry routes, shipping on our schedule rather than Plane's release cycle.
 
 Chosen because Plane has **no plugin or extension system** — no route seam, no hook API — so
@@ -529,7 +535,7 @@ the queue for ordering, retries and GitHub's own secondary rate limits; honour
 
 | Risk | Mitigation |
 |---|---|
-| Fork maintenance across Plane releases | 4 files, iframe-only; pin `APP_RELEASE`; rebuild fork images on upgrade. `apps/web` moves faster than `apps/admin` — expect the nav array to be the recurring conflict. |
+| Fork maintenance across Plane releases | 6 files, iframe-only; pin `APP_RELEASE`; rebuild fork images on upgrade. `apps/web` moves faster than `apps/admin` — expect the nav array to be the recurring conflict. |
 | AGPL-3.0 obligations | Internal use of a fork is fine; publishing source becomes required if offered to third parties. |
 | No upstream plugin seam | Accepted and designed around; revisit if Plane ever ships an extension API. |
 | Plane Commercial may later make this redundant | A license buys ~80% of this, maintained by someone else. Flagged to the user; decision made to own it. The rule engine, dry-run, audit replay and deployment data are not in the Commercial product. |
