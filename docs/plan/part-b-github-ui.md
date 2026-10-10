@@ -47,3 +47,10 @@ Formats branch names and compiles lifecycle mappings and branch-regex rules into
 
 Handles the label-gated mechanism for mirroring issues between systems, creating a cross-link confirmation comment. Following section 7.3, it synchronises the field list including title, description, state, assignees, labels, and comments. Enforces the sync direction and resolves collisions using conflict policies (shipping defaults: `source_of_truth:github` for title/description, `last_write_wins` for state and assignees). Plane writes are issued exclusively through A4's client, never directly.
 
+### B7 Development information rollup
+**Files:** src/sync/dev-info.ts
+**Depends:** A4, A3
+**Acceptance:** Rolls up branch, commit, check, and deployment data as links.
+
+Surfaces branches, commits, PRs, check and deployment rollups. Since duplicate link URLs are rejected, rollups must be updated in place via `/links/{pk}/`, retaining link ids and reconciling with A4. Following section 7.4, previews are detected by provider (Vercel, Netlify, Cloudflare Pages, AWS Amplify) and markdown links ending in "Preview". Title prefix is only for categorised links. Autolinks remain off by default because they need the `Administration: Write` permission. Plane writes are issued exclusively through A4's client, never directly.
+
