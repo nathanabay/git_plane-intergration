@@ -33,3 +33,10 @@ Following §8, all real UI is one React app in this repo with two entry routes (
 
 Implements the Jira grammar for Smart Commits, supporting `#comment`, `#time`, and `#<transition>`. Following section 7.2, it applies the per-repo toggle. Resolves `#<transition>` scoped by `(project, group)` with name as fallback (section 7.1), with a loud-failure rule for a nonexistent target state. A config option requires `verification.verified == true` before honouring commands. For attribution, it strictly trusts `sender`, never `pusher` or the commit author, gracefully falling back to the service account (and recording it in the audit log) when `sender` is `ghost`, a bot, or unmapped. All Plane writes are issued through A4's client, never directly.
 
+### B5 PR and branch automation rules
+**Files:** src/github/pr-automation.ts
+**Depends:** A6, A4
+**Acceptance:** Compiles PR lifecycle events into A6 rules cleanly.
+
+Formats branch names and compiles lifecycle mappings and branch-regex rules into A6 engine rules. Following section 7.1, it maps lifecycle points to states (like In Progress, Done). It relies on A4's single write path to enforce the prohibition against writing into the `triage` group. Plane writes are issued exclusively through A4's client, never directly.
+
