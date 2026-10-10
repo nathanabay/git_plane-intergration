@@ -35,3 +35,10 @@ Build the queue consumers and outbound API callers (§4). Before writing to Plan
 
 Implement the text extraction logic for linking and reference parsing (§6). Scan branch names, PR titles, pull request bodies, and commit messages. Construct the three-tier magic word lists (closing, non-closing, and relation) and process opt-out phrases. Properly handle multi-issue strings, and implement `{IDENTIFIER}-NEW` create-issue-from-PR support. Enforce the rule that all linked PRs must merge before an item advances. Resolve identifiers against the Plane API endpoint.
 
+### A6 Build the rule engine
+**Files:** src/rules/engine.ts, src/rules/types.ts
+**Depends:** none
+**Acceptance:** The engine evaluates a predefined fixture set of mock webhook payloads against yaml rules and returns correct actions.
+
+Replace fixed mapping tables with the rule engine (§7.5), as lifecycle state mappings explicitly compile into these rules (§7.1). Parse triggers and evaluate conditions matching branch regexes, labels, author, target projects, and repo. Output discrete actions like `set_state`, `add_label`, `remove_label`, `assign`, `comment`, `add_link`, `log_time`, and `create_issue`. Apply first-match-wins ordering. Provide a no-write evaluation mode required for dry-run capabilities.
+
