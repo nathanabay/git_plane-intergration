@@ -180,6 +180,36 @@
       },
       "sealedAt": "2026-10-10T19:04:41.670Z",
       "completedAt": "2026-10-10T19:14:48.768Z"
+    },
+    "w4a": {
+      "leaves": [
+        "leaf-1.4.1"
+      ],
+      "state": "sealed",
+      "openedAt": "2026-10-10T19:39:26.385Z",
+      "started": {
+        "leaf-1.4.1": {
+          "handle": "term_72639bf7-a272-46c8-af5b-38eb679a418d",
+          "at": "2026-10-10T19:39:28.652Z"
+        }
+      },
+      "returned": {},
+      "sealedAt": "2026-10-10T19:39:28.739Z"
+    },
+    "w4b": {
+      "leaves": [
+        "leaf-1.4.2"
+      ],
+      "state": "sealed",
+      "openedAt": "2026-10-10T19:41:53.056Z",
+      "started": {
+        "leaf-1.4.2": {
+          "handle": "term_ff389eb9-4e47-492b-a8bc-cd38a9e343d8",
+          "at": "2026-10-10T19:41:55.286Z"
+        }
+      },
+      "returned": {},
+      "sealedAt": "2026-10-10T19:41:55.376Z"
     }
   }
 }
