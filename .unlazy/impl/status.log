@@ -52,3 +52,7 @@
 2026-10-10T19:46:03.159Z dispatch w4a returned leaf-1.4.1
 2026-10-10T20:04:20.989Z dispatch w4b returned leaf-1.4.2
 2026-10-10T20:21:11Z node-1.4 VERIFIED (phase 4: A5, A7, B4-B8)
+2026-10-10T20:21:24.920Z dispatch w5 opened: leaf-1.5.1
+2026-10-10T20:21:48.333Z dispatch w5 started leaf-1.5.1 as term_72639bf7-a272-46c8-af5b-38eb679a418d
+2026-10-10T20:21:48.426Z dispatch w5 sealed
+2026-10-10T20:26:55Z evidence: plane-webhook-probe.md — label activity carries UUIDs (B6 defect), field-granular echo confirmed
