@@ -84,8 +84,8 @@ Review-loop and commit-pass leaves are added as contract revisions once their ro
 | 1.1.1 | docker-compose.override.yaml, Dockerfile, .dockerignore, deploy/**, src/index.ts, src/rules/**, tests/deploy/**, tests/rules/**, docs/impl/agent-gates/leaf-1.1.1.GATES.md | - | judgment | 1 | VERIFIED |
 | 1.1.2 | apps/admin/**, apps/web/**, packages/constants/**, src/auth/**, tests/auth/**, docs/impl/agent-gates/leaf-1.1.2.GATES.md | - | judgment | 1 | VERIFIED |
 | 1.2.1 | src/index.ts, deploy/**, src/api/**, src/queue/**, src/db/**, src/config/**, tests/api/**, tests/queue/**, tests/db/**, tests/deploy/**, docs/impl/agent-gates/leaf-1.2.1.GATES.md | 1.1.1 | judgment | 2 | VERIFIED |
-| 1.3.1 | src/sync/**, src/queue/**, src/db/**, src/index.ts, src/config/**, tests/sync/**, tests/queue/**, tests/db/**, tests/deploy/**, deploy/**, docs/impl/agent-gates/leaf-1.3.1.GATES.md | 1.2.1 | judgment | 3 | IN-FLIGHT |
-| 1.3.2 | src/ui/**, tests/ui/**, Dockerfile, .dockerignore, docs/impl/agent-gates/leaf-1.3.2.GATES.md | 1.2.1, 1.1.2 | judgment | 3 | IN-FLIGHT |
+| 1.3.1 | src/sync/**, src/queue/**, src/db/**, src/index.ts, src/config/**, tests/sync/**, tests/queue/**, tests/db/**, tests/deploy/**, deploy/**, docs/impl/agent-gates/leaf-1.3.1.GATES.md | 1.2.1 | judgment | 3 | VERIFIED |
+| 1.3.2 | src/ui/**, tests/ui/**, Dockerfile, .dockerignore, docs/impl/agent-gates/leaf-1.3.2.GATES.md | 1.2.1, 1.1.2 | judgment | 3 | VERIFIED |
 | 1.4.1 | defined at wave 4 | 1.3.1 | judgment | 4 | WAITING |
 | 1.4.2 | defined at wave 4 | 1.3.1, 1.3.2 | judgment | 4 | WAITING |
 | 1.5.1 | defined at wave 5 | 1.4.1, 1.4.2 | judgment | 5 | WAITING |

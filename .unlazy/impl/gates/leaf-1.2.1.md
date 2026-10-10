@@ -27,17 +27,17 @@ Scope: A2 (spec §4, §3) signature-verified ingress that only enqueues, four Bu
 - [x] G4: the leaf's own tests run with at least 30 passing tests and none skipped
   CHECK: node scripts/run-tests.mjs 30 tests/api tests/queue tests/db tests/deploy
   EXPECT: tests passed
-  EVIDENCE: automatic-evidence=v1; definition-sha256=5c7ab58685a3c360a00d645d03680d0429f02b91a97eb637550f3eeb434c27fc; exit=0; EXPECT=matched; output-sha256=d57716c1052235f2919ea8390888dd1beaa0c4594d54d48d62a17cce9e364ca8; output-bytes=35; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/seal; path=ae06f499d48e/29 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=5c7ab58685a3c360a00d645d03680d0429f02b91a97eb637550f3eeb434c27fc; exit=0; EXPECT=matched; output-sha256=fc1d5d010ad29548d4c8152778d12c96e9cfbf27ea3788536322ba119651ff85; output-bytes=35; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/seal; path=ae06f499d48e/29 entries
 
 - [x] G5: the leaf's TypeScript typechecks under the shared strict tsconfig
   CHECK: node scripts/typecheck.mjs "src/index.ts" "src/api/**/*.ts" "src/queue/**/*.ts" "src/db/**/*.ts" "src/config/**/*.ts" "tests/api/**/*.ts" "tests/queue/**/*.ts" "tests/db/**/*.ts" "tests/deploy/**/*.ts"
   EXPECT: typecheck passed
-  EVIDENCE: automatic-evidence=v1; definition-sha256=b741b10ce41fc5a53c9b713a71135634f1f2d6b2da1c3eda5978de7c713ef07b; exit=0; EXPECT=matched; output-sha256=992d35aa2fcad9a559ff3f4fb25c5ce712778765de8dcca2e0b5843f49ed2f75; output-bytes=36; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/seal; path=ae06f499d48e/29 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=b741b10ce41fc5a53c9b713a71135634f1f2d6b2da1c3eda5978de7c713ef07b; exit=0; EXPECT=matched; output-sha256=2da2881604c89cd86abf191f4eb670c3207997d01cd74acbbf6e09d38005be79; output-bytes=36; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/seal; path=ae06f499d48e/29 entries
 
 - [x] G6: no placeholder or stub markers in the leaf's files
   CHECK: node scripts/verify-no-stubs.mjs src/index.ts src/api src/queue src/db src/config tests/api tests/queue tests/db
   EXPECT: stub scan passed
-  EVIDENCE: automatic-evidence=v1; definition-sha256=fb9810c56f7a524cd318b93ce3639a0649ca39fb12d50de0fec7cb313bdb331a; exit=0; EXPECT=matched; output-sha256=049d2466430f61ee93477c1ddbcf4c9d7403a22a5f4fd27af3d4f64262dfa70f; output-bytes=28; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/seal; path=ae06f499d48e/29 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=fb9810c56f7a524cd318b93ce3639a0649ca39fb12d50de0fec7cb313bdb331a; exit=0; EXPECT=matched; output-sha256=ed646c1ca51cab0c8b3e3071b877eba63534b5617dc51b862a05635a6021a4e9; output-bytes=28; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/seal; path=ae06f499d48e/29 entries
 
 - [x] G7: the agent ran unlazy and left a fully met, checker-evidenced ledger
   CHECK: node scripts/verify-agent-unlazy.mjs docs/impl/agent-gates/leaf-1.2.1.GATES.md
