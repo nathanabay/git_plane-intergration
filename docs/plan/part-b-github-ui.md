@@ -54,3 +54,10 @@ Handles the label-gated mechanism for mirroring issues between systems, creating
 
 Surfaces branches, commits, PRs, check and deployment rollups. Since duplicate link URLs are rejected, rollups must be updated in place via `/links/{pk}/`, retaining link ids and reconciling with A4. Following section 7.4, previews are detected by provider (Vercel, Netlify, Cloudflare Pages, AWS Amplify) and markdown links ending in "Preview". Title prefix is only for categorised links. Autolinks remain off by default because they need the `Administration: Write` permission. Plane writes are issued exclusively through A4's client, never directly.
 
+### B8 Operational features implementation
+**Files:** src/operations/tooling.ts
+**Depends:** A6, A3, A2, A4
+**Acceptance:** Allows manual replay of webhook events and supports dry-run.
+
+Implements dry-run/simulate (using A6's no-write mode) to test rules safely. Following section 7.6, it provides an audit log (using A3's audit table) with manual replay for deliveries (via A2/A4 ingress and outbound workers) and a backfill on connect to scan existing data.
+
