@@ -92,6 +92,54 @@ These checkers were each tightened after they certified something false. Keep th
 
 A passing gate is evidence about the oracle, not proof about the artifact. Read the artifact.
 
+## Continuing in a cloud session
+
+### Bootstrap
+
+```bash
+git clone https://github.com/nathanabay/git_plane-intergration.git
+cd git_plane-intergration
+git checkout master          # NOT main
+node --version               # any Node 18+; the verifiers need nothing else
+node scripts/verify-plan-coverage.mjs   # should print: plan coverage verification passed
+```
+
+Read `docs/plan/IMPLEMENTATION_PLAN.md`, then start at **A1**.
+
+### What the cloud session does NOT inherit
+
+| Missing | Consequence | What to do |
+|---|---|---|
+| Repo is **private** | Clone fails without auth | Provide a token or add the cloud identity as a collaborator |
+| `.unlazy/` | No gate ledgers, no dispatch history, no leases | Expected. It is local pipeline state. Start a fresh scope if you want gates again. |
+| The `unlazy` skill | Lives at `~/.claude/skills/unlazy`, not in this repo | Optional. `scripts/verify-*.mjs` run standalone and are the real oracles. |
+| SSH access to `convpss` | Cannot reach the live Plane instance | Only matters for A1 (deployment) and A8's live smoke test. Everything else is offline work. |
+
+### Historical files that will NOT re-run
+
+`docs/plan/agent-gates/*.GATES.md` are the six agent ledgers, kept as **evidence of what was
+verified and when**. They embed absolute paths from the authoring machine
+(`/Users/nathanamare/...`) in both their `CHECK:` lines and their recorded `cwd=`/`path=`
+evidence. Do not try to re-run them; they are a record, not a live harness. The live oracles are
+`scripts/verify-*.mjs`, which take repo-relative paths.
+
+### Suggested opening prompt
+
+> Read `HANDOFF.md` and `docs/plan/IMPLEMENTATION_PLAN.md`. We are implementing a Plane to GitHub
+> sync service for a self-hosted Plane v1.4.2 Community Edition instance. Begin at task A1 and
+> work the phases in dependency order. The spec at
+> `docs/superpowers/specs/2026-10-10-plane-github-sync-design.md` is the source of truth; the
+> plan implements it and does not redesign it. Before writing code, read the four pitfalls in
+> HANDOFF.md -- the field-granular echo ledger, dropping echoes on ingress not egress,
+> `sender`-only attribution, and Plane firing no webhook on delete.
+
+### First real decision
+
+A1 creates the `git-sync` container in `/root/plane/docker-compose.override.yaml` on the live
+host. If the cloud session has no SSH access, write A1's artifacts (compose fragment, Caddy route
+stanza, env additions) as files in this repo for a human to apply, rather than stubbing the task
+as done.
+
 ## Git
 
 Remote `origin` → `github.com/nathanabay/git_plane-intergration`.
