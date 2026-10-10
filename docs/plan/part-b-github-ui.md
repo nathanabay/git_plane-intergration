@@ -12,3 +12,10 @@ Following §8, we fork the Plane `apps/admin` frontend to embed our sync UI. We 
 *   Organization permission: Members Read-only.
 *(Note: Adding a permission later forces re-consent on every existing installation.)*
 
+### B2 Plane UI fork for workspace settings
+**Files:** apps/web/app/(all)/(dashboard)/components/nav.tsx, apps/web/app/(all)/(dashboard)/routes/git-sync-iframe.tsx, apps/web/app/routes.ts
+**Depends:** none
+**Acceptance:** Workspace settings navigation includes a working iframe route.
+
+Following §8, we fork the Plane `apps/web` frontend, maintaining the six-file fork limit across both apps. This uses three files to embed the route. It validates the viewer via Plane's API and checks workspace role (admin/owner) before rendering or accepting mapping writes.
+
