@@ -27,7 +27,7 @@ Scope: A1 (spec §3) deployable container, compose fragment, Caddy route, env an
 - [x] G4: the leaf's TypeScript typechecks under the shared strict tsconfig
   CHECK: node scripts/typecheck.mjs "src/index.ts" "src/rules/**/*.ts" "tests/rules/**/*.ts" "tests/deploy/**/*.ts"
   EXPECT: typecheck passed
-  EVIDENCE: automatic-evidence=v1; definition-sha256=0f5ed0fc8296c50041d17c08ed1990f2c5d7e5cf81aee5984c6f264a5dfe3ed9; exit=0; EXPECT=matched; output-sha256=f06e7b01c3038cb5a6b11c6293d20cc4921efa136806fbdb8f4824b9b7c22fca; output-bytes=36; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/seal; path=ae06f499d48e/29 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=0f5ed0fc8296c50041d17c08ed1990f2c5d7e5cf81aee5984c6f264a5dfe3ed9; exit=0; EXPECT=matched; output-sha256=7eddab47704bd2de800816c24d0f05d9c4b5fc9e17de31f676426f9701b42a37; output-bytes=36; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/seal; path=ae06f499d48e/29 entries
 
 - [x] G5: no placeholder or stub markers in the leaf's files
   CHECK: node scripts/verify-no-stubs.mjs src/index.ts src/rules deploy Dockerfile docker-compose.override.yaml tests/rules tests/deploy

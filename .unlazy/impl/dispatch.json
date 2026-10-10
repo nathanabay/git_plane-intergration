@@ -185,7 +185,7 @@
       "leaves": [
         "leaf-1.4.1"
       ],
-      "state": "sealed",
+      "state": "complete",
       "openedAt": "2026-10-10T19:39:26.385Z",
       "started": {
         "leaf-1.4.1": {
@@ -193,14 +193,19 @@
           "at": "2026-10-10T19:39:28.652Z"
         }
       },
-      "returned": {},
-      "sealedAt": "2026-10-10T19:39:28.739Z"
+      "returned": {
+        "leaf-1.4.1": {
+          "at": "2026-10-10T19:46:03.153Z"
+        }
+      },
+      "sealedAt": "2026-10-10T19:39:28.739Z",
+      "completedAt": "2026-10-10T19:46:03.153Z"
     },
     "w4b": {
       "leaves": [
         "leaf-1.4.2"
       ],
-      "state": "sealed",
+      "state": "complete",
       "openedAt": "2026-10-10T19:41:53.056Z",
       "started": {
         "leaf-1.4.2": {
@@ -208,8 +213,13 @@
           "at": "2026-10-10T19:41:55.286Z"
         }
       },
-      "returned": {},
-      "sealedAt": "2026-10-10T19:41:55.376Z"
+      "returned": {
+        "leaf-1.4.2": {
+          "at": "2026-10-10T20:04:20.984Z"
+        }
+      },
+      "sealedAt": "2026-10-10T19:41:55.376Z",
+      "completedAt": "2026-10-10T20:04:20.984Z"
     }
   }
 }

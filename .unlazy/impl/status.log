@@ -48,3 +48,7 @@
 2026-10-10T19:41:53.078Z dispatch w4b opened: leaf-1.4.2
 2026-10-10T19:41:55.293Z dispatch w4b started leaf-1.4.2 as term_ff389eb9-4e47-492b-a8bc-cd38a9e343d8
 2026-10-10T19:41:55.380Z dispatch w4b sealed
+2026-10-10T19:42:27Z w4b dispatched before its claim succeeded (driver error: chained command did not stop on CLAIM REFUSED); conflict was glob-conservative (tests/sync/mirror* vs reconcile*); resolved by separate test dirs; both leases re-claimed
+2026-10-10T19:46:03.159Z dispatch w4a returned leaf-1.4.1
+2026-10-10T20:04:20.989Z dispatch w4b returned leaf-1.4.2
+2026-10-10T20:21:11Z node-1.4 VERIFIED (phase 4: A5, A7, B4-B8)

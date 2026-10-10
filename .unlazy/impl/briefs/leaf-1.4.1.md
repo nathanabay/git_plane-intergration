@@ -4,7 +4,7 @@ Read `.unlazy/impl/briefs/COMMON.md` first. Your ledger: `docs/impl/agent-gates/
 
 ## OWNS
 
-    src/parse/**, src/sync/reconcile.ts, src/queue/**, src/db/**, tests/parse/**, tests/sync/reconcile*.test.ts,
+    src/parse/**, src/sync/reconcile.ts, src/queue/**, src/db/**, tests/parse/**, tests/reconcile/**,
     tests/queue/**, tests/db/**, docs/impl/agent-gates/leaf-1.4.1.GATES.md
 
 Implementer B works concurrently on `src/github/**`, `src/sync/mirror.ts`, `src/sync/dev-info.ts`,
@@ -24,7 +24,7 @@ Implementer B works concurrently on `src/github/**`, `src/sync/mirror.ts`, `src/
       EVIDENCE: pending
 
     - [ ] G3: own tests run, at least 40 passing, none skipped
-      CHECK: node scripts/run-tests.mjs 40 tests/parse tests/queue tests/db
+      CHECK: node scripts/run-tests.mjs 40 tests/parse tests/reconcile tests/queue tests/db
       EXPECT: tests passed
       EVIDENCE: pending
 

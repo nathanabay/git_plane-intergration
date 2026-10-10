@@ -5,7 +5,7 @@ Read `.unlazy/impl/briefs/COMMON.md` first. Your ledger: `docs/impl/agent-gates/
 ## OWNS
 
     src/github/**, src/sync/mirror.ts, src/sync/dev-info.ts, src/operations/**, src/ui/**,
-    tests/github/**, tests/sync/mirror*.test.ts, tests/sync/dev-info*.test.ts, tests/operations/**,
+    tests/github/**, tests/mirror/**, tests/dev-info/**, tests/operations/**,
     tests/ui/**, docs/impl/agent-gates/leaf-1.4.2.GATES.md
 
 Implementer A works concurrently on `src/parse/**` (A5: `parseReferences`, `allLinkedPrsMerged`,
@@ -32,7 +32,7 @@ directly for writes. That keeps the echo ledger authoritative and the triage ban
       EVIDENCE: pending
 
     - [ ] G3: own tests run, at least 60 passing, none skipped
-      CHECK: node scripts/run-tests.mjs 60 tests/github tests/operations tests/ui
+      CHECK: node scripts/run-tests.mjs 60 tests/github tests/mirror tests/dev-info tests/operations tests/ui
       EXPECT: tests passed
       EVIDENCE: pending
 
