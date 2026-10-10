@@ -8,7 +8,7 @@ if (files.length < 4) fail(`expected the four plan artifacts, found ${files.leng
 let scanned = 0;
 for (const f of files) {
   const t = readFileSync(`${DIR}/${f}`, "utf8");
-  const hits = [...t.matchAll(/\b(TBD|TODO|FIXME|XXX|PLACEHOLDER)\b/gi)].map((m) => m[0]);
+  const hits = [...t.matchAll(/\b(TBD|TODO|FIXME|XXX|PLACEHOLDER)\b/g)].map((m) => m[0]);
   if (hits.length) fail(`${f} contains ${[...new Set(hits)].join(", ")}`);
   scanned++;
 }

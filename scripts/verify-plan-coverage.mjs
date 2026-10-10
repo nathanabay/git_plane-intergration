@@ -16,7 +16,7 @@ const parts = PARTS.map((f) => readFileSync(f, "utf8"));
 const final = readFileSync(FINAL, "utf8");
 
 // Derive the implementable spec sections from the spec's own headings.
-const all = [...spec.matchAll(/^#{2,3}\s+(\d+(?:\.\d+)?)\./gm)].map((m) => m[1]);
+const all = [...spec.matchAll(/^#{2,3}\s+(\d+(?:\.\d+)?)\.?\s/gm)].map((m) => m[1]);
 if (all.length < 10) fail(`spec heading parse looks wrong (${all.length} headings)`);
 const CONTEXT = new Set(["1", "1.1", "1.2", "1.3", "2", "11"]); // context/research/risks, not buildable
 const required = [...new Set(all)].filter((h) => !CONTEXT.has(h) && !/^7$/.test(h));

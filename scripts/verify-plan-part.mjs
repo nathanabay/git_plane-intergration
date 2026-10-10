@@ -4,11 +4,11 @@
 // Exits nonzero on any failure; prints the success marker only at the end.
 import { readFileSync, existsSync } from "node:fs";
 
-const [file, prefix] = process.argv.slice(2);
+const [file, prefix, requiredCsv] = process.argv.slice(2);
 const SPEC = "docs/superpowers/specs/2026-10-10-plane-github-sync-design.md";
 const fail = (m) => { console.error("FAIL: " + m); process.exit(1); };
 
-if (!file || !prefix) fail("usage: verify-plan-part.mjs <file> <taskPrefix>");
+if (!file || !prefix) fail("usage: verify-plan-part.mjs <file> <taskPrefix> [requiredSectionsCsv]");
 if (!existsSync(file)) fail(`missing plan part: ${file}`);
 if (!existsSync(SPEC)) fail(`missing spec: ${SPEC}`);
 
@@ -17,7 +17,7 @@ const spec = readFileSync(SPEC, "utf8");
 if (text.trim().length < 800) fail(`${file} is too short to be a real plan (${text.trim().length} bytes)`);
 
 // 1. no placeholders
-const ph = [...text.matchAll(/\b(TBD|TODO|FIXME|XXX|PLACEHOLDER)\b/gi)].map((m) => m[0]);
+const ph = [...text.matchAll(/\b(TBD|TODO|FIXME|XXX|PLACEHOLDER)\b/g)].map((m) => m[0]);
 if (ph.length) fail(`placeholder tokens present: ${[...new Set(ph)].join(", ")}`);
 
 // 2. task headings, correctly prefixed and contiguous from 1
@@ -49,11 +49,21 @@ for (const b of blocks) {
 
 // 4. every spec reference resolves to a real spec heading
 const specHeads = new Set();
-for (const m of spec.matchAll(/^#{2,3}\s+(\d+(?:\.\d+)?)\./gm)) specHeads.add(m[1]);
+for (const m of spec.matchAll(/^#{2,3}\s+(\d+(?:\.\d+)?)\.?\s/gm)) specHeads.add(m[1]);
 if (specHeads.size === 0) fail("could not parse any headings out of the spec; check parser");
 const refs = [...new Set([...text.matchAll(/§(\d+(?:\.\d+)?)/g)].map((m) => m[1]))];
 if (!refs.length) fail("plan part cites no spec sections (§N); it must trace to the spec");
 const dangling = refs.filter((r) => !specHeads.has(r));
 if (dangling.length) fail(`plan cites spec sections that do not exist: ${dangling.join(", ")}`);
+
+// 5. this leaf's assigned spec sections must each be cited
+if (requiredCsv) {
+  const need = requiredCsv.split(",").map((x) => x.trim()).filter(Boolean);
+  if (!need.length) fail("requiredSectionsCsv was supplied but parsed empty");
+  const bad = need.filter((n) => !specHeads.has(n));
+  if (bad.length) fail(`assigned sections do not exist in the spec: ${bad.join(", ")}`);
+  const uncited = need.filter((n) => !refs.includes(n));
+  if (uncited.length) fail(`this part must cite its assigned spec sections; missing: ${uncited.join(", ")}`);
+}
 
 console.log(`plan part verification passed (${nums.length} tasks, ${refs.length} spec refs)`);

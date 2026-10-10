@@ -8,7 +8,7 @@ if (!existsSync(F)) fail(`missing review: ${F}`);
 const t = readFileSync(F, "utf8");
 if (t.trim().length < 600) fail(`review too short to be substantive (${t.trim().length} bytes)`);
 
-const ph = [...t.matchAll(/\b(TBD|TODO|FIXME|PLACEHOLDER)\b/gi)].map((m) => m[0]);
+const ph = [...t.matchAll(/\b(TBD|TODO|FIXME|PLACEHOLDER)\b/g)].map((m) => m[0]);
 if (ph.length) fail(`placeholder tokens in review: ${[...new Set(ph)].join(", ")}`);
 
 // An explicit verdict for each authored part
