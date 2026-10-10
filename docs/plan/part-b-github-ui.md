@@ -61,3 +61,10 @@ Surfaces branches, commits, PRs, check and deployment rollups. Since duplicate l
 
 Implements dry-run/simulate (using A6's no-write mode) to test rules safely. Following section 7.6, it provides an audit log (using A3's audit table) with manual replay for deliveries (via A2/A4 ingress and outbound workers) and a backfill on connect to scan existing data.
 
+### B9 Attribution, identity mapping and rate limits
+**Files:** src/auth/identity.ts
+**Depends:** none
+**Acceptance:** Authenticates user credentials and resolves exact email matches.
+
+Manages credentials securely. Following §9, the service PAT uses a least-privileged account, while per-user PATs are full-privilege. It implements email-based user mapping requiring exactly one match. Concrete PAT obligations: encrypt at rest, never log, and provide a UI revocation path that invalidates the stored token. Rate-limit backoff belongs to A4's outbound workers.
+
