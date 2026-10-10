@@ -1,0 +1,55 @@
+contract amendment: revision 2 - all agents must run unlazy with their own ledger; host is Orca IDE
+leaf-1.1.1, leaf-1.1.2 leases released for OWNS amendment
+2026-10-10T16:02:05.712Z dispatch ready-1 opened: leaf-1.1.1, leaf-1.1.2
+2026-10-10T16:02:06.659Z dispatch ready-1 started leaf-1.1.1 as term_195fc91e-f51e-4486-a27b-aa5ef191ae74
+2026-10-10T16:02:07.429Z dispatch ready-1 started leaf-1.1.2 as term_95bf7542-1f80-4671-9868-23502b7bea90
+2026-10-10T16:02:07.478Z dispatch ready-1 sealed
+wave ready-1 sealed: leaf-1.1.1 and leaf-1.1.2 dispatched to Orca agy gemini-3.1-pro-high sessions
+contract amendment: revision 3 - post-review commit pass added as leaf-1.1.4/leaf-1.1.5, wave 3
+2026-10-10T16:09:51.057Z dispatch ready-1 returned leaf-1.1.1
+2026-10-10T16:09:51.102Z dispatch ready-1 returned leaf-1.1.2
+driver manual review: leaf-1.1.1:G2 and leaf-1.1.2:G2 UNMET - field-granular op_hash absent, GitHub App permission set not enumerated, deletion reconciliation sweep missing, 7.x citations imprecise; fix round dispatched
+2026-10-10T16:11:55.399Z dispatch ready-1b opened: leaf-1.1.1, leaf-1.1.2
+2026-10-10T16:11:56.503Z dispatch ready-1b started leaf-1.1.1 as term_195fc91e-f51e-4486-a27b-aa5ef191ae74
+2026-10-10T16:11:57.479Z dispatch ready-1b started leaf-1.1.2 as term_95bf7542-1f80-4671-9868-23502b7bea90
+2026-10-10T16:11:57.543Z dispatch ready-1b sealed
+2026-10-10T16:15:57.054Z dispatch ready-1b returned leaf-1.1.1
+2026-10-10T16:15:57.132Z dispatch ready-1b returned leaf-1.1.2
+oracle strengthened: verify-plan-part now enforces each leaf's assigned spec sections; leaf-1.1.2 regressed by deleting 7.x citations
+leaf-1.1.1 VERIFIED (reverified + manual G2 reviewed); lease released
+2026-10-10T16:17:38.364Z dispatch ready-1c opened: leaf-1.1.2
+2026-10-10T16:17:39.560Z dispatch ready-1c started leaf-1.1.2 as term_95bf7542-1f80-4671-9868-23502b7bea90
+2026-10-10T16:17:39.607Z dispatch ready-1c sealed
+2026-10-10T16:19:18.554Z dispatch ready-1c returned leaf-1.1.2
+leaf-1.1.2 VERIFIED after ready-1c; lease released; leaf-1.1.3 promoted to READY
+2026-10-10T16:19:41.929Z dispatch ready-2 opened: leaf-1.1.3
+2026-10-10T16:19:54.404Z dispatch ready-2 started leaf-1.1.3 as term_a1c2f889-126a-4ce1-bd55-363cd8199ae2
+2026-10-10T16:19:54.475Z dispatch ready-2 sealed
+2026-10-10T16:24:59.060Z dispatch ready-2 returned leaf-1.1.3
+leaf-1.1.3 VERIFIED: 7 blockers, 4 confirmed independently; fork-surface finding refuted (routes.ts => 6 files not 4); lease released
+2026-10-10T16:27:42.569Z dispatch ready-3 opened: leaf-1.1.4, leaf-1.1.5
+2026-10-10T16:27:43.732Z dispatch ready-3 started leaf-1.1.4 as term_195fc91e-f51e-4486-a27b-aa5ef191ae74
+2026-10-10T16:27:44.513Z dispatch ready-3 started leaf-1.1.5 as term_95bf7542-1f80-4671-9868-23502b7bea90
+2026-10-10T16:27:44.571Z dispatch ready-3 sealed
+wave ready-3 sealed: commit pass dispatched for both parts with 7 blockers + fork-surface correction
+2026-10-10T16:30:40.450Z dispatch ready-3 returned leaf-1.1.4
+2026-10-10T16:30:40.499Z dispatch ready-3 returned leaf-1.1.5
+leaf-1.1.4 and leaf-1.1.5 VERIFIED; all 7 blockers confirmed fixed; leases released
+contract amendment: revision 4 - second Claude review of post-commit changes as leaf-1.1.6, wave 4
+2026-10-10T16:32:37.797Z dispatch ready-4 opened: leaf-1.1.6
+2026-10-10T16:32:40.090Z dispatch ready-4 started leaf-1.1.6 as term_a1c2f889-126a-4ce1-bd55-363cd8199ae2
+2026-10-10T16:32:40.184Z dispatch ready-4 sealed
+2026-10-10T16:39:54.178Z dispatch ready-4 returned leaf-1.1.6
+oracle tightened: verify-agent-commits now requires each commit to modify the plan part; leaf-1.1.4:G2 reverted to unmet (A2-A8 were empty commits)
+2026-10-10T16:41:36.517Z dispatch ready-5 opened: leaf-1.1.4
+2026-10-10T16:41:39.525Z dispatch ready-5 started leaf-1.1.4 as term_195fc91e-f51e-4486-a27b-aa5ef191ae74
+2026-10-10T16:41:39.622Z dispatch ready-5 sealed
+2026-10-10T16:43:06.506Z dispatch ready-5 returned leaf-1.1.4
+leaf-1.1.4 history rebuilt: 8 real per-task commits, content byte-identical to pre-rewrite; note: be27ddb shows leaf-1.1.2 committed 4 driver-owned scripts, an ownership-protocol violation
+2026-10-10T16:43:46.449Z dispatch ready-6 opened: leaf-1.1.5, leaf-1.1.6
+2026-10-10T16:43:47.896Z dispatch ready-6 started leaf-1.1.5 as term_95bf7542-1f80-4671-9868-23502b7bea90
+2026-10-10T16:43:50.205Z dispatch ready-6 started leaf-1.1.6 as term_a1c2f889-126a-4ce1-bd55-363cd8199ae2
+2026-10-10T16:43:50.281Z dispatch ready-6 sealed
+driver process note: leaf-1.1.6 re-claim in wave ready-6 was REFUSED (same leaf already held a live lease from ready-4, never released). Ownership intact and held by the correct owner, so dispatch is safe, but the correct sequence was release-then-claim. Recorded rather than bypassed.
+2026-10-10T16:44:55.101Z dispatch ready-6 returned leaf-1.1.5
+2026-10-10T16:44:55.162Z dispatch ready-6 returned leaf-1.1.6

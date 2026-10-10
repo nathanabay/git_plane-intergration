@@ -1,0 +1,9 @@
+{
+  "scope": "implplan",
+  "leaf": "leaf-1.1.5",
+  "globs": [
+    "docs/plan/part-b-github-ui.md",
+    "docs/plan/agent-gates/commit-b.GATES.md"
+  ],
+  "pid": 3308
+}
