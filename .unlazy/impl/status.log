@@ -63,3 +63,11 @@
 2026-10-10T20:50:20Z live smoke vs test Plane: all write semantics confirmed; defect: identifier endpoint returns 403 for unknown projects, resolveReferences only handles 404
 2026-10-10T20:52:40.599Z dispatch w5b returned leaf-1.5.1
 2026-10-10T20:58:03Z node-1.5 VERIFIED (phase 5: A8 + wiring); all 17 tasks implemented
+2026-10-10T20:58:40.705Z dispatch w6 opened: leaf-1.6.1
+2026-10-10T20:58:42.812Z dispatch w6 started leaf-1.6.1 as term_9ad820e1-89c9-4318-8ff2-1b99a07ff1f1
+2026-10-10T20:58:42.899Z dispatch w6 sealed
+2026-10-10T21:51:25.481Z dispatch w6 returned leaf-1.6.1
+2026-10-10T21:55:43.073Z dispatch w7 opened: fix-r1-a, fix-r1-b
+2026-10-10T21:56:41.952Z dispatch w7 started fix-r1-a as term_72639bf7-a272-46c8-af5b-38eb679a418d
+2026-10-10T21:56:42.125Z dispatch w7 started fix-r1-b as term_ff389eb9-4e47-492b-a8bc-cd38a9e343d8
+2026-10-10T21:56:42.284Z dispatch w7 sealed

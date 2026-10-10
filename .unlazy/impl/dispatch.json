@@ -260,6 +260,46 @@
       },
       "sealedAt": "2026-10-10T20:49:32.037Z",
       "completedAt": "2026-10-10T20:52:40.585Z"
+    },
+    "w6": {
+      "leaves": [
+        "leaf-1.6.1"
+      ],
+      "state": "complete",
+      "openedAt": "2026-10-10T20:58:40.700Z",
+      "started": {
+        "leaf-1.6.1": {
+          "handle": "term_9ad820e1-89c9-4318-8ff2-1b99a07ff1f1",
+          "at": "2026-10-10T20:58:42.805Z"
+        }
+      },
+      "returned": {
+        "leaf-1.6.1": {
+          "at": "2026-10-10T21:51:25.465Z"
+        }
+      },
+      "sealedAt": "2026-10-10T20:58:42.895Z",
+      "completedAt": "2026-10-10T21:51:25.465Z"
+    },
+    "w7": {
+      "leaves": [
+        "fix-r1-a",
+        "fix-r1-b"
+      ],
+      "state": "sealed",
+      "openedAt": "2026-10-10T21:55:43.060Z",
+      "started": {
+        "fix-r1-a": {
+          "handle": "term_72639bf7-a272-46c8-af5b-38eb679a418d",
+          "at": "2026-10-10T21:56:41.944Z"
+        },
+        "fix-r1-b": {
+          "handle": "term_ff389eb9-4e47-492b-a8bc-cd38a9e343d8",
+          "at": "2026-10-10T21:56:42.112Z"
+        }
+      },
+      "returned": {},
+      "sealedAt": "2026-10-10T21:56:42.244Z"
     }
   }
 }
