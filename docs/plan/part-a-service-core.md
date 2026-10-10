@@ -42,3 +42,10 @@ Implement the text extraction logic for linking and reference parsing (§6). Sca
 
 Replace fixed mapping tables with the rule engine (§7.5), as lifecycle state mappings explicitly compile into these rules (§7.1). Parse triggers and evaluate conditions matching branch regexes, labels, author, target projects, and repo. Output discrete actions like `set_state`, `add_label`, `remove_label`, `assign`, `comment`, `add_link`, `log_time`, and `create_issue`. Apply first-match-wins ordering. Provide a no-write evaluation mode required for dry-run capabilities.
 
+### A7 Implement deletion reconciliation sweep
+**Files:** src/sync/reconcile.ts, src/queue/cron.ts
+**Depends:** A3, A4
+**Acceptance:** A periodic sweep identifies missing linked issues, marks them orphaned, and prunes expired applied operations.
+
+Since Plane deletions fire no webhook, implement a periodic background sweep over the `sync_links` table (§1.3) where frequency is a config value. The job must re-fetch each linked Plane issue, mark 404 responses as orphaned, and never treat this deletion as a state transition or deletion webhook. Also ensure this task prunes `applied_ops` entries on their TTL.
+
