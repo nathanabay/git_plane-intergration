@@ -28,3 +28,10 @@ Design the tables required for echo-loop prevention and mapping (§5, §8). Crea
 
 Build the queue consumers and outbound API callers (§4). Before writing to Plane or GitHub, calculate the target field-granular `op_hash`—consisting of (target side, target id, single field name, normalized new value)—and record it. On the inbound side, hash incoming webhooks against this ledger to discard self-echoes (§5). Apply Plane write semantics (§4): treat a duplicate link URL 400 response as success, and a duplicate label 409 response as a free upsert using the returned ID. Ensure the Plane write path firmly rejects any write targeting a `triage`-group state (§7.1). Implement deduplication based on delivery IDs and restrict processing of commit commands to exactly once per commit SHA.
 
+### A5 Implement reference parsing logic
+**Files:** src/parse/references.ts, src/parse/magicWords.ts
+**Depends:** A4
+**Acceptance:** The text parser identifies valid issue references across all sources and classifies them into correct closing tiers.
+
+Implement the text extraction logic for linking and reference parsing (§6). Scan branch names, PR titles, pull request bodies, and commit messages. Construct the three-tier magic word lists (closing, non-closing, and relation) and process opt-out phrases. Properly handle multi-issue strings, and implement `{IDENTIFIER}-NEW` create-issue-from-PR support. Enforce the rule that all linked PRs must merge before an item advances. Resolve identifiers against the Plane API endpoint.
+
