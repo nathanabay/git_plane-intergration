@@ -10,7 +10,9 @@ Your ledger: `docs/impl/agent-gates/leaf-1.3.2.GATES.md`
 
 Implementer A works concurrently on `src/sync/**`, `src/queue/**`, `src/db/**`, `src/index.ts`.
 You **read** `src/db/*` (A3's tables and `Db` type), `src/rules/engine.ts` (A6) and
-`src/auth/identity.ts` (your B9) — never edit them. If A3's schema lacks something you need,
+`src/auth/identity.ts` (your B9) — never edit them. A3's final schema is `src/db/migrations/001-init.sql` (`repo_mappings.workspace_slug`,
+`linkback_enabled`, `autolinks_enabled` default false, `user_map.gh_login`/`gh_id`,
+`github_app_config.ghe_base_url`, unique policy per field). If it lacks something you need,
 stop and say so in your report rather than working around it.
 
 ## Driver gates (copy all into your ledger, exactly)
@@ -108,7 +110,9 @@ Workspace (`:slug` must equal the mapping's stored workspace slug, else 404):
   `last_write_wins | source_of_truth:github | source_of_truth:plane`. GET returns every field,
   filling unset ones with the §7.3 defaults: `source_of_truth:github` for title and description,
   `last_write_wins` for everything else.
-- `GET .../user-links`, `PUT .../user-links/:planeUserId` `{ githubLogin }`,
+- `GET .../user-links`, `PUT .../user-links/:planeUserId` `{ githubLogin, githubId }` (both
+  required, 422 otherwise — `gh_id` is the stable GitHub identity; the UI can look the id up from
+  the browser with `GET https://api.github.com/users/{login}`),
   `DELETE .../user-links/:planeUserId` → removes the `user_map` row **and** revokes the user's
   stored tokens through B9's `TokenVault` + A3's `PgTokenStore` (§9 revocation path) → 204.
 - `GET .../audit?limit=&before=` — newest first, from A3's `audit_log` (read only here; dry-run,

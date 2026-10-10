@@ -49,7 +49,8 @@ never `git checkout`/`reset` files you do not own.
 
 ## Unlazy — mandatory
 
-The skill lives at `$HOME/.claude/skills/unlazy`. Read its `SKILL.md` and
+If you are a Claude Code session, load it with the Skill tool (`unlazy`); otherwise read it
+from `$HOME/.claude/skills/unlazy`. Read its `SKILL.md` and
 `references/gates.md` first.
 
 1. **Before writing code**, create your own ledger at the path your brief gives

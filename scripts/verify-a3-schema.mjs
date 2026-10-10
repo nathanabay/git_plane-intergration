@@ -7,7 +7,13 @@ import { PGlite } from "@electric-sql/pglite";
 
 const root = resolve(import.meta.dirname, "..");
 const results = [];
-async function check(name, fn) { try { await fn(); results.push([name, null]); } catch (e) { results.push([name, e]); } }
+async function check(name, fn, ms = 60000) {
+  let timer;
+  const limit = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`timed out after ${ms}ms`)), ms); });
+  try { await Promise.race([fn(), limit]); results.push([name, null]); console.log(`ok   ${name}`); }
+  catch (e) { results.push([name, e]); console.error(`FAIL: ${name}: ${String(e?.message ?? e).split("\n")[0]}`); }
+  finally { clearTimeout(timer); }
+}
 
 const { migrate } = await import(join(root, "src/db/migrate.ts"));
 const L = await import(join(root, "src/db/ledgers.ts"));
@@ -108,8 +114,66 @@ await check("PgTokenStore persists only ciphertext and revocation removes every 
   strictEqual(await vault.revoke("u1"), false);
 });
 
+await check("spec defaults and keys: autolinks off by default (§7.4), GHE base URL stored (§8), one policy per field, one word list per tier, one row per rule version", async () => {
+  const def = (await db.query(`SELECT column_name, column_default FROM information_schema.columns WHERE table_name = 'repo_mappings' AND column_name = 'autolinks_enabled'`)).rows[0];
+  ok(def && /false/i.test(String(def.column_default)), `autolinks_enabled default is ${def?.column_default}`);
+  ok((await cols("github_app_config")).includes("ghe_base_url"), "github_app_config.ghe_base_url missing");
+  const m = (await db.query(`INSERT INTO repo_mappings (workspace_slug, gh_repo_id, gh_repo_full_name, plane_project_id, sync_direction) VALUES ('w', 1, 'o/r', 'p', 'bidirectional') RETURNING id`)).rows[0].id;
+  await db.query(`INSERT INTO conflict_policies (mapping_id, field, policy) VALUES ($1, 'title', 'last_write_wins')`, [m]);
+  await rejects(db.query(`INSERT INTO conflict_policies (mapping_id, field, policy) VALUES ($1, 'title', 'source_of_truth:plane')`, [m]));
+  await db.query(`INSERT INTO rule_sets (mapping_id, yaml_source, version) VALUES ($1, '[]', 1)`, [m]);
+  await rejects(db.query(`INSERT INTO rule_sets (mapping_id, yaml_source, version) VALUES ($1, '[]', 1)`, [m]));
+  await db.query(`INSERT INTO magic_words (tier, words) VALUES ('closing', ARRAY['fixes'])`);
+  await rejects(db.query(`INSERT INTO magic_words (tier, words) VALUES ('closing', ARRAY['closes'])`));
+  await db.query(`DELETE FROM repo_mappings WHERE id = $1`, [m]);
+  strictEqual((await db.query(`SELECT count(*)::int AS n FROM rule_sets WHERE mapping_id = $1`, [m])).rows[0].n, 0, "deleting a mapping must cascade to its rules and policies");
+});
+
 await db.close();
+
+// ---- real Postgres 15.7 over a pg Pool: what PGlite's single connection cannot show ----------
+const { startPostgres } = await import("./lib/postgres.mjs");
+const { createDb } = await import(join(root, "src/db/client.ts"));
+const { mkdtempSync, writeFileSync, copyFileSync, readdirSync, rmSync } = await import("node:fs");
+const { tmpdir } = await import("node:os");
+const pgs = await startPostgres();
+try {
+  await check("on a pg Pool, a failing migration rolls back completely and is not recorded", async () => {
+    const real = createDb(pgs.url);
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "gitsync-mig-"));
+      for (const f of readdirSync(join(root, "src/db/migrations"))) copyFileSync(join(root, "src/db/migrations", f), join(dir, f));
+      writeFileSync(join(dir, "999-broken.sql"), "CREATE TABLE oracle_half_done (id int);\nINSERT INTO oracle_half_done VALUES (1);\nSELECT 1/0;\n");
+      await rejects(migrate(real, { dir }));
+      const t = (await real.query(`SELECT to_regclass('public.oracle_half_done') AS t`)).rows[0].t;
+      strictEqual(t, null, "the failed migration's table survived: migrations are not atomic");
+      strictEqual((await real.query(`SELECT count(*)::int AS n FROM schema_migrations WHERE version = '999-broken.sql'`)).rows[0].n, 0);
+      ok((await real.query(`SELECT count(*)::int AS n FROM schema_migrations`)).rows[0].n >= 1, "the good migrations were not applied");
+      rmSync(dir, { recursive: true, force: true });
+    } finally { await real.close(); }
+  });
+  await check("two replicas migrating at once both succeed and apply each migration exactly once", async () => {
+    const pg2 = await startPostgres();
+    const a = createDb(pg2.url), b = createDb(pg2.url);
+    try {
+      const [ra, rb] = await Promise.all([migrate(a), migrate(b)]);
+      strictEqual(ra.applied.length + rb.applied.length, readdirSync(join(root, "src/db/migrations")).filter((f) => f.endsWith(".sql")).length);
+    } finally { await a.close(); await b.close(); await pg2.stop(); }
+  }, 120000);
+  await check("concurrent echo consumption is exact: two recorded ops are consumed by two concurrent echoes, never fewer", async () => {
+    const real = createDb(pgs.url);
+    try {
+      for (let i = 0; i < 25; i++) {
+        const h = `race-${i}`;
+        await L.recordAppliedOps(real, [{ opHash: h, direction: "to_plane" }, { opHash: h, direction: "to_plane" }]);
+        const got = await Promise.all([L.consumeRecentOp(real, h, 10), L.consumeRecentOp(real, h, 10), L.consumeRecentOp(real, h, 10)]);
+        deepStrictEqual(got.filter(Boolean).length, 2, `round ${i}: ${got}`);
+      }
+    } finally { await real.close(); }
+  }, 120000);
+} finally { await pgs.stop(); }
 let bad = 0;
-for (const [name, err] of results) { if (err) { bad++; console.error(`FAIL: ${name}: ${String(err.message).split("\n")[0]}`); } else console.log(`ok   ${name}`); }
+for (const [, err] of results) if (err) bad++;
 if (bad) process.exit(1);
 console.log(`A3 schema verification passed (${results.length} checks)`);
+process.exit(0); // lingering client sockets must not keep a passed oracle alive

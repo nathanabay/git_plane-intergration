@@ -13,7 +13,13 @@ import { PGlite } from "@electric-sql/pglite";
 
 const root = resolve(import.meta.dirname, "..");
 const results = [];
-async function check(name, fn) { try { await fn(); results.push([name, null]); } catch (e) { results.push([name, e]); } }
+async function check(name, fn, ms = 60000) {
+  let timer;
+  const limit = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`timed out after ${ms}ms`)), ms); });
+  try { await Promise.race([fn(), limit]); results.push([name, null]); console.log(`ok   ${name}`); }
+  catch (e) { results.push([name, e]); console.error(`FAIL: ${name}: ${String(e?.message ?? e).split("\n")[0]}`); }
+  finally { clearTimeout(timer); }
+}
 
 const { startServer } = await import(join(root, "src/index.ts"));
 const { createConfigRoutes, createUiRoutes } = await import(join(root, "src/ui/api.ts"));
@@ -126,12 +132,13 @@ await check("conflict policies default per §7.3 and reject unknown fields or po
 });
 
 await check("unlinking a user removes the mapping and revokes their stored tokens (§9 revocation path)", async () => {
-  strictEqual((await call("PUT", `/workspaces/qelal/user-links/u-mem`, { cookie: ADM, body: { githubLogin: "memgh" } })).status, 200);
+  strictEqual((await call("PUT", `/workspaces/qelal/user-links/u-mem`, { cookie: ADM, body: { githubLogin: "memgh", githubId: 777 } })).status, 200);
+  strictEqual((await call("PUT", `/workspaces/qelal/user-links/u-other`, { cookie: ADM, body: { githubLogin: "nogh" } })).status, 422);
   const vault = new TokenVault(new PgTokenStore(db), KEY);
   await vault.store("u-mem", "plane_pat", "plane_api_MEMSECRET");
   strictEqual((await call("DELETE", `/workspaces/qelal/user-links/u-mem`, { cookie: ADM })).status, 204);
   strictEqual(await vault.load("u-mem", "plane_pat"), null);
-  strictEqual((await db.query(`SELECT count(*)::int AS n FROM user_map WHERE github_login = 'memgh'`)).rows[0].n, 0);
+  strictEqual((await db.query(`SELECT count(*)::int AS n FROM user_map WHERE gh_login = 'memgh'`)).rows[0].n, 0);
 });
 
 await check("instance settings need a Plane instance-admin session; GitHub App secrets are stored encrypted and never returned", async () => {
@@ -184,6 +191,7 @@ await check("the React app builds and both entry routes serve it; assets are ser
 
 await srv.close(); papi.close(); await db.close();
 let bad = 0;
-for (const [name, err] of results) { if (err) { bad++; console.error(`FAIL: ${name}: ${String(err.message).split("\n")[0]}`); } else console.log(`ok   ${name}`); }
+for (const [, err] of results) if (err) bad++;
 if (bad) process.exit(1);
 console.log(`B3 config API verification passed (${results.length} checks)`);
+process.exit(0); // lingering client sockets must not keep a passed oracle alive

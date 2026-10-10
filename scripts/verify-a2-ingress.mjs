@@ -14,7 +14,13 @@ import { startValkey } from "./lib/valkey.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const results = [];
-async function check(name, fn) { try { await fn(); results.push([name, null]); } catch (e) { results.push([name, e]); } }
+async function check(name, fn, ms = 60000) {
+  let timer;
+  const limit = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`timed out after ${ms}ms`)), ms); });
+  try { await Promise.race([fn(), limit]); results.push([name, null]); console.log(`ok   ${name}`); }
+  catch (e) { results.push([name, e]); console.error(`FAIL: ${name}: ${String(e?.message ?? e).split("\n")[0]}`); }
+  finally { clearTimeout(timer); }
+}
 
 const { startServer, WEBHOOK_PATHS } = await import(join(root, "src/index.ts"));
 const { createWebhookRoutes } = await import(join(root, "src/api/handler.ts"));
@@ -157,7 +163,9 @@ await check("four queues on Valkey under the gitsync prefix; inbound jobs keyed 
     strictEqual(jobs.length, 1, `expected one job after a duplicate enqueue, got ${jobs.length}`);
     strictEqual(jobs[0].id, "plane-pd-9");
     deepStrictEqual(jobs[0].data, job);
-    const ghJobs = await new Queue("inbound-github", { connection: { url: vk.url }, prefix: "gitsync" }).getJobs(["waiting", "wait"]);
+    const ghProbe = new Queue("inbound-github", { connection: { url: vk.url }, prefix: "gitsync" });
+    const ghJobs = await ghProbe.getJobs(["waiting", "wait"]);
+    await ghProbe.close();
     strictEqual(ghJobs.length, 0, "a plane job landed on the github queue");
     await probe.close();
   } finally { await q.close(); }
@@ -232,6 +240,7 @@ await check("the service refuses to start without a webhook secret, naming the v
 
 await vk.stop();
 let bad = 0;
-for (const [name, err] of results) { if (err) { bad++; console.error(`FAIL: ${name}: ${String(err.message).split("\n")[0]}`); } else console.log(`ok   ${name}`); }
+for (const [, err] of results) if (err) bad++;
 if (bad) process.exit(1);
 console.log(`A2 ingress verification passed (${results.length} checks)`);
+process.exit(0); // lingering client sockets must not keep a passed oracle alive

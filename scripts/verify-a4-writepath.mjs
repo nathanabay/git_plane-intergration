@@ -11,7 +11,13 @@ import { startValkey } from "./lib/valkey.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const results = [];
-async function check(name, fn) { try { await fn(); results.push([name, null]); } catch (e) { results.push([name, e]); } }
+async function check(name, fn, ms = 60000) {
+  let timer;
+  const limit = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`timed out after ${ms}ms`)), ms); });
+  try { await Promise.race([fn(), limit]); results.push([name, null]); console.log(`ok   ${name}`); }
+  catch (e) { results.push([name, e]); console.error(`FAIL: ${name}: ${String(e?.message ?? e).split("\n")[0]}`); }
+  finally { clearTimeout(timer); }
+}
 
 const { opHash, normalizeValue } = await import(join(root, "src/sync/ophash.ts"));
 const plane = await import(join(root, "src/sync/plane.ts"));
@@ -248,6 +254,7 @@ await vk.stop();
 
 api.close(); await db.close();
 let bad = 0;
-for (const [name, err] of results) { if (err) { bad++; console.error(`FAIL: ${name}: ${String(err.message).split("\n")[0]}`); } else console.log(`ok   ${name}`); }
+for (const [, err] of results) if (err) bad++;
 if (bad) process.exit(1);
 console.log(`A4 write path verification passed (${results.length} checks)`);
+process.exit(0); // lingering client sockets must not keep a passed oracle alive

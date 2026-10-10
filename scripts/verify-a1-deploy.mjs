@@ -135,11 +135,26 @@ async function probe() {
   await srv.close();
 
   // As a process: env PORT, health, 404s, graceful SIGTERM.
+  // The service refuses to start without its configuration (A2) and connects to Postgres and
+  // Valkey at boot (A4), so the process probe runs against real throwaway instances of both.
+  const { startValkey } = await import("./lib/valkey.mjs");
+  const { startPostgres } = await import("./lib/postgres.mjs");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const vk = await startValkey();
+  const pgs = await startPostgres();
+  const dir = mkdtempSync(join(tmpdir(), "gitsync-a1-"));
+  writeFileSync(join(dir, "key.pem"), generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs1", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } }).privateKey);
   const port = await freePort();
-  const child = spawn(process.execPath, [join(root, "src/index.ts")], { env: { ...process.env, PORT: String(port), HOST: "127.0.0.1" }, stdio: ["ignore", "pipe", "pipe"] });
+  const svcEnv = { ...process.env, PORT: String(port), HOST: "127.0.0.1", DATABASE_URL: pgs.url, REDIS_URL: vk.url, QUEUE_PREFIX: "gitsync",
+    PLANE_BASE_URL: "http://127.0.0.1:1", PLANE_SERVICE_PAT: "plane_api_oracle", PLANE_WEBHOOK_SECRET: "oracle-plane-secret", GITHUB_APP_ID: "4242",
+    GITHUB_PRIVATE_KEY_PATH: join(dir, "key.pem"), GITHUB_WEBHOOK_SECRET: "oracle-gh-secret", GITSYNC_TOKEN_KEY: Buffer.alloc(32, 3).toString("base64") };
+  const cleanup = async () => { await vk.stop(); await pgs.stop(); rmSync(dir, { recursive: true, force: true }); };
+  const child = spawn(process.execPath, [join(root, "src/index.ts")], { env: svcEnv, stdio: ["ignore", "pipe", "pipe"] });
   let out = ""; child.stdout.on("data", (d) => (out += d)); child.stderr.on("data", (d) => (out += d));
   let up = false;
-  for (let i = 0; i < 50 && !up; i++) {
+  for (let i = 0; i < 150 && !up; i++) {
     await new Promise((r) => setTimeout(r, 100));
     try { const r = await fetch(`http://127.0.0.1:${port}/git-sync/healthz`); up = true;
       if (r.status !== 200) fail(`/git-sync/healthz returned ${r.status}`);
@@ -147,7 +162,7 @@ async function probe() {
       if (body?.status !== "ok") fail(`/git-sync/healthz body must be JSON {"status":"ok"}, got ${JSON.stringify(body)}`);
     } catch { /* not up yet */ }
   }
-  if (!up) { fail(`service never answered on PORT=${port}; output: ${out.slice(0, 300)}`); child.kill("SIGKILL"); return; }
+  if (!up) { fail(`service never answered on PORT=${port}; output: ${out.slice(0, 300)}`); child.kill("SIGKILL"); await cleanup(); return; }
   for (const path of ["/healthz", "/git-sync/definitely-not-a-route"]) {
     const r = await fetch(`http://127.0.0.1:${port}${path}`);
     if (r.status !== 404) fail(`${path} returned ${r.status}, expected 404`);
@@ -157,6 +172,7 @@ async function probe() {
   const res = await Promise.race([exited, new Promise((r) => setTimeout(() => r(null), 5000))]);
   if (!res) { fail("service did not exit within 5s of SIGTERM"); child.kill("SIGKILL"); }
   else if (res.code !== 0) fail(`service exited ${res.code}/${res.sig} on SIGTERM, expected a clean 0`);
+  await cleanup();
 }
 await probe().catch((e) => fail(`probe threw: ${e.message}`));
 

@@ -34,14 +34,17 @@ Mode: orchestrated
 
 ## Current contract inventory
 
-Contract revision: 2. Amendment (rev 2, user, mid-session): the review loop repeats — reviewer
+Contract revision: 3. Amendment (rev 3, user): the `agy` account hit its usage limit; the two
+implementers are replaced by two Orca-hosted Claude Code sessions on `claude-sonnet-5-5`
+(`impl-sonnet-a` for Part A, `impl-sonnet-b` for Part B). The reviewer stays a Claude agent.
+Previous contract revision: 2. Amendment (rev 2, user, mid-session): the review loop repeats — reviewer
 findings go back to both Gemini agents, then back to the Claude reviewer, until the review is
 clean; then commit and push.
 
 | ID | Required outcome or constraint | Owner | Observing gate or manual review | Disposition | Revision |
 |---|---|---|---|---|---|
 | C1 | Every plan task A1–A8, B1–B9 implemented per its spec sections | leaves 1.1.x–1.5.x | each leaf's task gates | ACTIVE | 1 |
-| C2 | Two `agy` gemini-3.1-pro-high implementers (Part A, Part B) and one Orca `claude` reviewer | driver | dispatch.json handles + status.log | ACTIVE | 1 |
+| C2 | Two implementers (Part A, Part B) and one Orca `claude` reviewer — `agy` gemini-3.1-pro-high until its limit, then Claude Code `claude-sonnet-5-5` (rev 3) | driver | dispatch.json handles + status.log | ACTIVE | 3 |
 | C3 | Every agent runs unlazy with a checker-evidenced ledger | every leaf | leaf-*:G-unlazy (verify-agent-unlazy.mjs) | ACTIVE | 1 |
 | C4 | The four pitfalls hold: field-granular op_hash, ingress echo drop, sender-only attribution, deletion → orphaned | leaves owning A3, A4, A7, B4, B9 | contract oracles + reviewer adjudication | ACTIVE | 1 |
 | C5 | Reviewer re-reviews after every fix round until clean (no BLOCKING/MAJOR open) | node-1.6 | node-1.6 gates | ACTIVE | 2 |
@@ -51,9 +54,7 @@ clean; then commit and push.
 | C9 | A8 live smoke test run against tasks.qelal.et | human operator | — | OWNER_DECISION | 1 |
 | C10 | Spec §8 corrected to six fork files | driver | spec lines 398, 462–468, 538 | ACTIVE | 1 |
 
-C8/C9: this host has no SSH route to `convpss` (`ssh: Could not resolve hostname convpss`). A1
-ships as files plus `deploy/APPLY.md` for a human; A8 ships the smoke test definition. Neither is
-reported as performed.
+C8/C9: the user confirmed (2026-10-10) that this machine **is** `convpss`. The driver runs as `claudeuser` (uid 1001): not root, not in the `docker` group, no passwordless sudo, so `/root/plane`, `docker compose` and Caddy are out of reach. A1 ships as files plus `deploy/APPLY.md`; deployment happens after the clean review, either run by the user or after the user grants access. Neither C8 nor C9 is reported as performed until it is.
 
 ## Tree
 
@@ -82,9 +83,9 @@ Review-loop and commit-pass leaves are added as contract revisions once their ro
 |---|---|---|---|---|---|
 | 1.1.1 | docker-compose.override.yaml, Dockerfile, .dockerignore, deploy/**, src/index.ts, src/rules/**, tests/deploy/**, tests/rules/**, docs/impl/agent-gates/leaf-1.1.1.GATES.md | - | judgment | 1 | VERIFIED |
 | 1.1.2 | apps/admin/**, apps/web/**, packages/constants/**, src/auth/**, tests/auth/**, docs/impl/agent-gates/leaf-1.1.2.GATES.md | - | judgment | 1 | VERIFIED |
-| 1.2.1 | src/index.ts, deploy/**, src/api/**, src/queue/**, src/db/**, src/config/**, tests/api/**, tests/queue/**, tests/db/**, tests/deploy/**, docs/impl/agent-gates/leaf-1.2.1.GATES.md | 1.1.1 | judgment | 2 | IN-FLIGHT |
-| 1.3.1 | defined at wave 3 | 1.2.1 | judgment | 3 | WAITING |
-| 1.3.2 | defined at wave 3 | 1.2.1, 1.1.2 | judgment | 3 | WAITING |
+| 1.2.1 | src/index.ts, deploy/**, src/api/**, src/queue/**, src/db/**, src/config/**, tests/api/**, tests/queue/**, tests/db/**, tests/deploy/**, docs/impl/agent-gates/leaf-1.2.1.GATES.md | 1.1.1 | judgment | 2 | VERIFIED |
+| 1.3.1 | src/sync/**, src/queue/**, src/db/**, src/index.ts, src/config/**, tests/sync/**, tests/queue/**, tests/db/**, tests/deploy/**, deploy/**, docs/impl/agent-gates/leaf-1.3.1.GATES.md | 1.2.1 | judgment | 3 | IN-FLIGHT |
+| 1.3.2 | src/ui/**, tests/ui/**, Dockerfile, .dockerignore, docs/impl/agent-gates/leaf-1.3.2.GATES.md | 1.2.1, 1.1.2 | judgment | 3 | IN-FLIGHT |
 | 1.4.1 | defined at wave 4 | 1.3.1 | judgment | 4 | WAITING |
 | 1.4.2 | defined at wave 4 | 1.3.1, 1.3.2 | judgment | 4 | WAITING |
 | 1.5.1 | defined at wave 5 | 1.4.1, 1.4.2 | judgment | 5 | WAITING |

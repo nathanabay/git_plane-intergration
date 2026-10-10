@@ -20,3 +20,18 @@
 2026-10-10T18:09:14.314Z dispatch w2b sealed
 2026-10-10T18:11:07.265Z dispatch w2b returned leaf-1.1.2
 2026-10-10T18:11:31Z node-1.1 VERIFIED (phase 1: A1, A6, B1, B2, B9); leases 1.1.1 and 1.1.2 released
+2026-10-10T18:22:13Z C8/C9 note: host is convpss (user-confirmed); blocked on permissions, not SSH; deploy after clean review
+2026-10-10T18:30:58.137Z dispatch w2 returned leaf-1.2.1
+2026-10-10T18:48:11.316Z dispatch w2c opened: leaf-1.1.2, leaf-1.2.1
+2026-10-10T18:48:14.127Z dispatch w2c started leaf-1.1.2 as term_846d5913-dd26-4cb8-bca1-0781ea159a4b
+2026-10-10T18:48:14.337Z dispatch w2c started leaf-1.2.1 as term_dd684821-444e-437e-bd8a-f1fd5cb8196f
+2026-10-10T18:48:14.430Z dispatch w2c sealed
+2026-10-10T18:48:14Z node-1.1 REOPENED: leaf-1.2.1 overwrote src/auth/identity.ts at 18:23Z; repair wave w2c
+2026-10-10T18:52:30.176Z dispatch w2c returned leaf-1.1.2
+2026-10-10T18:52:30.267Z dispatch w2c returned leaf-1.2.1
+2026-10-10T18:55:37Z roster change (rev 3, user): agy hit usage limit; implementers now Claude Code sonnet-5-5: A=term_72639bf7-a272-46c8-af5b-38eb679a418d B=term_ff389eb9-4e47-492b-a8bc-cd38a9e343d8
+2026-10-10T18:55:48.959Z dispatch w2d opened: leaf-1.2.1
+2026-10-10T18:55:51.007Z dispatch w2d started leaf-1.2.1 as term_72639bf7-a272-46c8-af5b-38eb679a418d
+2026-10-10T18:55:51.099Z dispatch w2d sealed
+2026-10-10T19:00:02.439Z dispatch w2d returned leaf-1.2.1
+2026-10-10T19:04:22Z node-1.2 VERIFIED (phase 2: A2, A3)
