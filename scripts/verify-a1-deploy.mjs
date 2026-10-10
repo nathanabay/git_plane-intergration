@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Oracle for task A1 (spec §3). Checks the compose fragment against Plane's real v1.4.2 compose
 // file, the Caddy route, the image and env artifacts, and boots the service to probe it.
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
@@ -91,7 +91,23 @@ else {
 }
 const sql = read("deploy/sql/000-create-database.sql");
 if (!sql || !/CREATE\s+DATABASE\s+gitsync/i.test(sql)) fail("deploy/sql/000-create-database.sql must CREATE DATABASE gitsync");
+if (sql && /PASSWORD\s+'{2}[A-Za-z0-9_]+'{2}/.test(sql)) fail("000-create-database.sql hard-codes the role password; take it from a psql variable");
+if (sql && !/:'?\w*pass\w*'?/i.test(sql) && !/format\(/i.test(sql)) fail("000-create-database.sql must read the password from a psql -v variable");
+const keyMount = (() => {
+  const r = spawnSync("docker", ["compose", "-p", "gitsyncverify", "--project-directory", root, "-f", "scripts/fixtures/plane-compose.v1.4.2.yml", "-f", override, "config", "--format", "json"], { cwd: root, encoding: "utf8" });
+  try { return JSON.parse(r.stdout).services["git-sync"].volumes || []; } catch { return []; }
+})();
+const keyPath = (env || "").match(/^GITHUB_PRIVATE_KEY_PATH=(\S+)/m)?.[1];
+if (!keyPath || !keyMount.some((v) => v.target === keyPath && v.read_only === true)) fail(`compose: GITHUB_PRIVATE_KEY_PATH (${keyPath}) is not a read-only volume mount in git-sync`);
+if (env && /^DATABASE_URL=postgres:\/\/gitsync:gitsync@/m.test(env)) fail("env example: DATABASE_URL carries the literal password 'gitsync'");
 const apply = read("deploy/APPLY.md");
+if (apply && /psql\s+-U\s+postgres\b/.test(apply)) fail("APPLY.md: Plane's Postgres superuser is ${POSTGRES_USER:-plane}, not postgres");
+if (apply && !/build-fork-image\.sh/.test(apply)) fail("APPLY.md: never builds the fork images before the admin/web overrides are applied");
+if (apply) {
+  const build = apply.indexOf("build-fork-image.sh"), up = apply.search(/docker compose[^\n]*up -d/);
+  if (build >= 0 && up >= 0 && build > up) fail("APPLY.md: fork images are built after `docker compose up -d`");
+}
+for (const f of readdirSync(root)) if (/\.(ts|mts|js|mjs)$/.test(f)) fail(`stray source file at repo root: ${f}`);
 if (!apply) fail("deploy/APPLY.md missing");
 else for (const k of ["docker-compose.override.yaml", "Caddyfile", "000-create-database.sql", "git-sync.env", "API_KEY_RATE_LIMIT", "docker build"]) {
   if (!apply.includes(k)) fail(`APPLY.md: never mentions ${k}`);

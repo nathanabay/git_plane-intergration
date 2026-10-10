@@ -80,9 +80,9 @@ Review-loop and commit-pass leaves are added as contract revisions once their ro
 
 | Leaf | Owns | Needs | Tier | Planned wave | State |
 |---|---|---|---|---|---|
-| 1.1.1 | docker-compose.override.yaml, Dockerfile, .dockerignore, deploy/**, src/index.ts, src/rules/**, tests/deploy/**, tests/rules/**, docs/impl/agent-gates/leaf-1.1.1.GATES.md | - | judgment | 1 | READY |
-| 1.1.2 | apps/admin/**, apps/web/**, packages/constants/**, src/auth/**, tests/auth/**, docs/impl/agent-gates/leaf-1.1.2.GATES.md | - | judgment | 1 | READY |
-| 1.2.1 | defined at wave 2 | 1.1.1 | judgment | 2 | WAITING |
+| 1.1.1 | docker-compose.override.yaml, Dockerfile, .dockerignore, deploy/**, src/index.ts, src/rules/**, tests/deploy/**, tests/rules/**, docs/impl/agent-gates/leaf-1.1.1.GATES.md | - | judgment | 1 | VERIFIED |
+| 1.1.2 | apps/admin/**, apps/web/**, packages/constants/**, src/auth/**, tests/auth/**, docs/impl/agent-gates/leaf-1.1.2.GATES.md | - | judgment | 1 | VERIFIED |
+| 1.2.1 | src/index.ts, deploy/**, src/api/**, src/queue/**, src/db/**, src/config/**, tests/api/**, tests/queue/**, tests/db/**, tests/deploy/**, docs/impl/agent-gates/leaf-1.2.1.GATES.md | 1.1.1 | judgment | 2 | IN-FLIGHT |
 | 1.3.1 | defined at wave 3 | 1.2.1 | judgment | 3 | WAITING |
 | 1.3.2 | defined at wave 3 | 1.2.1, 1.1.2 | judgment | 3 | WAITING |
 | 1.4.1 | defined at wave 4 | 1.3.1 | judgment | 4 | WAITING |

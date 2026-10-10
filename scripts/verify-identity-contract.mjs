@@ -67,6 +67,22 @@ await check("tampering, a wrong key, or a malformed blob fails closed", () => {
   throws(() => id.decryptSecret("v2:" + blob.slice(3), key));
   throws(() => id.decryptSecret("garbage", key));
 });
+await check("a truncated GCM tag or a short IV is rejected, not accepted", () => {
+  const blob = id.encryptSecret("secret-token", key);
+  const [v, iv, tag, ct] = blob.split(":");
+  const shortTag = Buffer.from(tag, "base64url").subarray(0, 4).toString("base64url");
+  throws(() => id.decryptSecret([v, iv, shortTag, ct].join(":"), key), Error, "4-byte tag accepted");
+  const shortIv = Buffer.from(iv, "base64url").subarray(0, 8).toString("base64url");
+  throws(() => id.decryptSecret([v, shortIv, tag, ct].join(":"), key), Error, "8-byte IV accepted");
+});
+await check("a malformed sender (missing or non-string login) falls back to the service identity", async () => {
+  strictEqual((await id.resolveActor({ id: 7, type: "User" }, users)).kind, "service");
+  strictEqual((await id.resolveActor({ login: 42, id: 7, type: "User" }, users)).kind, "service");
+  strictEqual((await id.resolveActor({ login: "GHOST", id: 10137, type: "User" }, users)).reason, "ghost");
+});
+await check("the token key must be strict base64", () => {
+  throws(() => id.loadTokenKey({ GITSYNC_TOKEN_KEY: "!!" + key.toString("base64") }));
+});
 await check("the token key must be 32 bytes of base64 from GITSYNC_TOKEN_KEY", () => {
   strictEqual(id.loadTokenKey({ GITSYNC_TOKEN_KEY: key.toString("base64") }).length, 32);
   throws(() => id.loadTokenKey({ GITSYNC_TOKEN_KEY: randomBytes(31).toString("base64") }));

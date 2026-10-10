@@ -143,6 +143,11 @@ await check("invalid rule sets fail loudly at parse time", () => {
     missingWhen: `- then: [ { comment: x } ]\n`,
     notAList: `when: push\nthen: [ { comment: x } ]\n`,
     twoKeyAction: `- when: push\n  then: [ { comment: x, add_label: y } ]\n`,
+    misspelledIf: `- when: push\n  iff: { base_branch: "^main$" }\n  then: [ { comment: x } ]\n`,
+    unknownRuleKey: `- when: push\n  unless: { labels_any: [x] }\n  then: [ { comment: x } ]\n`,
+    nonStringName: `- name: { a: 1 }\n  when: push\n  then: [ { comment: x } ]\n`,
+    emptyFamilyMember: `- when: "issue."\n  then: [ { comment: x } ]\n`,
+    junkFamilyMember: `- when: "issue.Opened Now"\n  then: [ { comment: x } ]\n`,
   };
   for (const [k, src] of Object.entries(bad)) throws(() => parseRules(src), Error, `parseRules accepted ${k}`);
 });
