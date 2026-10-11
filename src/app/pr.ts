@@ -5,6 +5,7 @@ import { checkPrReadiness, resolveStateTarget, prEventToRuleEvent } from "../git
 import type { LinkedIssue } from "../github/pr-automation.ts";
 import { parseReferences, resolveReferences } from "../parse/references.ts";
 import type { IssueRef } from "../parse/references.ts";
+import { createPlanRoot, nextCreateGeneration } from "../sync/mirror.ts";
 import { prRollupKey, prRollupTitle, upsertRollupLink } from "../sync/dev-info.ts";
 import type { RollupTarget } from "../sync/dev-info.ts";
 import type { InboundJob } from "../queue/index.ts";
@@ -72,12 +73,25 @@ async function createRequested(ctx: AppContext, mapping: Mapping, job: InboundJo
       // The created id is never read here: the create, its sync link, the audit and the resume of the remaining PR work for
       // this one target are a single durable plan (CB's outbox), keyed by object so a redelivery reuses it.
       const link = { planeWorkspaceSlug: mapping.workspaceSlug, planeProjectId: project.id, planeIssueId: resultRef("created.id"), ghRepoId: mapping.ghRepoId, ghNumber: pr.number, ghKind: "pr" as const, tier: "closing" as const, createdBy: "magic_word" as const };
-      await ctx.plane.plan(`create:pr:${mapping.workspaceSlug}:${mapping.ghRepoId}#${pr.number}:${project.id}`, [
+      // One stable object key, and a generation under it (CC): a create that finished without leaving a link may be redone,
+      // one still in progress (`null`) may not.
+      const objectKey = `create:pr:${mapping.workspaceSlug}:${mapping.ghRepoId}#${pr.number}:${project.id}`;
+      const generation = await nextCreateGeneration(ctx.db, objectKey);
+      if (generation === null) {
+        await appendAudit(ctx.db, { kind: "pr_create_request", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, number: pr.number, identifier }, outcome: "ignored", error: "a create for this pull request is already in progress" });
+        continue;
+      }
+      const registered = await ctx.plane.plan(generation, [
         { kind: "write", side: "plane", bind: "created", write: { kind: "create_issue", slug: mapping.workspaceSlug, projectId: project.id, fields: { name: String(pr.title ?? ""), ...(started.ok ? { state: started.stateId } : {}) } } },
         { kind: "sync_link", link },
         { kind: "audit", entry: { kind: "pr_create_request", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, number: pr.number, identifier, planeIssueId: resultRef("created.id") }, outcome: "created" } },
         { kind: "write", side: "github", write: { kind: "resume_reducer", continuation: { kind: "pr_created", job, mappingId: mapping.id, projectId: project.id, identifier, issueId: resultRef("created.id") } } },
-      ], { pendingLink: link });
+      ], { pendingLink: link, pendingMarker: { key: objectKey, root: createPlanRoot(generation), link } });
+      // Only a newly registered plan owns the created item's rules (its `pr_created` resume). A duplicate plan
+      // (`inserted === false`) resumes nothing, so this delivery's own rules cover the item once it is linked; audit the duplicate.
+      if ((registered as { inserted?: boolean }).inserted === false) {
+        await appendAudit(ctx.db, { kind: "pr_create_request", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, number: pr.number, identifier }, outcome: "ignored", error: "create plan already registered for this pull request" });
+      }
       continue;
     }
     const created = await ctx.plane.apply({ kind: "create_issue", slug: mapping.workspaceSlug, projectId: project.id, fields: { name: String(pr.title ?? ""), ...(started.ok ? { state: started.stateId } : {}) } });
@@ -104,7 +118,10 @@ export async function fireReadyForMerge(ctx: AppContext, mapping: Mapping, job: 
   const p: any = job.payload;
   const fired = async () => (await ctx.db.query("SELECT 1 FROM audit_log WHERE kind = 'ready_for_merge' AND workspace_slug = $1 AND detail->>'repoId' = $2 AND detail->>'number' = $3 AND detail->>'sha' = $4", [mapping.workspaceSlug, String(mapping.ghRepoId), String(pr.number), headSha])).rows.length > 0;
   if (await fired()) return false;
-  if (!(await checkPrReadiness(octokit, { owner: mapping.owner, repo: mapping.repo }, pr.number, headSha))) return false;
+  const ready = await checkPrReadiness(octokit, { owner: mapping.owner, repo: mapping.repo }, pr.number, headSha, {
+    onUnavailable: async (info) => { await appendAudit(ctx.db, { kind: "readiness_unavailable", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, number: pr.number, sha: headSha, ...info }, outcome: "ignored", error: `GitHub answered ${info.status} for the commit status; grant the App "Commit statuses: Read"` }); },
+  });
+  if (!ready) return false;
   return withObjectLock(ctx.db, `ready:${mapping.ghRepoId}#${pr.number}`, async () => {
     if (await fired()) return false;
     const event = prEventToRuleEvent("pull_request", { action: "ready_for_merge", pull_request: pr, repository: p?.repository }, { isReadyForMerge: true });
@@ -156,6 +173,15 @@ async function handleForMapping(ctx: AppContext, mapping: Mapping, job: InboundJ
     await upsertSyncLink(ctx.db, { planeWorkspaceSlug: slug, planeProjectId: projectId, planeIssueId: item.issueId, ghRepoId: mapping.ghRepoId, ghNumber: pr.number, ghKind: "pr", tier: ref.tier, createdBy: ref.source === "branch" ? "branch" : "magic_word" });
     items.push(item);
     if (had.rows.length === 0) fresh.push(item);
+  }
+  // R4 F7: an item made by `{ID}-NEW` is a stored `pr` link, not a reference in the text, so later deliveries (merge, review,
+  // close) find it among the PR's active links.
+  const stored = await ctx.db.query<{ plane_project_id: string; plane_issue_id: string; tier: IssueRef["tier"] }>(
+    "SELECT plane_project_id, plane_issue_id, tier FROM sync_links WHERE gh_repo_id = $1 AND gh_number = $2 AND gh_kind = 'pr' AND status = 'active' AND plane_workspace_slug = $3 AND plane_project_id = $4",
+    [mapping.ghRepoId, pr.number, slug, mapping.planeProjectId]);
+  for (const r of stored.rows) {
+    if (items.some((i) => i.issueId === r.plane_issue_id)) continue;
+    items.push({ ref: { identifier: `${r.plane_issue_id}`, project: "", sequence: 0, tier: r.tier, source: "body" }, issueId: r.plane_issue_id, projectId: r.plane_project_id, identifier: r.plane_issue_id });
   }
   if (["opened", "edited", "reopened"].includes(p.action)) {
     const created = await createRequested(ctx, mapping, job, parsed.createRequests);

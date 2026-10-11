@@ -3,7 +3,7 @@
 import type { SecretString } from "../auth/identity.ts";
 import { appendAudit } from "../db/ledgers.ts";
 import { QLL_DEFAULTS, compileLifecycleRules, createRuleExecutor } from "../github/pr-automation.ts";
-import type { LinkedIssue } from "../github/pr-automation.ts";
+import type { ExecutorDeps, LinkedIssue } from "../github/pr-automation.ts";
 import { evaluate, parseRules, run } from "../rules/engine.ts";
 import type { RuleEvent } from "../rules/types.ts";
 import { parseReferences, resolveReferences } from "../parse/references.ts";
@@ -57,8 +57,14 @@ export async function runRules(ctx: AppContext, mapping: Mapping, event: RuleEve
   const slug = mapping.workspaceSlug;
   const users = usersFor(ctx.db, slug);
   const actorToken = await opts.actor();
+  // A rule whose executor skipped every target (relation tier, non-closing merge, unmapped assignee) wrote nothing: audit it `ignored`, not `applied`.
+  let writes = 0;
+  const writer: ExecutorDeps["writer"] = {
+    apply: (...args: Parameters<typeof ctx.plane.apply>) => { writes++; return ctx.plane.apply(...args); },
+    ...(ctx.plane.mutateIssue ? { mutateIssue: (...args: Parameters<NonNullable<typeof ctx.plane.mutateIssue>>) => { writes++; return ctx.plane.mutateIssue!(...args); } } : {}),
+  };
   const executor = createRuleExecutor({
-    writer: ctx.plane,
+    writer,
     listStates: (projectId) => ctx.planeClient.listStates(slug, projectId),
     issues,
     slug,
@@ -77,7 +83,7 @@ export async function runRules(ctx: AppContext, mapping: Mapping, event: RuleEve
     if (isPermanent(err)) return; // recorded; retrying cannot change the outcome
     throw err;
   }
-  await appendAudit(ctx.db, { kind: "rule_match", source: opts.source ?? "github", deliveryId: opts.deliveryId, workspaceSlug: slug, detail, outcome: "applied" });
+  await appendAudit(ctx.db, { kind: "rule_match", source: opts.source ?? "github", deliveryId: opts.deliveryId, workspaceSlug: slug, detail, outcome: writes === 0 && evaluation.actions.length > 0 ? "ignored" : "applied" });
 }
 
 /**

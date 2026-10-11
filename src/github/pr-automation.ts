@@ -243,7 +243,8 @@ export async function checkPrReadiness(
   octokit: OctokitRequest,
   repo: { owner: string; repo: string },
   prNumber: number,
-  headSha: string
+  headSha: string,
+  hooks?: { onUnavailable?: (info: { what: "commit_status"; status: number }) => void | Promise<void> }
 ): Promise<boolean> {
   const fetchAllReviews = async (): Promise<ReviewSummary[]> => {
     const all: ReviewSummary[] = [];
@@ -284,7 +285,9 @@ export async function checkPrReadiness(
     return all;
   };
 
-  const fetchCombinedStatus = async (): Promise<CombinedCommitStatus> => {
+  // R4 F6: a status read that fails is never "no statuses". 403/404 (App lacks "Commit statuses: Read") means readiness cannot
+  // be judged, so the PR is not ready; anything else (5xx, network) propagates so the delivery retries.
+  const fetchCombinedStatus = async (): Promise<CombinedCommitStatus | null> => {
     try {
       const res = await octokit.request<CombinedCommitStatus>("GET /repos/{owner}/{repo}/commits/{ref}/status", {
         owner: repo.owner,
@@ -292,8 +295,13 @@ export async function checkPrReadiness(
         ref: headSha,
       });
       return res?.data ?? { total_count: 0 };
-    } catch {
-      return { total_count: 0 };
+    } catch (err) {
+      const status = Number((err as { status?: unknown } | null)?.status);
+      if (status === 403 || status === 404) {
+        await hooks?.onUnavailable?.({ what: "commit_status", status });
+        return null;
+      }
+      throw err;
     }
   };
 
@@ -303,6 +311,7 @@ export async function checkPrReadiness(
     fetchCombinedStatus(),
   ]);
 
+  if (commitStatus === null) return false;
   return isReadyForMerge(reviews, checkSuites, commitStatus);
 }
 

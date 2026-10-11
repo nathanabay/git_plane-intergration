@@ -11,6 +11,7 @@
 *   **Issues:** Read & Write (for reading issues, writing issue comments, and managing labels) [CONFIRMED]
 *   **Contents:** Read & Write (for reading commits/branches and creating branches via git refs) [CONFIRMED]
 *   **Checks:** Read-only (for reading check runs and check suites) [CONFIRMED]
+*   **Commit statuses:** Read-only (for the combined status of a PR head commit and the `status` webhook; without it readiness is judged not ready) [CONFIRMED]
 *   **Deployments:** Read-only (for reading deployments and deployment statuses) [CONFIRMED]
 *   **Administration:** Write (for creating autolink references) [CONFIRMED]
     *   *Note: This is a high-privilege permission and forces extra scrutiny.*

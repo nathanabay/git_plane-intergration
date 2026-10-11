@@ -144,15 +144,41 @@ export async function handleGithubIssue(ctx: AppContext, job: InboundJob): Promi
   }
 }
 
-/** Plane events mirror nothing for an unmapped App, so "not installed" (404/403) is installation 0; anything else is transient and fails the delivery (F7). */
+/** True for a 403 that is GitHub throttling us (secondary rate limit / exhausted quota), which is transient. */
+function isRateLimited(err: unknown): boolean {
+  const e = err as { response?: { headers?: Record<string, unknown> }; headers?: Record<string, unknown> } | null;
+  const headers = e?.response?.headers ?? e?.headers ?? {};
+  const get = (name: string) => headers[name] ?? headers[name.toLowerCase()];
+  return get("retry-after") !== undefined || String(get("x-ratelimit-remaining")) === "0";
+}
+
+/**
+ * Plane events mirror nothing for an unmapped App, so "not installed" is installation 0: a 404, or a 403 that is not rate
+ * limiting. A throttled 403 (retry-after / x-ratelimit-remaining: 0) and every other failure is transient and fails the
+ * delivery so it retries (F7, R4 F8).
+ */
 async function planeInstallation(ctx: AppContext, mapping: Mapping): Promise<number> {
   try {
     return await installationFor(ctx, mapping);
   } catch (err) {
     const status = (err as { status?: number } | null)?.status;
-    if (status === 404 || status === 403) return 0;
+    if (status === 404 || (status === 403 && !isRateLimited(err))) return 0;
     throw err;
   }
+}
+
+class GithubNotInstalled extends Error {
+  constructor() { super("the GitHub App is not installed on this repository"); this.name = "GithubNotInstalled"; }
+}
+
+/** Installation 0 means no App access: a GitHub write is audited `github_not_installed` and never registered or planned (R4 F8). */
+function notInstalledWriter(ctx: AppContext, mapping: Mapping, job: InboundJob): MirrorDeps["github"] {
+  return {
+    async apply(write: GithubWrite) {
+      await appendAudit(ctx.db, { kind: "github_not_installed", source: "plane", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, write: write.kind }, outcome: "ignored", error: "the GitHub App is not installed on this repository" });
+      throw new GithubNotInstalled();
+    },
+  };
 }
 
 export async function handlePlaneIssue(ctx: AppContext, job: InboundJob): Promise<void> {
@@ -173,15 +199,20 @@ export async function handlePlaneIssue(ctx: AppContext, job: InboundJob): Promis
     // needs it will say so. Any other failure (GitHub 5xx, network) is transient and fails the delivery so it retries (F7):
     // registering writes with installation 0 made them fail permanently on the first attempt.
     // `createContinuation` lets the mirror register this event behind a create that is still in flight (`mirror_pending`).
-    const deps = mirrorDeps(ctx, mapping, await planeInstallation(ctx, mapping), { job });
+    const installationId = await planeInstallation(ctx, mapping);
+    const deps = mirrorDeps(ctx, mapping, installationId, { job });
+    if (installationId === 0) deps.github = notInstalledWriter(ctx, mapping, job);
     // A comment event's `data.id` is the comment's; the work item it belongs to is `data.issue`.
     const issueRef = typeof data?.issue === "string" ? data.issue : data?.issue?.id;
     const planeIssueId = job.event === "issue_comment" ? issueRef : typeof data?.id === "string" ? data.id : issueRef;
     try {
       await withObjectLock(ctx.db, `plane:${planeIssueId}`, () => onPlaneIssue({ event: job.event, payload: p }, deps));
     } catch (err) {
-      if (!isUniqueViolation(err)) throw err;
-      await appendAudit(ctx.db, { kind: "mirror_conflict", source: "plane", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { projectId }, outcome: "ignored", error: "another delivery already mirrored this item" });
+      if ((err as { name?: string } | null)?.name === "GithubNotInstalled") continue; // audited by the writer
+      if ((err as { name?: string } | null)?.name !== "GithubNotInstalled") { // that one was audited by the writer
+        if (!isUniqueViolation(err)) throw err;
+        await appendAudit(ctx.db, { kind: "mirror_conflict", source: "plane", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { projectId }, outcome: "ignored", error: "another delivery already mirrored this item" });
+      }
     }
     // §7.5 `issue.*` / `comment.*` rules on the Plane item itself (F7).
     const event = planeRuleEvent(job.event, p, mapping.planeProjectId, mapping.ghRepoFullName);
