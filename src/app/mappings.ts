@@ -1,4 +1,5 @@
 import type { Db } from "../db/migrate.ts";
+import { appendAudit } from "../db/ledgers.ts";
 
 export interface Mapping {
   id: number;
@@ -25,16 +26,35 @@ function toMapping(r: any): Mapping {
   };
 }
 
+/**
+ * F5: a mapping syncs only while its installation is allow-listed for its own workspace. A row with no remembered
+ * installation yet cannot be judged here; it is checked as soon as the installation is resolved and remembered.
+ * A mapping that fails the check is skipped and audited as `installation_not_allowed`.
+ */
+async function allowedMappings(db: Db, where: string, params: unknown[]): Promise<Mapping[]> {
+  const rows = (await db.query(
+    `SELECT rm.*, (rm.installation_id IS NULL OR wi.installation_id IS NOT NULL) AS allowed
+       FROM repo_mappings rm
+       LEFT JOIN workspace_installations wi ON wi.installation_id = rm.installation_id AND wi.workspace_slug = rm.workspace_slug
+      WHERE ${where} ORDER BY rm.id`, params)).rows;
+  for (const r of rows.filter((x: any) => !x.allowed)) {
+    await appendAudit(db, {
+      kind: "installation_not_allowed", source: "mapping", workspaceSlug: r.workspace_slug,
+      detail: { mappingId: Number(r.id), ghRepoId: Number(r.gh_repo_id), installationId: Number(r.installation_id) }, outcome: "skipped",
+    });
+  }
+  return rows.filter((x: any) => x.allowed).map(toMapping);
+}
+
 export async function mappingsForRepo(db: Db, ghRepoId: number): Promise<Mapping[]> {
-  return (await db.query("SELECT * FROM repo_mappings WHERE gh_repo_id = $1 ORDER BY id", [ghRepoId])).rows.map(toMapping);
+  return allowedMappings(db, "rm.gh_repo_id = $1", [ghRepoId]);
 }
 
 /** Mappings of a Plane project, optionally narrowed to one workspace (F2: a project id alone is not an authority). */
 export async function mappingsForProject(db: Db, planeProjectId: string, workspaceSlug?: string): Promise<Mapping[]> {
-  const rows = workspaceSlug === undefined
-    ? (await db.query("SELECT * FROM repo_mappings WHERE plane_project_id = $1 ORDER BY id", [planeProjectId])).rows
-    : (await db.query("SELECT * FROM repo_mappings WHERE plane_project_id = $1 AND workspace_slug = $2 ORDER BY id", [planeProjectId, workspaceSlug])).rows;
-  return rows.map(toMapping);
+  return workspaceSlug === undefined
+    ? allowedMappings(db, "rm.plane_project_id = $1", [planeProjectId])
+    : allowedMappings(db, "rm.plane_project_id = $1 AND rm.workspace_slug = $2", [planeProjectId, workspaceSlug]);
 }
 
 export async function mappingForRepoName(db: Db, ghRepoId: number): Promise<Mapping | null> {

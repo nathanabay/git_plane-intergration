@@ -12,7 +12,7 @@ import { startMaintenance } from "../queue/cron.ts";
 import { startWorkers } from "../queue/workers.ts";
 import { GithubWritePath } from "../sync/github.ts";
 import { PlaneClient, PlaneWritePath } from "../sync/plane.ts";
-import { createGithubUserLookup, createMappingVerifier, createPlaneMemberCheck } from "../ui/mapping-check.ts";
+import { createGithubUserLookup, createMappingVerifier, installationWorkspaceFromDb, createPlaneMemberCheck } from "../ui/mapping-check.ts";
 import { createConfigRoutes, createUiRoutes, defaultUiDistDir } from "../ui/api.ts";
 import type { Route } from "../index.ts";
 import type { AppContext } from "./context.ts";
@@ -39,10 +39,12 @@ export interface RouteParts {
   ghClient: GithubClient;
   credentials: CredentialSource;
   enqueue(job: InboundJob): Promise<void>;
+  /** F3: explicit retry of a failed outbound write, scoped to its stored workspace; unwired → the route answers 503. */
+  retryFailed?(id: string, workspaceSlug: string): Promise<{ ok: true; retried: boolean }>;
 }
 
 /** Every HTTP route of the running service. Split from `runService` so a test can drive the real wiring (F1). */
-export function composeRoutes({ config, db, tokenKey, ctx, planeClient, ghClient, credentials, enqueue }: RouteParts): Route[] {
+export function composeRoutes({ config, db, tokenKey, ctx, planeClient, ghClient, credentials, enqueue, retryFailed }: RouteParts): Route[] {
   return [
     ...createWebhookRoutes({
       planeSecret: config.PLANE_WEBHOOK_SECRET,
@@ -55,7 +57,7 @@ export function composeRoutes({ config, db, tokenKey, ctx, planeClient, ghClient
       publicOrigin: config.PUBLIC_ORIGIN,
       tokenKey,
       // F1: a mapping is only stored when its project is in the workspace and the App reaches its repository.
-      verifyMapping: createMappingVerifier({ plane: planeClient, github: ghClient }),
+      verifyMapping: createMappingVerifier({ plane: planeClient, github: ghClient, installationWorkspace: installationWorkspaceFromDb(db) }),
       // F5: a manual user link is checked against the account GitHub reports for the login (id must match).
       lookupGithubUser: createGithubUserLookup(async (route, params) => {
         if (!ghClient.appRequest) throw new Error("the GitHub client cannot make App-level requests");
@@ -65,6 +67,7 @@ export function composeRoutes({ config, db, tokenKey, ctx, planeClient, ghClient
       isWorkspaceMember: createPlaneMemberCheck(planeClient),
       operations: {
         enqueue,
+        ...(retryFailed ? { retryFailed } : {}),
         resolveIssue: (slug, key) => issueResolver(ctx, slug)(key),
         githubFor: async (repo) => {
           const mapping = (await mappingsForRepo(db, repo.ghRepoId))[0];
@@ -120,7 +123,7 @@ export async function runService(
     github: ordered.github,
   };
 
-  const routes = composeRoutes({ config, db, tokenKey, ctx, planeClient, ghClient, credentials, enqueue: (job) => queues.enqueueInbound(job) });
+  const routes = composeRoutes({ config, db, tokenKey, ctx, planeClient, ghClient, credentials, enqueue: (job) => queues.enqueueInbound(job), retryFailed: (id, slug) => ordered.retryFailed(id, slug) });
 
   const server = await hooks.startServer({ port: config.PORT, host: config.HOST, routes });
   console.log(`git-sync server started on ${config.HOST}:${server.port}`);
