@@ -49,7 +49,18 @@ const papi = createServer((req, res) => {
 });
 await new Promise((r) => papi.listen(0, "127.0.0.1", r));
 const ORIGIN = "https://tasks.qelal.et";
-const srv = await startServer({ port: 0, host: "127.0.0.1", routes: createConfigRoutes({ db, planeInternalUrl: `http://127.0.0.1:${papi.address().port}`, publicOrigin: ORIGIN, tokenKey: KEY }) });
+// Review round 2 F1: mapping writes fail closed without a verifier, so the fixture injects one that
+// accepts the test project/repo and refuses a foreign project or an unreachable repository.
+const verified = [];
+const verifyMapping = async (check) => {
+  verified.push(check);
+  if (check.planeProjectId && check.planeProjectId !== "p1") return "That Plane project does not belong to this workspace";
+  if (check.repo && (check.repo.id !== 555 || check.repo.fullName !== "acme/web")) return "The GitHub App cannot reach that repository";
+  return null;
+};
+const lookupGithubUser = async (login) => ({ memgh: { login: "memgh", id: 777 } })[login.toLowerCase()] ?? null;
+const routeDeps = { db, planeInternalUrl: `http://127.0.0.1:${papi.address().port}`, publicOrigin: ORIGIN, tokenKey: KEY };
+const srv = await startServer({ port: 0, host: "127.0.0.1", routes: createConfigRoutes({ ...routeDeps, verifyMapping, lookupGithubUser }) });
 const base = `http://127.0.0.1:${srv.port}/git-sync/api`;
 const call = (method, path, { cookie, body, origin = ORIGIN, type = "application/json" } = {}) =>
   fetch(base + path, { method, headers: { ...(cookie ? { cookie } : {}), ...(origin ? { origin } : {}), ...(body !== undefined ? { "content-type": type } : {}) }, body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body) });
@@ -76,6 +87,17 @@ await check("a workspace admin creates, lists, updates and deletes mappings in t
   const row = (await db.query(`SELECT * FROM repo_mappings`)).rows[0];
   strictEqual(row.workspace_slug, "qelal");
   strictEqual(row.smart_commits_enabled, false);
+});
+
+await check("mapping writes fail closed without a verifier (503) and a verifier refusal is 422 (review r2 F1)", async () => {
+  const bare = await startServer({ port: 0, host: "127.0.0.1", routes: createConfigRoutes(routeDeps) });
+  try {
+    const r = await fetch(`http://127.0.0.1:${bare.port}/git-sync/api/workspaces/qelal/mappings`, { method: "POST", headers: { cookie: ADM, origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ ...mapping, ghRepoId: 556, ghRepoFullName: "acme/other" }) });
+    strictEqual(r.status, 503);
+  } finally { await bare.close(); }
+  strictEqual((await call("POST", "/workspaces/qelal/mappings", { cookie: ADM, body: { ...mapping, planeProjectId: "p-foreign" } })).status, 422);
+  strictEqual((await call("POST", "/workspaces/qelal/mappings", { cookie: ADM, body: { ...mapping, ghRepoId: 999, ghRepoFullName: "acme/secret" } })).status, 422);
+  ok(verified.some((c) => c.slug === "qelal"), "the verifier was never consulted");
 });
 
 await check("invalid mapping bodies are 422 (direction outside §7.3, missing repo)", async () => {
@@ -134,6 +156,7 @@ await check("conflict policies default per §7.3 and reject unknown fields or po
 await check("unlinking a user removes the mapping and revokes their stored tokens (§9 revocation path)", async () => {
   strictEqual((await call("PUT", `/workspaces/qelal/user-links/u-mem`, { cookie: ADM, body: { githubLogin: "memgh", githubId: 777 } })).status, 200);
   strictEqual((await call("PUT", `/workspaces/qelal/user-links/u-other`, { cookie: ADM, body: { githubLogin: "nogh" } })).status, 422);
+  strictEqual((await call("PUT", `/workspaces/qelal/user-links/u-other`, { cookie: ADM, body: { githubLogin: "memgh", githubId: 1 } })).status, 422, "a GitHub id that does not match the login was accepted");
   const vault = new TokenVault(new PgTokenStore(db), KEY);
   await vault.store("u-mem", "plane_pat", "plane_api_MEMSECRET");
   strictEqual((await call("DELETE", `/workspaces/qelal/user-links/u-mem`, { cookie: ADM })).status, 204);
