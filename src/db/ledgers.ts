@@ -277,3 +277,30 @@ export async function getInstallationWorkspace(db: Db, installationId: number | 
     createdAt: typeof r.created_at === "string" ? r.created_at : r.created_at.toISOString(),
   };
 }
+
+// ---- unlink tombstones (round-4 F11) ---------------------------------------------------------------------
+
+/** Remembers that an admin unlinked this GitHub account in this workspace, so email auto-linking does not undo it. */
+export async function addUserLinkTombstone(db: Db, workspaceSlug: string, ghId: number): Promise<void> {
+  await db.query(`INSERT INTO user_link_tombstones (workspace_slug, gh_id) VALUES ($1, $2) ON CONFLICT (workspace_slug, gh_id) DO NOTHING`, [workspaceSlug, ghId]);
+}
+
+export async function isUserLinkTombstoned(db: Db, workspaceSlug: string, ghId: number): Promise<boolean> {
+  return (await db.query(`SELECT 1 FROM user_link_tombstones WHERE workspace_slug = $1 AND gh_id = $2`, [workspaceSlug, ghId])).rows.length > 0;
+}
+
+/** A manual link is an explicit admin decision and lifts the tombstone. */
+export async function clearUserLinkTombstone(db: Db, workspaceSlug: string, ghId: number): Promise<void> {
+  await db.query(`DELETE FROM user_link_tombstones WHERE workspace_slug = $1 AND gh_id = $2`, [workspaceSlug, ghId]);
+}
+
+// ---- GitHub credential state (prev F15) ---------------------------------------------------------------------
+
+/** Durably records that a database credential row exists/existed, so the environment fallback is closed for good. */
+export async function markCredentialRowSeen(db: Db): Promise<void> {
+  await db.query(`INSERT INTO github_credential_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+}
+
+export async function credentialRowEverSeen(db: Db): Promise<boolean> {
+  return (await db.query(`SELECT 1 FROM github_credential_state WHERE id = 1 AND db_row_seen`)).rows.length > 0;
+}

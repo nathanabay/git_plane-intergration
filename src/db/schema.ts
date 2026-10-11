@@ -6,6 +6,8 @@ export const TABLES = {
   processedCommits: "processed_commits",
   auditLog: "audit_log",
   devInfoLinks: "dev_info_links",
+  userLinkTombstones: "user_link_tombstones",
+  githubCredentialState: "github_credential_state",
 } as const;
 
 export interface SyncLinkRow {
