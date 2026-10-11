@@ -1,0 +1,235 @@
+// Pull requests (spec §6, §7.1, §7.4): parse references, link the work items, run the lifecycle rules,
+// keep the PR rollup link on every linked item, and say so on the GitHub side if linkback is on.
+import { appendAudit, upsertSyncLink } from "../db/ledgers.ts";
+import { checkPrReadiness, resolveStateTarget, prEventToRuleEvent } from "../github/pr-automation.ts";
+import type { LinkedIssue } from "../github/pr-automation.ts";
+import { parseReferences, resolveReferences } from "../parse/references.ts";
+import type { IssueRef } from "../parse/references.ts";
+import { prRollupKey, prRollupTitle, upsertRollupLink } from "../sync/dev-info.ts";
+import type { RollupTarget } from "../sync/dev-info.ts";
+import type { InboundJob } from "../queue/index.ts";
+import { actorTokenFor, installationFor, loadMagicWords, planeIssueUrl, projectOf, withObjectLock } from "./context.ts";
+import type { AppContext } from "./context.ts";
+import { mappingsForRepo } from "./mappings.ts";
+import type { Mapping } from "./mappings.ts";
+import { linkedIssuesFor, runRules } from "./rules.ts";
+import { resultRef } from "./writers.ts";
+import type { ReducerContinuation } from "./writers.ts";
+
+export interface LinkedItem { ref: IssueRef; issueId: string; projectId: string; identifier: string }
+
+type PrState = "open" | "merged" | "closed_unmerged";
+const prStateOf = (pr: any): PrState => (pr?.merged ? "merged" : String(pr?.state).toLowerCase() === "open" ? "open" : "closed_unmerged");
+
+/** Every other PR linked to the item, as GitHub reports it now. Unknown counts as open: never advance on a guess (§6). */
+async function otherPrStates(ctx: AppContext, issueId: string, thisRepoId: number, thisNumber: number): Promise<{ state: PrState }[]> {
+  const { rows } = await ctx.db.query<{ gh_repo_id: string | number; gh_number: number }>(
+    "SELECT gh_repo_id, gh_number FROM sync_links WHERE plane_issue_id = $1 AND gh_kind = 'pr' AND status = 'active' AND NOT (gh_repo_id = $2 AND gh_number = $3)",
+    [issueId, thisRepoId, thisNumber]);
+  const out: { state: PrState }[] = [];
+  for (const r of rows) {
+    try {
+      const [m] = await mappingsForRepo(ctx.db, Number(r.gh_repo_id));
+      if (!m) throw new Error("repository not mapped");
+      const octokit = await ctx.ghClient.installationOctokit(await installationFor(ctx, m));
+      const res = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", { owner: m.owner, repo: m.repo, pull_number: r.gh_number });
+      out.push({ state: prStateOf(res.data) });
+    } catch {
+      out.push({ state: "open" });
+    }
+  }
+  return out;
+}
+
+async function reviewsOf(ctx: AppContext, mapping: Mapping, payload: any, number: number): Promise<{ state: string; user?: { login?: string } | null }[] | undefined> {
+  try {
+    const octokit = await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, payload));
+    const res = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", { owner: mapping.owner, repo: mapping.repo, pull_number: number, per_page: 100 });
+    return Array.isArray(res.data) ? res.data : undefined;
+  } catch {
+    return undefined; // the rollup then reads REVIEW rather than failing the delivery
+  }
+}
+
+/** `{ID}-NEW` in a PR body (§6): a new work item in that project, linked, in the started group. */
+async function createRequested(ctx: AppContext, mapping: Mapping, job: InboundJob, identifiers: string[]): Promise<LinkedItem[]> {
+  const p: any = job.payload;
+  const pr = p.pull_request;
+  const out: LinkedItem[] = [];
+  if (identifiers.length === 0) return out;
+  const projects = await ctx.planeClient.listAll<{ id: string; identifier: string }>(`/workspaces/${mapping.workspaceSlug}/projects/`);
+  for (const identifier of identifiers) {
+    const project = projects.find((x) => x.identifier?.toUpperCase() === identifier);
+    const seen = await ctx.db.query("SELECT 1 FROM audit_log WHERE kind = 'pr_create_request' AND detail->>'repoId' = $1 AND detail->>'number' = $2 AND detail->>'identifier' = $3 AND outcome = 'created'", [String(mapping.ghRepoId), String(pr.number), identifier]);
+    if (seen.rows.length) continue;
+    if (!project) {
+      await appendAudit(ctx.db, { kind: "pr_create_request", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, number: pr.number, identifier }, outcome: "failed", error: `no Plane project has the identifier ${identifier}` });
+      continue;
+    }
+    const states = await ctx.planeClient.listStates(mapping.workspaceSlug, project.id);
+    const started = resolveStateTarget(states, "started");
+    if (ctx.plane.plan && ctx.github.plan) {
+      // The created id is never read here: the create, its sync link, the audit and the resume of the remaining PR work for
+      // this one target are a single durable plan (CB's outbox), keyed by object so a redelivery reuses it.
+      const link = { planeWorkspaceSlug: mapping.workspaceSlug, planeProjectId: project.id, planeIssueId: resultRef("created.id"), ghRepoId: mapping.ghRepoId, ghNumber: pr.number, ghKind: "pr" as const, tier: "closing" as const, createdBy: "magic_word" as const };
+      await ctx.plane.plan(`create:pr:${mapping.workspaceSlug}:${mapping.ghRepoId}#${pr.number}:${project.id}`, [
+        { kind: "write", side: "plane", bind: "created", write: { kind: "create_issue", slug: mapping.workspaceSlug, projectId: project.id, fields: { name: String(pr.title ?? ""), ...(started.ok ? { state: started.stateId } : {}) } } },
+        { kind: "sync_link", link },
+        { kind: "audit", entry: { kind: "pr_create_request", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, number: pr.number, identifier, planeIssueId: resultRef("created.id") }, outcome: "created" } },
+        { kind: "write", side: "github", write: { kind: "resume_reducer", continuation: { kind: "pr_created", job, mappingId: mapping.id, projectId: project.id, identifier, issueId: resultRef("created.id") } } },
+      ], { pendingLink: link });
+      continue;
+    }
+    const created = await ctx.plane.apply({ kind: "create_issue", slug: mapping.workspaceSlug, projectId: project.id, fields: { name: String(pr.title ?? ""), ...(started.ok ? { state: started.stateId } : {}) } });
+    if (!created.id) throw new Error("Plane returned no id for the new work item");
+    await upsertSyncLink(ctx.db, { planeWorkspaceSlug: mapping.workspaceSlug, planeProjectId: project.id, planeIssueId: created.id, ghRepoId: mapping.ghRepoId, ghNumber: pr.number, ghKind: "pr", tier: "closing", createdBy: "magic_word" });
+    await appendAudit(ctx.db, { kind: "pr_create_request", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, number: pr.number, identifier, planeIssueId: created.id }, outcome: "created" });
+    out.push({ ref: { identifier: `${identifier}-NEW`, project: identifier, sequence: 0, tier: "closing", source: "body" }, issueId: created.id, projectId: project.id, identifier });
+  }
+  return out;
+}
+
+/**
+ * F7: `pull_request.ready_for_merge` for one open, non-draft PR. Readiness is read from GitHub (an approving review
+ * and every check suite green, `checkPrReadiness`). The rule runs once per head commit: the audit row written after
+ * it is the guard, so redeliveries and the several events that arrive together (approval, each check suite, the
+ * commit status) cannot fire it twice. A new push is a new head commit and can become ready again.
+ */
+export async function fireReadyForMerge(ctx: AppContext, mapping: Mapping, job: InboundJob, octokit: any, pr: any): Promise<boolean> {
+  if (!pr || !Number.isSafeInteger(pr.number) || pr.draft === true || pr.merged === true || String(pr.state ?? "open").toLowerCase() !== "open") return false;
+  const headSha: unknown = pr.head?.sha;
+  if (typeof headSha !== "string" || !headSha) return false;
+  const issues = await linkedIssuesFor(ctx, mapping, "pr", pr.number); // no linked item: no API call at all
+  if (issues.length === 0) return false;
+  const p: any = job.payload;
+  const fired = async () => (await ctx.db.query("SELECT 1 FROM audit_log WHERE kind = 'ready_for_merge' AND workspace_slug = $1 AND detail->>'repoId' = $2 AND detail->>'number' = $3 AND detail->>'sha' = $4", [mapping.workspaceSlug, String(mapping.ghRepoId), String(pr.number), headSha])).rows.length > 0;
+  if (await fired()) return false;
+  if (!(await checkPrReadiness(octokit, { owner: mapping.owner, repo: mapping.repo }, pr.number, headSha))) return false;
+  return withObjectLock(ctx.db, `ready:${mapping.ghRepoId}#${pr.number}`, async () => {
+    if (await fired()) return false;
+    const event = prEventToRuleEvent("pull_request", { action: "ready_for_merge", pull_request: pr, repository: p?.repository }, { isReadyForMerge: true });
+    if (!event) return false;
+    await runRules(ctx, mapping, event, issues, { deliveryId: job.deliveryId, actor: () => actorTokenFor(ctx, mapping, p?.sender, event.trigger, p) });
+    await appendAudit(ctx.db, { kind: "ready_for_merge", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, number: pr.number, sha: headSha }, outcome: "fired" });
+    return true;
+  });
+}
+
+export async function handlePullRequest(ctx: AppContext, job: InboundJob): Promise<void> {
+  const p: any = job.payload;
+  const pr = p?.pull_request;
+  const repoId = Number(p?.repository?.id);
+  if (!pr || !Number.isSafeInteger(pr.number) || !Number.isSafeInteger(repoId)) {
+    await appendAudit(ctx.db, { kind: "pull_request", source: "github", deliveryId: job.deliveryId, outcome: "ignored", error: "payload has no pull request" });
+    return;
+  }
+  const mappings = await mappingsForRepo(ctx.db, repoId);
+  if (mappings.length === 0) {
+    await appendAudit(ctx.db, { kind: "pull_request", source: "github", deliveryId: job.deliveryId, detail: { repoId, number: pr.number }, outcome: "unmapped_repo" });
+    return;
+  }
+  for (const mapping of mappings) await handleForMapping(ctx, mapping, job);
+}
+
+async function handleForMapping(ctx: AppContext, mapping: Mapping, job: InboundJob): Promise<void> {
+  const p: any = job.payload;
+  const pr = p.pull_request;
+  const slug = mapping.workspaceSlug;
+  const parsed = parseReferences({
+    ...(typeof pr.head?.ref === "string" ? { branch: pr.head.ref } : {}),
+    ...(typeof pr.title === "string" ? { title: pr.title } : {}),
+    ...(typeof pr.body === "string" ? { body: pr.body } : {}),
+  }, await loadMagicWords(ctx.db));
+
+  const { found, unknown, statuses } = await resolveReferences(ctx.planeClient, slug, parsed.refs);
+  if (unknown.length) {
+    await appendAudit(ctx.db, { kind: "reference_unresolved", source: "github", deliveryId: job.deliveryId, workspaceSlug: slug, detail: { repoId: mapping.ghRepoId, number: pr.number, identifiers: unknown.map((u) => u.identifier), statuses }, outcome: "ignored" });
+  }
+
+  const items: LinkedItem[] = [];
+  const fresh: LinkedItem[] = [];
+  for (const { ref, issue } of found) {
+    const projectId = projectOf(issue);
+    if (!issue?.id || !projectId) continue;
+    const item: LinkedItem = { ref, issueId: String(issue.id), projectId, identifier: ref.identifier };
+    const had = await ctx.db.query("SELECT 1 FROM sync_links WHERE plane_issue_id = $1 AND gh_repo_id = $2 AND gh_number = $3", [item.issueId, mapping.ghRepoId, pr.number]);
+    await upsertSyncLink(ctx.db, { planeWorkspaceSlug: slug, planeProjectId: projectId, planeIssueId: item.issueId, ghRepoId: mapping.ghRepoId, ghNumber: pr.number, ghKind: "pr", tier: ref.tier, createdBy: ref.source === "branch" ? "branch" : "magic_word" });
+    items.push(item);
+    if (had.rows.length === 0) fresh.push(item);
+  }
+  if (["opened", "edited", "reopened"].includes(p.action)) {
+    const created = await createRequested(ctx, mapping, job, parsed.createRequests);
+    items.push(...created);
+    fresh.push(...created);
+  }
+  // F7/F8: readiness is judged from GitHub and targets the PR's stored links, so it does not depend on this delivery naming
+  // an item. It runs after the delivery's own lifecycle rules (`pull_request.approved` included): when both points are in
+  // the table the ready state must be the one the item ends in.
+  const approval = job.event === "pull_request_review" && p.action === "submitted" && String(p.review?.state ?? "").toLowerCase() === "approved";
+  const readyAfter = async () => {
+    if (approval) await fireReadyForMerge(ctx, mapping, job, await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, p)), pr);
+  };
+  if (items.length === 0) { await readyAfter(); return; }
+
+  await completeItems(ctx, mapping, job, items, fresh, readyAfter);
+}
+
+/** Lifecycle rules for the given items, then (optionally) readiness, the PR rollup link and the linkback comment (§7.1, §7.4). */
+async function completeItems(ctx: AppContext, mapping: Mapping, job: InboundJob, items: LinkedItem[], fresh: LinkedItem[], afterRules?: () => Promise<void>): Promise<void> {
+  const p: any = job.payload;
+  const pr = p.pull_request;
+  const slug = mapping.workspaceSlug;
+  // ---- lifecycle rules ---------------------------------------------------------------------------
+  const ruleEvent = prEventToRuleEvent(job.event, p);
+  if (ruleEvent) {
+    const merged = ruleEvent.trigger === "pull_request.merged";
+    const issues: LinkedIssue[] = [];
+    for (const it of items) {
+      const linkedPrs = merged ? [{ state: "merged" as const }, ...(await otherPrStates(ctx, it.issueId, mapping.ghRepoId, pr.number))] : undefined;
+      issues.push({ slug, projectId: it.projectId, issueId: it.issueId, tier: it.ref.tier, ...(linkedPrs ? { linkedPrs } : {}) });
+    }
+    await runRules(ctx, mapping, ruleEvent, issues, { deliveryId: job.deliveryId, actor: () => actorTokenFor(ctx, mapping, p.sender, ruleEvent.trigger, p) });
+  }
+  await afterRules?.();
+
+  // ---- development information (§7.4) ------------------------------------------------------------
+  const reviews = prStateOf(pr) === "open" ? await reviewsOf(ctx, mapping, p, pr.number) : undefined;
+  const title = prRollupTitle({ number: pr.number, title: String(pr.title ?? ""), state: String(pr.state ?? "open"), merged: pr.merged === true, ...(reviews ? { reviews } : {}) });
+  for (const it of items) {
+    const target: RollupTarget = { slug, projectId: it.projectId, issueId: it.issueId };
+    try {
+      await upsertRollupLink({ db: ctx.db, writer: ctx.plane, findLinkId: (t, url) => findLinkId(ctx, t, url) }, target, prRollupKey(mapping.ghRepoId, pr.number), { title, url: String(pr.html_url ?? "") });
+    } catch (err) {
+      await appendAudit(ctx.db, { kind: "rollup_link", source: "github", deliveryId: job.deliveryId, workspaceSlug: slug, detail: { issueId: it.issueId, number: pr.number }, outcome: "failed", error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  // ---- linkback comment (§7.4), once per newly created link ----------------------------------------
+  if (mapping.linkbackEnabled && fresh.length) {
+    const url = planeIssueUrl(ctx.config.PUBLIC_ORIGIN);
+    const lines = fresh.map((f) => `- ${f.identifier}: ${url(slug, f.projectId, f.issueId)}`);
+    await ctx.github.apply({ kind: "comment", installationId: await installationFor(ctx, mapping, p), owner: mapping.owner, repo: mapping.repo, repoId: mapping.ghRepoId, number: pr.number,
+      body: `Linked Plane work ${fresh.length === 1 ? "item" : "items"}:\n${lines.join("\n")}` });
+  }
+}
+
+/**
+ * Continuation of a `{ID}-NEW` create (the plan's last step): only the newly created target is processed — its lifecycle
+ * rules, the PR rollup link and the linkback comment — never the rest of the original delivery.
+ */
+export async function handleCreatedPr(ctx: AppContext, request: ReducerContinuation): Promise<void> {
+  const p: any = request.job.payload;
+  const repoId = Number(p?.repository?.id);
+  const mapping = (await mappingsForRepo(ctx.db, repoId)).find((m) => m.id === request.mappingId);
+  if (!mapping || !p?.pull_request) {
+    await appendAudit(ctx.db, { kind: "pr_create_request", source: "github", deliveryId: request.job.deliveryId, detail: { mappingId: request.mappingId, issueId: request.issueId }, outcome: "failed", error: "the mapping or pull request for a created work item is gone" });
+    return;
+  }
+  const item: LinkedItem = { ref: { identifier: `${request.identifier}-NEW`, project: request.identifier, sequence: 0, tier: "closing", source: "body" }, issueId: request.issueId, projectId: request.projectId, identifier: request.identifier };
+  await completeItems(ctx, mapping, request.job, [item], [item]);
+}
+
+export async function findLinkId(ctx: AppContext, t: RollupTarget, url: string): Promise<string | null> {
+  const links = await ctx.planeClient.listAll<{ id: string; url: string }>(`/workspaces/${t.slug}/projects/${t.projectId}/issues/${t.issueId}/links/`);
+  return links.find((l) => l.url === url)?.id ?? null;
+}
