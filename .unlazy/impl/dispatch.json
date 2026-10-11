@@ -286,7 +286,7 @@
         "fix-r1-a",
         "fix-r1-b"
       ],
-      "state": "sealed",
+      "state": "abandoned",
       "openedAt": "2026-10-10T21:55:43.060Z",
       "started": {
         "fix-r1-a": {
@@ -299,7 +299,81 @@
         }
       },
       "returned": {},
-      "sealedAt": "2026-10-10T21:56:42.244Z"
+      "sealedAt": "2026-10-10T21:56:42.244Z",
+      "reason": "Orca restarted mid-wave; both Sonnet sessions exited with fix-r1-a/b partly done (0 gates met). Work continues in wave w7b split across four implementers (fix-r1-sa, -sb, -ga, -gb) per user request.",
+      "abandonedAt": "2026-10-11T07:49:46.295Z"
+    },
+    "w7b": {
+      "leaves": [
+        "fix-r1-sa",
+        "fix-r1-sb",
+        "fix-r1-ga",
+        "fix-r1-gb"
+      ],
+      "state": "abandoned",
+      "openedAt": "2026-10-11T07:50:28.038Z",
+      "started": {
+        "fix-r1-sa": {
+          "handle": "term_e218829d-fc2b-457f-bd50-3227dedf86e4",
+          "at": "2026-10-11T07:50:30.063Z"
+        },
+        "fix-r1-sb": {
+          "handle": "term_ee2f69ae-1625-4da4-b43d-a811be8eb038",
+          "at": "2026-10-11T07:50:32.190Z"
+        },
+        "fix-r1-ga": {
+          "handle": "term_ea5f230d-7388-428d-b99b-59c13bbc7739",
+          "at": "2026-10-11T07:50:33.182Z"
+        },
+        "fix-r1-gb": {
+          "handle": "term_41f3f9cf-7c20-428a-83f3-a30735a67bce",
+          "at": "2026-10-11T07:50:34.245Z"
+        }
+      },
+      "returned": {},
+      "sealedAt": "2026-10-11T07:50:34.350Z",
+      "reason": "Orca restarted again; all four implementer sessions exited (0 gates met). Continues as w7c with six implementers (user added two Codex).",
+      "abandonedAt": "2026-10-11T08:02:11.991Z"
+    },
+    "w7c": {
+      "leaves": [
+        "fix-r1-sa",
+        "fix-r1-ca",
+        "fix-r1-sb",
+        "fix-r1-cb",
+        "fix-r1-ga",
+        "fix-r1-gb"
+      ],
+      "state": "sealed",
+      "openedAt": "2026-10-11T08:02:49.257Z",
+      "started": {
+        "fix-r1-sa": {
+          "handle": "term_dee63f1a-7b3a-4a65-b640-314df5143ea1",
+          "at": "2026-10-11T08:02:51.513Z"
+        },
+        "fix-r1-ca": {
+          "handle": "term_a82462e8-44f4-4f05-991b-d5ea54a52280",
+          "at": "2026-10-11T08:02:53.935Z"
+        },
+        "fix-r1-sb": {
+          "handle": "term_5ca30049-f5b9-4431-a3df-13e00447ae57",
+          "at": "2026-10-11T08:02:56.328Z"
+        },
+        "fix-r1-cb": {
+          "handle": "term_7e49be2c-6a71-4e7d-aa98-ebc1e674818a",
+          "at": "2026-10-11T08:02:58.439Z"
+        },
+        "fix-r1-ga": {
+          "handle": "term_382be2d5-683d-4db8-8fef-7a84d1376da6",
+          "at": "2026-10-11T08:02:59.382Z"
+        },
+        "fix-r1-gb": {
+          "handle": "term_7ef5ae50-97ad-4ad0-b80e-43844ae3676b",
+          "at": "2026-10-11T08:03:00.636Z"
+        }
+      },
+      "returned": {},
+      "sealedAt": "2026-10-11T08:03:01.003Z"
     }
   }
 }
