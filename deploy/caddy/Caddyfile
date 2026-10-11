@@ -1,0 +1,6 @@
+tasks.qelal.et {
+    handle /git-sync/* {
+        reverse_proxy git-sync:3100
+    }
+    reverse_proxy plane-proxy:80
+}

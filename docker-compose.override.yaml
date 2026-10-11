@@ -1,0 +1,32 @@
+services:
+  git-sync:
+    image: ${GITSYNC_IMAGE:-git-sync:local}
+    restart: unless-stopped
+    depends_on:
+      - plane-db
+      - plane-redis
+    networks:
+      default: {}
+      gateway:
+        aliases:
+          - git-sync
+    env_file:
+      - path: git-sync.env
+        required: false
+    volumes:
+      - ./git-sync/github-app.pem:/run/secrets/github-app.pem:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "http.get('http://127.0.0.1:3100/git-sync/healthz', (res) => { if (res.statusCode === 200) process.exit(0); else process.exit(1); }).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  admin:
+    image: ${GITSYNC_ADMIN_IMAGE:-plane-admin-gitsync:v1.4.2}
+
+  web:
+    image: ${GITSYNC_WEB_IMAGE:-plane-frontend-gitsync:v1.4.2}
+
+networks:
+  gateway:
+    external: true
