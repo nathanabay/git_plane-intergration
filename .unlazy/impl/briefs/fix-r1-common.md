@@ -30,3 +30,9 @@ OOM killer took down the editor, the agents and the test containers. Therefore:
   ledger's G2 and G3 already use it (update your copy of those two gates to match
   `.unlazy/impl/gates/fix-r1-<you>.md`). Waiting on the lock is expected; never bypass it.
 - Never run more than one heavy command at a time yourself.
+- Run every ad-hoc test with a memory and time bound:
+  `NODE_OPTIONS=--max-old-space-size=1024 node --test --test-timeout=60000 <file>` (the heap flag
+  must go in NODE_OPTIONS: `node --test` runs each file in a child process that does not inherit
+  command-line flags). Two unbounded runs grew to
+  4.7 GB and 2.7 GB within five minutes (an unbounded loop/retry under test) and were killed by
+  the driver; an unbounded run throttles every agent's memory scope.

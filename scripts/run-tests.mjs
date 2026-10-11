@@ -2,7 +2,7 @@
 // Runs node:test over the given repo-relative test directories and requires a minimum number of
 // passing tests with zero failures, so an empty or skipped suite cannot pass.
 // usage: node scripts/run-tests.mjs <min-tests> <dir> [<dir> ...]
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -14,7 +14,21 @@ const files = [];
 const walk = (d) => { for (const e of readdirSync(d)) { const p = join(d, e); if (statSync(p).isDirectory()) walk(p); else if (/\.test\.ts$/.test(e)) files.push(p); } };
 for (const d of dirs) { const p = join(root, d); if (!existsSync(p)) { console.error(`FAIL: ${d} does not exist`); process.exit(1); } walk(p); }
 if (!files.length) { console.error(`FAIL: no *.test.ts files under ${dirs.join(" ")}`); process.exit(1); }
-const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", ...files], { cwd: root, encoding: "utf8", timeout: 300000 });
+// Bounded on purpose: each test file runs in its own child process and many start a PGlite
+// (Postgres in WASM, ~0.8 GB), so unbounded parallelism exhausted the host (2026-10-11). The heap
+// limit goes through NODE_OPTIONS because child workers do not inherit command-line flags, and the
+// run gets its own process group so a timeout kills every worker instead of orphaning them.
+const r = await new Promise((resolveRun) => {
+  const child = spawn(process.execPath, ["--test", "--test-concurrency=2", "--test-reporter=tap", ...files], {
+    cwd: root, detached: true, env: { ...process.env, NODE_OPTIONS: [process.env.NODE_OPTIONS, "--max-old-space-size=1536"].filter(Boolean).join(" ") },
+  });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", (d) => (stdout += d)); child.stderr.on("data", (d) => (stderr += d));
+  const killGroup = () => { try { process.kill(-child.pid, "SIGKILL"); } catch {} };
+  const timer = setTimeout(() => { stderr += "\nFAIL: test run exceeded 15 minutes; process group killed"; killGroup(); }, 15 * 60 * 1000);
+  for (const sig of ["SIGINT", "SIGTERM"]) process.once(sig, () => { killGroup(); process.exit(1); });
+  child.on("close", (status) => { clearTimeout(timer); killGroup(); resolveRun({ status, stdout, stderr }); });
+});
 const out = (r.stdout || "") + (r.stderr || "");
 const num = (k) => Number((out.match(new RegExp(`^# ${k} (\\d+)$`, "m")) || [])[1] ?? NaN);
 const pass = num("pass"), fail = num("fail"), skipped = num("skip"), todo = num("todo"), cancelled = num("cancelled");
