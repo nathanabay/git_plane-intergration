@@ -29,6 +29,8 @@ export function createRouter(ctx: AppContext): EventRouter {
 /** The inbound handler for one source: route, and say so in the audit log when nothing handles the event. */
 export function inboundHandler(ctx: AppContext, router: EventRouter, source: "plane" | "github"): (job: InboundJob) => Promise<void> {
   return (job) => deliveryScope.run({ deliveryId: `${source}-${job.writeDeliveryId ?? job.deliveryId}`, seq: 0,
+    // An explicit replay carries its own write identity; the outbox resets failed rows only when it differs from the transport id.
+    ...(job.writeDeliveryId ? { writeDeliveryId: job.writeDeliveryId } : {}), transportDeliveryId: job.deliveryId,
     ...(source === "plane" && typeof (job.payload as any)?.workspace_slug === "string" && (job.payload as any).workspace_slug
       ? { workspaceSlug: (job.payload as any).workspace_slug } : {}),
   }, async () => {

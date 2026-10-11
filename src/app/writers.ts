@@ -21,6 +21,7 @@ export function createOrderedOutbox(deps: Omit<OrderedOutboxDeps, "scope">) {
   return makeOrderedOutbox({ ...deps,
     ...(deps.resumeReducer ? { resumeReducer: (request) => deliveryScope.run({
       deliveryId: `${request.job.source}-${request.job.writeDeliveryId ?? request.job.deliveryId}`,
+      ...(request.job.writeDeliveryId ? { writeDeliveryId: request.job.writeDeliveryId } : {}), transportDeliveryId: request.job.deliveryId,
       ...(request.workspaceSlug ? { workspaceSlug: request.workspaceSlug } : {}),
     }, () => deps.resumeReducer!(request)) } : {}),
     scope: () => deliveryScope.getStore() });

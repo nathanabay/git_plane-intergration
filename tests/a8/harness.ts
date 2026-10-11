@@ -63,6 +63,10 @@ export async function makeHarness(over: { requireVerified?: boolean; serviceUser
   const createdIssueIds: string[] = [];
   const labels = LABELS.map((label) => ({ ...label }));
 
+  // Created objects keep their external id, so the duplicate-recovery lookups of PlaneWritePath behave like Plane's (F9).
+  const createdByIntent = new Map<string, { id: string; external_source: string; external_id: string }>();
+  const commentsByPath = new Map<string, { id: string; external_source?: string; external_id?: string }[]>();
+
   const fetchFake = (async (url: string, init: any) => {
     const u = new URL(url);
     const path = u.pathname.replace(/^\/api\/v1/, "");
@@ -75,6 +79,11 @@ export async function makeHarness(over: { requireVerified?: boolean; serviceUser
       const i = issues.get(m[1]!);
       return i ? json(200, { ...i, labels: i.labels ?? [], assignees: i.assignees ?? [] }) : json(404, { error: "Not found" });
     }
+    if (method === "GET" && /\/issues\/$/.test(path) && u.searchParams.has("external_id")) {
+      const found = createdByIntent.get(`${u.searchParams.get("external_source")}:${u.searchParams.get("external_id")}`);
+      return found ? json(200, found) : json(404, { error: "Not found" });
+    }
+    if (method === "GET" && /\/issues\/[^/]+\/comments\/$/.test(path)) return json(200, { results: commentsByPath.get(path) ?? [], next_cursor: null, next_page_results: false });
     if (method === "GET" && /\/states\/$/.test(path)) return json(200, { results: STATES, next_cursor: null, next_page_results: false });
     if (method === "GET" && /\/labels\/$/.test(path)) return json(200, { results: labels, next_cursor: null, next_page_results: false });
     if (method === "GET" && /\/projects\/$/.test(path)) return json(200, { results: [{ id: "p-qll", identifier: "QLL" }, { id: "p-web", identifier: "WEB" }], next_cursor: null, next_page_results: false });
@@ -84,8 +93,17 @@ export async function makeHarness(over: { requireVerified?: boolean; serviceUser
       return i ? json(200, { ...i, labels: i.labels ?? [], assignees: i.assignees ?? [] }) : json(404, { error: "Not found" });
     }
     if (method === "PATCH") return json(200, { id: "x" });
-    if (method === "POST" && /\/issues\/$/.test(path)) { const id = `new-${++created}`; createdIssueIds.push(id); return json(201, { id }); }
-    if (method === "POST" && /\/comments\/$/.test(path)) return json(201, { id: `c-${++created}` });
+    if (method === "POST" && /\/issues\/$/.test(path)) {
+      const id = `new-${++created}`; createdIssueIds.push(id);
+      const ext = body?.external_id ? { external_source: String(body.external_source ?? ""), external_id: String(body.external_id) } : {};
+      if (body?.external_id) createdByIntent.set(`${ext.external_source}:${ext.external_id}`, { id, external_source: ext.external_source!, external_id: ext.external_id! });
+      return json(201, { id, ...ext });
+    }
+    if (method === "POST" && /\/comments\/$/.test(path)) {
+      const comment = { id: `c-${++created}`, ...(body?.external_id ? { external_source: String(body.external_source ?? ""), external_id: String(body.external_id) } : {}) };
+      commentsByPath.set(path, [...(commentsByPath.get(path) ?? []), comment]);
+      return json(201, comment);
+    }
     if (method === "POST" && /\/links\/$/.test(path)) return json(201, { id: `l-${++created}` });
     if (method === "POST" && /\/labels\/$/.test(path)) {
       const existing = labels.find((label) => label.name === body.name);
@@ -119,7 +137,7 @@ export async function makeHarness(over: { requireVerified?: boolean; serviceUser
       PORT: 0, HOST: "127.0.0.1", DATABASE_URL: "", REDIS_URL: "", QUEUE_PREFIX: "t", PLANE_BASE_URL: "http://plane.test", PLANE_SERVICE_PAT: "svc-pat",
       PLANE_WEBHOOK_SECRET: "x", GITHUB_APP_ID: "1", GITHUB_PRIVATE_KEY_PATH: "/nope", GITHUB_WEBHOOK_SECRET: "y", GITSYNC_TOKEN_KEY: key.toString("base64"),
       PUBLIC_ORIGIN: "https://tasks.example", REQUIRE_VERIFIED_COMMITS: over.requireVerified ?? false,
-      ...(over.serviceUserId ? { PLANE_SERVICE_USER_ID: over.serviceUserId } : {}),
+      PLANE_SERVICE_USER_ID: over.serviceUserId ?? "svc-user-default", // required config (prev F17); a test overrides it when it needs a specific id
     },
     db, planeClient, plane, github, ghClient, vault: createVault(db, key),
   };
@@ -132,10 +150,13 @@ export async function makeHarness(over: { requireVerified?: boolean; serviceUser
     gh: { calls: ghCalls, writes: () => ghCalls.filter((c) => !c.route.startsWith("GET ")), respond: (re, fn) => { responders.unshift([re, fn]); } },
     feed: (job) => processInbound(job, deps),
     async mapping(o = {}) {
+      // The real allow-list applies (round 4 F5): a mapping syncs only when its installation is listed for its workspace.
+      const installationId = o.installationId === undefined ? 1 : o.installationId;
+      if (installationId !== null) await db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES ($1, $2) ON CONFLICT (installation_id) DO NOTHING", [installationId, o.slug ?? "ws"]);
       const r = await db.query<{ id: number }>(
         `INSERT INTO repo_mappings (workspace_slug, gh_repo_id, gh_repo_full_name, plane_project_id, sync_direction, smart_commits_enabled, linkback_enabled, installation_id)
          VALUES ($1, $2, 'acme/web', $3, $4, $5, $6, $7) RETURNING id`,
-        [o.slug ?? "ws", o.repoId ?? 555, o.projectId ?? "p-qll", o.direction ?? "bidirectional", o.smartCommits ?? true, o.linkback ?? false, o.installationId === undefined ? 1 : o.installationId]);
+        [o.slug ?? "ws", o.repoId ?? 555, o.projectId ?? "p-qll", o.direction ?? "bidirectional", o.smartCommits ?? true, o.linkback ?? false, installationId]);
       const id = r.rows[0]!.id;
       for (const [field, policy] of Object.entries(o.policies ?? {})) await db.query("INSERT INTO conflict_policies (mapping_id, field, policy) VALUES ($1, $2, $3)", [id, field, policy]);
       if (o.rules) await db.query("INSERT INTO rule_sets (mapping_id, yaml_source, version) VALUES ($1, $2, 1)", [id, o.rules]);
