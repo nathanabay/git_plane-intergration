@@ -5,6 +5,7 @@ import { loadConfig } from "../../src/config/env.ts";
 
 const base = {
   DATABASE_URL: "postgres://x", REDIS_URL: "redis://x", PLANE_BASE_URL: "http://plane", PLANE_SERVICE_PAT: "p", PLANE_WEBHOOK_SECRET: "w",
+  PLANE_SERVICE_USER_ID: "service-user",
   GITHUB_APP_ID: "1", GITHUB_PRIVATE_KEY_PATH: "/k", GITHUB_WEBHOOK_SECRET: "g", GITSYNC_TOKEN_KEY: "k",
 };
 

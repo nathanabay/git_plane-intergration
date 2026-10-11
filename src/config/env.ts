@@ -11,7 +11,7 @@ export interface Config {
   GITHUB_PRIVATE_KEY_PATH: string;
   GITHUB_WEBHOOK_SECRET: string;
   GITSYNC_TOKEN_KEY: string;
-  PLANE_SERVICE_USER_ID?: string;
+  PLANE_SERVICE_USER_ID: string;
   /** Requests per minute the Plane client may send. Must equal Plane's own API_KEY_RATE_LIMIT (plane.env), 60 by default. */
   PLANE_API_RATE_PER_MINUTE?: number;
   GITHUB_API_BASE_URL?: string;
@@ -38,6 +38,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     QUEUE_PREFIX: env.QUEUE_PREFIX || "gitsync",
     PLANE_BASE_URL: req("PLANE_BASE_URL"),
     PLANE_SERVICE_PAT: req("PLANE_SERVICE_PAT"),
+    PLANE_SERVICE_USER_ID: req("PLANE_SERVICE_USER_ID").trim(),
     PLANE_WEBHOOK_SECRET: req("PLANE_WEBHOOK_SECRET"),
     PLANE_API_RATE_PER_MINUTE: 60,
     GITHUB_APP_ID: req("GITHUB_APP_ID"),
@@ -55,7 +56,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     }
     config.PLANE_API_RATE_PER_MINUTE = rate;
   }
-  if (env.PLANE_SERVICE_USER_ID) config.PLANE_SERVICE_USER_ID = env.PLANE_SERVICE_USER_ID;
+  if (!config.PLANE_SERVICE_USER_ID && !missing.includes("PLANE_SERVICE_USER_ID")) missing.push("PLANE_SERVICE_USER_ID");
   if (env.GITHUB_API_BASE_URL) config.GITHUB_API_BASE_URL = env.GITHUB_API_BASE_URL;
 
   if (missing.length > 0) {
