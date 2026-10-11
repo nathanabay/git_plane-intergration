@@ -89,3 +89,14 @@
 2026-10-11T08:02:59.387Z dispatch w7c started fix-r1-ga as term_382be2d5-683d-4db8-8fef-7a84d1376da6
 2026-10-11T08:03:00.645Z dispatch w7c started fix-r1-gb as term_7ef5ae50-97ad-4ad0-b80e-43844ae3676b
 2026-10-11T08:03:01.021Z dispatch w7c sealed
+2026-10-11T08:04:57Z driver correction: G6 removed from agent ledgers (circular self-verification, raised by CB); dry-run adapter (CB tooling.ts) to delegate to CA's shared event mapper
+2026-10-11T08:09:42.812Z dispatch w7c abandoned: Orca restarted a third time ~8 min in; all six sessions exited (0 gates met; fixes-r1-SA/SB partly written). Agents now run in a systemd-scoped tmux server (tmux -L gitsync) that survives Orca/terminal restarts; continues as w7d with stable tmux handles.
+2026-10-11T08:09:42.886Z dispatch w7d opened: fix-r1-sa, fix-r1-ca, fix-r1-sb, fix-r1-cb, fix-r1-ga, fix-r1-gb
+2026-10-11T08:09:52.288Z dispatch w7d started fix-r1-sa as tmux:gitsync:sa
+2026-10-11T08:09:52.881Z dispatch w7d started fix-r1-ca as tmux:gitsync:ca
+2026-10-11T08:09:53.482Z dispatch w7d started fix-r1-sb as tmux:gitsync:sb
+2026-10-11T08:09:54.087Z dispatch w7d started fix-r1-cb as tmux:gitsync:cb
+2026-10-11T08:09:54.712Z dispatch w7d started fix-r1-ga as tmux:gitsync:ga
+2026-10-11T08:09:55.334Z dispatch w7d started fix-r1-gb as tmux:gitsync:gb
+2026-10-11T08:09:55.429Z dispatch w7d sealed
+2026-10-11T08:10:23Z w7d: agents run in systemd scope tmux server 'gitsync' (sessions sa ca sb cb ga gb); Orca view terminals attach to them

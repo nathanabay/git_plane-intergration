@@ -344,7 +344,7 @@
         "fix-r1-ga",
         "fix-r1-gb"
       ],
-      "state": "sealed",
+      "state": "abandoned",
       "openedAt": "2026-10-11T08:02:49.257Z",
       "started": {
         "fix-r1-sa": {
@@ -373,7 +373,49 @@
         }
       },
       "returned": {},
-      "sealedAt": "2026-10-11T08:03:01.003Z"
+      "sealedAt": "2026-10-11T08:03:01.003Z",
+      "reason": "Orca restarted a third time ~8 min in; all six sessions exited (0 gates met; fixes-r1-SA/SB partly written). Agents now run in a systemd-scoped tmux server (tmux -L gitsync) that survives Orca/terminal restarts; continues as w7d with stable tmux handles.",
+      "abandonedAt": "2026-10-11T08:09:42.802Z"
+    },
+    "w7d": {
+      "leaves": [
+        "fix-r1-sa",
+        "fix-r1-ca",
+        "fix-r1-sb",
+        "fix-r1-cb",
+        "fix-r1-ga",
+        "fix-r1-gb"
+      ],
+      "state": "sealed",
+      "openedAt": "2026-10-11T08:09:42.883Z",
+      "started": {
+        "fix-r1-sa": {
+          "handle": "tmux:gitsync:sa",
+          "at": "2026-10-11T08:09:52.283Z"
+        },
+        "fix-r1-ca": {
+          "handle": "tmux:gitsync:ca",
+          "at": "2026-10-11T08:09:52.878Z"
+        },
+        "fix-r1-sb": {
+          "handle": "tmux:gitsync:sb",
+          "at": "2026-10-11T08:09:53.476Z"
+        },
+        "fix-r1-cb": {
+          "handle": "tmux:gitsync:cb",
+          "at": "2026-10-11T08:09:54.079Z"
+        },
+        "fix-r1-ga": {
+          "handle": "tmux:gitsync:ga",
+          "at": "2026-10-11T08:09:54.698Z"
+        },
+        "fix-r1-gb": {
+          "handle": "tmux:gitsync:gb",
+          "at": "2026-10-11T08:09:55.328Z"
+        }
+      },
+      "returned": {},
+      "sealedAt": "2026-10-11T08:09:55.423Z"
     }
   }
 }

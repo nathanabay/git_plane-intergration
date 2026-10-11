@@ -10,8 +10,8 @@ If a whole-repo gate fails in a file you do not own, it is another implementer's
 wait a few minutes and re-run; never edit it. Report it if it persists.
 
 Your fixes document: `docs/impl/fixes-r1-GB.md` (one `## F<n>` section per finding below).
-Your ledger: `docs/impl/agent-gates/fix-r1-gb.GATES.md` — copy every gate from
-`.unlazy/impl/gates/fix-r1-gb.md` exactly, OWNS line included.
+Your ledger: `docs/impl/agent-gates/fix-r1-gb.GATES.md` — copy gates G0–G5 from
+`.unlazy/impl/gates/fix-r1-gb.md` exactly, OWNS line included. **Leave G6 out**: it verifies your finished ledger, so it is the driver's gate, not yours.
 
 ## OWNS
 

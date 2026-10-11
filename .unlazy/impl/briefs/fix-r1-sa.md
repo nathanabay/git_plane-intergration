@@ -12,8 +12,8 @@ you do not own, it is another implementer's work in progress: wait and re-run; n
 Codex implementer CA owns `src/app/rule-events.ts`, `rules.ts`, `reducers.ts`, `github.ts` and `tests/a8/**` (F7, F10). If F2's workspace filter needs a change in one of CA's files, describe the exact change in your fixes doc and tell the driver; do not edit it.
 
 Your fixes document: `docs/impl/fixes-r1-SA.md` (one `## F<n>` section per finding below).
-Your ledger: `docs/impl/agent-gates/fix-r1-sa.GATES.md` — copy every gate from
-`.unlazy/impl/gates/fix-r1-sa.md` exactly, OWNS line included.
+Your ledger: `docs/impl/agent-gates/fix-r1-sa.GATES.md` — copy gates G0–G5 from
+`.unlazy/impl/gates/fix-r1-sa.md` exactly, OWNS line included. **Leave G6 out**: it verifies your finished ledger, so it is the driver's gate, not yours.
 
 ## OWNS
 

@@ -12,8 +12,8 @@ you do not own, it is another implementer's work in progress: wait and re-run; n
 Codex implementer CB owns `src/sync/mirror.ts`, `src/sync/dev-info.ts` and `src/operations/**` (F3, F4, F5-mirror).
 
 Your fixes document: `docs/impl/fixes-r1-SB.md` (one `## F<n>` section per finding below).
-Your ledger: `docs/impl/agent-gates/fix-r1-sb.GATES.md` — copy every gate from
-`.unlazy/impl/gates/fix-r1-sb.md` exactly, OWNS line included.
+Your ledger: `docs/impl/agent-gates/fix-r1-sb.GATES.md` — copy gates G0–G5 from
+`.unlazy/impl/gates/fix-r1-sb.md` exactly, OWNS line included. **Leave G6 out**: it verifies your finished ledger, so it is the driver's gate, not yours.
 
 ## OWNS
 
