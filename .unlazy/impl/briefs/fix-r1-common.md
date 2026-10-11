@@ -17,3 +17,16 @@ Rules (COMMON.md applies):
 - Your agent ledger: `docs/impl/agent-gates/fix-r1-<a|b>.GATES.md`, copying the driver gates from
   `.unlazy/impl/gates/fix-r1-<a|b>.md`. ALL MET via gate-check --approve --timeout 1800 after your
   final edit. Do not stage or commit.
+
+## Resource rule (mandatory — the host is also the live Plane server)
+
+Six implementers running full oracle suites at once exhausted the machine's memory and the kernel
+OOM killer took down the editor, the agents and the test containers. Therefore:
+- While iterating, run **only the targeted tests** for the files you change
+  (`node --test tests/<area>/<file>.test.ts`). Do not start throwaway Postgres/Valkey yourself
+  outside a test.
+- Run any oracle (`scripts/verify-*.mjs`) or the whole-repo suite **only through**
+  `sh scripts/heavy.sh <command>` — a machine-wide lock, so heavy checks run one at a time. Your
+  ledger's G2 and G3 already use it (update your copy of those two gates to match
+  `.unlazy/impl/gates/fix-r1-<you>.md`). Waiting on the lock is expected; never bypass it.
+- Never run more than one heavy command at a time yourself.

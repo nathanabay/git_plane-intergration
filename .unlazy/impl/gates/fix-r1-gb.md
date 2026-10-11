@@ -15,12 +15,12 @@ Scope: fix the round-1 findings assigned to Gemini implementer GB (F11,F14,F15) 
   EVIDENCE: pending
 
 - [ ] G2: every driver oracle passes on the fixed tree
-  CHECK: sh -c 'for o in verify-a1-deploy verify-rules-contract verify-identity-contract verify-a3-schema verify-a2-ingress verify-a4-writepath verify-b3-config-api verify-a5-a7 verify-b4-b8 verify-wiring; do node scripts/$o.mjs >/dev/null 2>&1 || { echo "FAIL $o"; exit 1; }; done; node scripts/verify-fork-patch.mjs all >/dev/null 2>&1 || { echo "FAIL fork"; exit 1; }; echo "all oracles passed"'
+  CHECK: sh scripts/heavy.sh sh -c 'for o in verify-a1-deploy verify-rules-contract verify-identity-contract verify-a3-schema verify-a2-ingress verify-a4-writepath verify-b3-config-api verify-a5-a7 verify-b4-b8 verify-wiring; do node scripts/$o.mjs >/dev/null 2>&1 || { echo "FAIL $o"; exit 1; }; done; node scripts/verify-fork-patch.mjs all >/dev/null 2>&1 || { echo "FAIL fork"; exit 1; }; echo "all oracles passed"'
   EXPECT: all oracles passed
   EVIDENCE: pending
 
 - [ ] G3: the whole repository's tests pass together
-  CHECK: node scripts/run-tests.mjs 450 tests
+  CHECK: sh scripts/heavy.sh node scripts/run-tests.mjs 450 tests
   EXPECT: tests passed
   EVIDENCE: pending
 

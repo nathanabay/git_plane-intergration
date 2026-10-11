@@ -386,7 +386,7 @@
         "fix-r1-ga",
         "fix-r1-gb"
       ],
-      "state": "sealed",
+      "state": "abandoned",
       "openedAt": "2026-10-11T08:09:42.883Z",
       "started": {
         "fix-r1-sa": {
@@ -415,7 +415,49 @@
         }
       },
       "returned": {},
-      "sealedAt": "2026-10-11T08:09:55.423Z"
+      "sealedAt": "2026-10-11T08:09:55.423Z",
+      "reason": "OOM killer at 08:12Z (six concurrent full oracle runs exhausted 24 GB) killed all agents, the tmux scope, rootless docker and user@1001. Relaunched as w7e with heavy checks serialized by scripts/heavy.sh and memory caps on docker (5G) and the agent scope (10G).",
+      "abandonedAt": "2026-10-11T08:18:59.193Z"
+    },
+    "w7e": {
+      "leaves": [
+        "fix-r1-sa",
+        "fix-r1-ca",
+        "fix-r1-sb",
+        "fix-r1-cb",
+        "fix-r1-ga",
+        "fix-r1-gb"
+      ],
+      "state": "sealed",
+      "openedAt": "2026-10-11T08:18:59.292Z",
+      "started": {
+        "fix-r1-sa": {
+          "handle": "tmux:gitsync:sa",
+          "at": "2026-10-11T08:19:09.560Z"
+        },
+        "fix-r1-ca": {
+          "handle": "tmux:gitsync:ca",
+          "at": "2026-10-11T08:19:11.217Z"
+        },
+        "fix-r1-sb": {
+          "handle": "tmux:gitsync:sb",
+          "at": "2026-10-11T08:19:11.903Z"
+        },
+        "fix-r1-cb": {
+          "handle": "tmux:gitsync:cb",
+          "at": "2026-10-11T08:19:13.727Z"
+        },
+        "fix-r1-ga": {
+          "handle": "tmux:gitsync:ga",
+          "at": "2026-10-11T08:19:14.481Z"
+        },
+        "fix-r1-gb": {
+          "handle": "tmux:gitsync:gb",
+          "at": "2026-10-11T08:19:15.158Z"
+        }
+      },
+      "returned": {},
+      "sealedAt": "2026-10-11T08:19:15.300Z"
     }
   }
 }

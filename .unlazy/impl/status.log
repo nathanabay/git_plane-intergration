@@ -100,3 +100,13 @@
 2026-10-11T08:09:55.334Z dispatch w7d started fix-r1-gb as tmux:gitsync:gb
 2026-10-11T08:09:55.429Z dispatch w7d sealed
 2026-10-11T08:10:23Z w7d: agents run in systemd scope tmux server 'gitsync' (sessions sa ca sb cb ga gb); Orca view terminals attach to them
+2026-10-11T08:16:33Z OOM at 08:12Z: six concurrent full oracle runs exhausted 24 GB; killer took Orca, tmux scope, rootless docker and user@1001; live Plane unaffected (200). Mitigation: scripts/heavy.sh flock for G2/G3, targeted tests while iterating, memory caps pending user@1001 restart
+2026-10-11T08:18:59.211Z dispatch w7d abandoned: OOM killer at 08:12Z (six concurrent full oracle runs exhausted 24 GB) killed all agents, the tmux scope, rootless docker and user@1001. Relaunched as w7e with heavy checks serialized by scripts/heavy.sh and memory caps on docker (5G) and the agent scope (10G).
+2026-10-11T08:18:59.297Z dispatch w7e opened: fix-r1-sa, fix-r1-ca, fix-r1-sb, fix-r1-cb, fix-r1-ga, fix-r1-gb
+2026-10-11T08:19:09.564Z dispatch w7e started fix-r1-sa as tmux:gitsync:sa
+2026-10-11T08:19:11.224Z dispatch w7e started fix-r1-ca as tmux:gitsync:ca
+2026-10-11T08:19:11.934Z dispatch w7e started fix-r1-sb as tmux:gitsync:sb
+2026-10-11T08:19:13.813Z dispatch w7e started fix-r1-cb as tmux:gitsync:cb
+2026-10-11T08:19:14.498Z dispatch w7e started fix-r1-ga as tmux:gitsync:ga
+2026-10-11T08:19:15.176Z dispatch w7e started fix-r1-gb as tmux:gitsync:gb
+2026-10-11T08:19:15.313Z dispatch w7e sealed
