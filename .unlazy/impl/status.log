@@ -155,3 +155,16 @@
 2026-10-11T13:14:45.147Z dispatch w11 started fix-r3-ga as tmux:gitsync:ga
 2026-10-11T13:14:45.787Z dispatch w11 started fix-r3-gb as tmux:gitsync:gb
 2026-10-11T13:14:45.914Z dispatch w11 sealed
+2026-10-11T13:18:53Z round 3 F10: approved CA policy (branch-name refs, no revert-, skip terminal states) + execution-time skipTerminalState guard (GA check, GB tag, CB preserve)
+2026-10-11T13:20:44Z round 3 F1: relayed CB's plan-based outbox contract (SA -NEW plan integration, GB label-name mutations, GA pending_sync_links)
+2026-10-11T13:36:26Z round 3 F1: CB plan exports stable; relayed SA resume_reducer integration and SB smart-commit operationId scoping
+2026-10-11T13:41:25Z round 3 F1: relayed CB upsertRollup/findPlaneLinkId (SA), plan-root retention + wake scheduling ownership (GA)
+2026-10-11T13:45:17Z round 3: driver backed CA — GA skipTerminalState guard must fail closed (propagate read/audit errors, refresh then fail on unresolved state id)
+2026-10-11T13:48:02Z round 3: relayed SA wrapper must forward optional plan (issues.ts); asked GA for an F11 blocking-cap contract for CB
+2026-10-11T13:52:30Z round 3: relayed replay identity (writeDeliveryId: GA job type+audit, CA scope) and retention correction (GA: roots retained only while plan pending)
+2026-10-11T13:57:38Z round 3: relayed mirror_created continuation (issue rules must run after the async mirror link exists) to SA
+2026-10-11T14:00:41Z round 3: CA must apply writeDeliveryId scoping (CB replay acceptance 5 vs 2 intents); CA's in-flight gate run is stale
+2026-10-11T14:02:36Z round 3: relayed SA fix for duplicate rule run when a fast worker links before the inbound reducer (skip inbound runRules when the mirror create went through plan)
+2026-10-11T14:07:33Z reconciled heavy-lock queue: killed SA's 4 stale gate-check runs, SB's orphaned run and all orphan supervisor groups; kept SA newest (4000157) and CA (4004772); rule added: one gate-check per agent
+2026-10-11T14:12:18Z round 3 F11: GA token bucket verified (acquire before every attempt, default 60/min); SA to wire PLANE_API_RATE_PER_MINUTE into config/main/APPLY
+2026-10-11T14:37:21Z round 3: audit.test.ts fixture stale per review-3 F14 (once-per-delivery, superseded on success) — GA updates the test; cleared GA orphan supervisor 4026971

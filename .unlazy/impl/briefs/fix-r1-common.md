@@ -36,3 +36,7 @@ OOM killer took down the editor, the agents and the test containers. Therefore:
   command-line flags). Two unbounded runs grew to
   4.7 GB and 2.7 GB within five minutes (an unbounded loop/retry under test) and were killed by
   the driver; an unbounded run throttles every agent's memory scope.
+- **Exactly one gate-check run at a time per agent.** Before starting a new run, stop the previous
+  one by killing its whole process group (`kill -- -<PGID>`): gate-check starts detached
+  supervisors, and killing only the parent leaves them queued on the heavy lock. On 2026-10-11
+  one agent had five concurrent runs plus orphans queued, blocking everyone.

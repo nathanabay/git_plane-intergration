@@ -59,8 +59,10 @@ const verifyMapping = async (check) => {
   return null;
 };
 const lookupGithubUser = async (login) => ({ memgh: { login: "memgh", id: 777 } })[login.toLowerCase()] ?? null;
+// Review round 3 F5: user links also fail closed without a workspace-membership check.
+const isWorkspaceMember = async (slug, userId) => slug === "qelal" && ["u-mem", "u-other"].includes(userId);
 const routeDeps = { db, planeInternalUrl: `http://127.0.0.1:${papi.address().port}`, publicOrigin: ORIGIN, tokenKey: KEY };
-const srv = await startServer({ port: 0, host: "127.0.0.1", routes: createConfigRoutes({ ...routeDeps, verifyMapping, lookupGithubUser }) });
+const srv = await startServer({ port: 0, host: "127.0.0.1", routes: createConfigRoutes({ ...routeDeps, verifyMapping, lookupGithubUser, isWorkspaceMember }) });
 const base = `http://127.0.0.1:${srv.port}/git-sync/api`;
 const call = (method, path, { cookie, body, origin = ORIGIN, type = "application/json" } = {}) =>
   fetch(base + path, { method, headers: { ...(cookie ? { cookie } : {}), ...(origin ? { origin } : {}), ...(body !== undefined ? { "content-type": type } : {}) }, body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body) });
@@ -157,6 +159,12 @@ await check("unlinking a user removes the mapping and revokes their stored token
   strictEqual((await call("PUT", `/workspaces/qelal/user-links/u-mem`, { cookie: ADM, body: { githubLogin: "memgh", githubId: 777 } })).status, 200);
   strictEqual((await call("PUT", `/workspaces/qelal/user-links/u-other`, { cookie: ADM, body: { githubLogin: "nogh" } })).status, 422);
   strictEqual((await call("PUT", `/workspaces/qelal/user-links/u-other`, { cookie: ADM, body: { githubLogin: "memgh", githubId: 1 } })).status, 422, "a GitHub id that does not match the login was accepted");
+  strictEqual((await call("PUT", `/workspaces/qelal/user-links/u-stranger`, { cookie: ADM, body: { githubLogin: "memgh", githubId: 777 } })).status, 422, "a Plane user outside the workspace was linked");
+  const noMember = await startServer({ port: 0, host: "127.0.0.1", routes: createConfigRoutes({ ...routeDeps, verifyMapping, lookupGithubUser }) });
+  try {
+    const r = await fetch(`http://127.0.0.1:${noMember.port}/git-sync/api/workspaces/qelal/user-links/u-mem`, { method: "PUT", headers: { cookie: ADM, origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ githubLogin: "memgh", githubId: 777 }) });
+    strictEqual(r.status, 503, "user links must fail closed without a membership check");
+  } finally { await noMember.close(); }
   const vault = new TokenVault(new PgTokenStore(db), KEY);
   await vault.store("u-mem", "plane_pat", "plane_api_MEMSECRET");
   strictEqual((await call("DELETE", `/workspaces/qelal/user-links/u-mem`, { cookie: ADM })).status, 204);
