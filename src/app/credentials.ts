@@ -1,10 +1,13 @@
 // GitHub App credentials (F6). The instance-admin UI stores them encrypted in `github_app_config`; that row is
 // authoritative when it exists, and the environment is the bootstrap fallback. Both the App client and the
 // webhook verifier read through here, so a rotated key or secret takes effect within a few seconds without a restart.
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { decryptSecret } from "../auth/identity.ts";
 import type { Config } from "../config/env.ts";
 import type { Db } from "../db/migrate.ts";
+import { credentialRowEverSeen, markCredentialRowSeen } from "../db/ledgers.ts";
 
 export interface GithubCredentials {
   appId: string;
@@ -23,7 +26,7 @@ export interface CredentialSource {
   describe(): Promise<{ source: "database" | "environment"; decryptOk: boolean }>;
 }
 
-export function createCredentialSource(db: Db, tokenKey: Buffer, config: Pick<Config, "GITHUB_APP_ID" | "GITHUB_PRIVATE_KEY_PATH" | "GITHUB_WEBHOOK_SECRET" | "GITHUB_API_BASE_URL">, cacheMs = DEFAULT_CACHE_MS): CredentialSource {
+export function createCredentialSource(db: Db, tokenKey: Buffer, config: Pick<Config, "GITHUB_APP_ID" | "GITHUB_PRIVATE_KEY_PATH" | "GITHUB_WEBHOOK_SECRET" | "GITHUB_API_BASE_URL">, cacheMs = DEFAULT_CACHE_MS, markerPath: string = join(dirname(config.GITHUB_PRIVATE_KEY_PATH), ".gitsync-db-credentials")): CredentialSource {
   let cached: { at: number; value: GithubCredentials } | undefined;
 
   const fromEnvironment = async (): Promise<GithubCredentials> => ({
@@ -35,9 +38,18 @@ export function createCredentialSource(db: Db, tokenKey: Buffer, config: Pick<Co
   });
 
   // Once a database row has been read the environment is never consulted again: a secret rotated because it
-  // leaked must not be accepted again during a database outage or after a cache miss (F15).
+  // leaked must not be accepted again during a database outage, after a cache miss, or after a restart (prev F15).
+  // "Seen" is durable in three places: this process, the `github_credential_state` row, and a marker file beside the
+  // key path, which survives a restart while the database is down (the one moment the first two cannot be read).
   let sawRow = false;
   let lastRow: GithubCredentials | undefined;
+  const markerOnDisk = () => { try { return existsSync(markerPath); } catch { return false; } };
+  const remember = () => {
+    if (sawRow) return;
+    sawRow = true;
+    void markCredentialRowSeen(db).catch(() => undefined);
+    try { mkdirSync(dirname(markerPath), { recursive: true }); writeFileSync(markerPath, `${new Date().toISOString()}\n`); } catch { /* read-only mount: the database marker still holds */ }
+  };
 
   const read = async (): Promise<GithubCredentials> => {
     let row: any;
@@ -47,14 +59,14 @@ export function createCredentialSource(db: Db, tokenKey: Buffer, config: Pick<Co
       // The database being down must not stop webhook verification: keep what was last known.
       if (lastRow) return lastRow;
       if (cached) return cached.value;
-      if (sawRow) throw err;
+      if (sawRow || markerOnDisk()) throw err;
       return fromEnvironment(); // cold start, no row ever seen: the environment is the only credential there is
     }
     if (!row) {
-      if (sawRow) throw new Error("github_app_config row disappeared; refusing the environment fallback");
+      if (sawRow || markerOnDisk() || await credentialRowEverSeen(db).catch(() => false)) throw new Error("github_app_config row is gone; refusing the environment fallback");
       return fromEnvironment();
     }
-    sawRow = true;
+    remember();
     // A cleared stored URL means github.com when a row exists; the environment URL is not a fallback here.
     lastRow = {
       appId: String(row.app_id),
@@ -76,7 +88,7 @@ export function createCredentialSource(db: Db, tokenKey: Buffer, config: Pick<Co
     try {
       return { source: (await load()).source, decryptOk: true };
     } catch {
-      return { source: sawRow ? "database" : "environment", decryptOk: false };
+      return { source: sawRow || markerOnDisk() ? "database" : "environment", decryptOk: false };
     }
   };
   return { load, webhookSecret: async () => (await load()).webhookSecret, describe };

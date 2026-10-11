@@ -87,8 +87,15 @@ test("F15: the credential source says where credentials come from and never fall
     deepStrictEqual(await src.describe(), { source: "database", decryptOk: true });
     // database outage: the last stored secret keeps verifying; the environment secret never comes back
     const broken: any = { query: async () => { throw new Error("db down"); } };
+    // A restart during the outage: a row was read earlier (the durable marker beside the key says so), so the environment
+    // secret must NOT come back (review-4 prev F15; the old in-memory-only rule let it back after a restart).
     const outage = createCredentialSource(broken, key, config, 0);
-    strictEqual(await outage.webhookSecret(), "leaked-env-secret"); // cold start, no row ever seen
+    let outageRefused = false; try { await outage.webhookSecret(); } catch { outageRefused = true; }
+    ok(outageRefused);
+    // A cold start where no row was ever read (a fresh key directory, so no marker) still verifies with the environment.
+    const freshKey = join(mkdtempSync(join(tmpdir(), "gh-key-")), "key.pem");
+    writeFileSync(freshKey, "PEM-ENV");
+    strictEqual(await createCredentialSource(broken, key, { ...config, GITHUB_PRIVATE_KEY_PATH: freshKey }, 0).webhookSecret(), "leaked-env-secret");
     // an undecryptable row is reported and refused, not replaced by the environment
     await db.query("UPDATE github_app_config SET webhook_secret_v1 = 'garbage' WHERE id = 1");
     deepStrictEqual(await src.describe(), { source: "database", decryptOk: false });

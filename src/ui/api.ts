@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Route } from "../index.ts";
 import type { Db } from "../db/migrate.ts";
 import { PgTokenStore } from "../db/token-store.ts";
+import { addUserLinkTombstone, clearUserLinkTombstone, markCredentialRowSeen } from "../db/ledgers.ts";
 import { TokenVault, decryptSecret, encryptSecret } from "../auth/identity.ts";
 import { parseRules } from "../rules/engine.ts";
 import { QLL_DEFAULTS, compileLifecycleRules } from "../github/pr-automation.ts";
@@ -23,7 +24,14 @@ import type { ConflictField, ConflictPolicy, InstanceSettings, MagicTier } from 
 export { createUiRoutes, defaultUiDistDir } from "./static.ts";
 
 /** What replay and backfill need from the running service; absent in a config-only deployment (those endpoints then answer 503). */
+
 export interface OperationsDeps {
+  /**
+   * Explicitly retries one failed outbound write, scoped to the workspace that owns it (round-4 F3, supplied by the ordered
+   * outbox). A row of another workspace must answer not-found, never retry. Without it the route answers 503.
+   */
+  retryFailed?(id: string, workspaceSlug: string): Promise<unknown>;
+  // Answer: { ok: true, retried: boolean } — retried:false (no such failed row in the workspace) is a 404.
   enqueue(job: ReplayJob): Promise<void>;
   githubFor(repo: { ghRepoId: number; owner: string; repo: string }): Promise<GithubRequester>;
   resolveIssue(slug: string, key: string): Promise<{ projectId: string; issueId: string } | null | undefined>;
@@ -47,6 +55,11 @@ export interface ConfigApiDeps {
    * null means the account does not exist. Manual user links FAIL CLOSED (503) without it.
    */
   lookupGithubUser?: GithubUserLookup;
+  /**
+   * The credential source the service actually verifies with (`CredentialSource.describe`). Health reports it instead of
+   * re-deriving the source from row existence; without it health falls back to the stored-row check.
+   */
+  credentialStatus?: () => Promise<{ source: "database" | "environment"; decryptOk: boolean }>;
   /** Whether a Plane user belongs to the workspace (see `createPlaneMemberCheck`). User links FAIL CLOSED (503) without it. */
   isWorkspaceMember?: WorkspaceMemberCheck;
 }
@@ -325,13 +338,16 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
       if (errorCode(e) === "23505") throw new HttpError(409, "That GitHub account is already linked to another user in this workspace");
       throw e;
     }
+    await clearUserLinkTombstone(db, slug, link.githubId); // a manual link is an explicit admin decision (F11)
     sendJson(res, 200, { planeUserId: userId, githubLogin: link.githubLogin, githubId: link.githubId });
   });
 
   workspace("DELETE", "/user-links/:planeUserId", async ({ res, slug, params }) => {
     const userId = planeUserId(params.planeUserId);
-    const del = await db.query(`DELETE FROM user_map WHERE workspace_slug = $1 AND plane_user_id = $2 RETURNING id`, [slug, userId]);
+    const del = await db.query(`DELETE FROM user_map WHERE workspace_slug = $1 AND plane_user_id = $2 RETURNING id, gh_id`, [slug, userId]);
     if (!del.rows.length) throw new HttpError(404, "No link for that user");
+    // F11: without this the next event from that account would re-link it by email.
+    await addUserLinkTombstone(db, slug, Number(del.rows[0].gh_id));
     // §9: unlinking must invalidate the user's stored tokens. Tokens are per Plane user, not per
     // workspace, so this fails safe for a user linked in several workspaces.
     await vault.revoke(userId);
@@ -412,6 +428,18 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
     sendJson(res, 202, out);
   });
 
+  workspace("POST", "/outbound-writes/:id/retry", async ({ res, slug, params }) => {
+    const ops = operations();
+    if (!ops.retryFailed) throw new HttpError(503, "Retrying failed writes is not available in this deployment");
+    const id = params.id ?? "";
+    if (!/^[A-Za-z0-9_.:@-]{1,200}$/.test(id)) throw new HttpError(404, "Outbound write not found");
+    const out = await ops.retryFailed(id, slug); // scoped by workspace: a foreign or unknown row is not found
+    // The outbox answers { ok: true, retried: boolean }: false means no such FAILED row in this workspace (unknown, foreign or
+    // not failed), which is indistinguishable by design and answered 404, never revealing another workspace's rows.
+    if ((out as { retried?: unknown } | null)?.retried === false) throw new HttpError(404, "No failed outbound write with that id in this workspace");
+    sendJson(res, 202, { id, status: "retry_scheduled" });
+  });
+
   workspace("POST", "/mappings/:id/backfill", async ({ res, slug, params }) => {
     const ops = operations();
     const m = await loadMapping(slug, params.id);
@@ -450,6 +478,7 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
          private_key_v1 = COALESCE($5, github_app_config.private_key_v1),
          webhook_secret_v1 = COALESCE($6, github_app_config.webhook_secret_v1)`,
       [input.appId, key ?? "", hook ?? "", input.gheBaseUrl, key, hook]);
+    await markCredentialRowSeen(db); // durable: the environment secret is never accepted again (prev F15)
     sendJson(res, 200, { appId: input.appId, gheBaseUrl: input.gheBaseUrl, configured: true });
   });
 
@@ -524,6 +553,13 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
     sendJson(res, 204);
   });
 
+  async function credentialStatus(rowExists: boolean, rowDecrypts: boolean): Promise<{ source: "database" | "environment"; decryptOk: boolean }> {
+    if (deps.credentialStatus) {
+      try { return await deps.credentialStatus(); } catch (e) { console.error("credential status failed:", e instanceof Error ? e.message : "unknown"); }
+    }
+    return { source: rowExists ? "database" : "environment", decryptOk: rowDecrypts };
+  }
+
   // Connection health from our own database: is the App configured, what is mapped, is sync failing.
   instance("GET", "/health", async ({ res }) => {
     const app = await db.query(`SELECT private_key_v1, webhook_secret_v1 FROM github_app_config WHERE id = 1`);
@@ -544,7 +580,7 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
     sendJson(res, 200, {
       database: true,
       githubAppConfigured: app.rows.length > 0,
-      githubAppCredentials: { source: app.rows.length > 0 ? "database" : "environment", decryptOk },
+      githubAppCredentials: await credentialStatus(app.rows.length > 0, decryptOk),
       mappings: Number(maps.rows[0].n),
       lastActivityAt: audit.rows[0].last_at ?? null,
       failuresLast24h: Number(audit.rows[0].failures),

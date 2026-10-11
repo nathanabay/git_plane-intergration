@@ -4,7 +4,7 @@
 // identity stays in charge. Nothing is ever guessed.
 import { matchPlaneUserByEmail } from "../auth/identity.ts";
 import type { GithubSender, PlaneMemberLite } from "../auth/identity.ts";
-import { appendAudit } from "../db/ledgers.ts";
+import { appendAudit, isUserLinkTombstoned } from "../db/ledgers.ts";
 import { installationFor, usersByGithubId } from "./context.ts";
 import type { AppContext } from "./context.ts";
 import type { Mapping } from "./mappings.ts";
@@ -42,6 +42,12 @@ export async function ensureLinkedByEmail(ctx: AppContext, mapping: Mapping, sen
 
   const audit = (outcome: string, detail: Record<string, unknown>, error?: string) =>
     appendAudit(ctx.db, { kind: "identity_email_match", source: "github", workspaceSlug: mapping.workspaceSlug, detail: { githubLogin: sender.login, ...detail }, outcome, ...(error ? { error } : {}) });
+  // F11: an admin unlinked this account; only a manual PUT /user-links lifts that. The sender then acts as the service identity.
+  const tombstoned = async () => Number.isSafeInteger(sender.id) && await isUserLinkTombstoned(ctx.db, mapping.workspaceSlug, sender.id);
+  if (await tombstoned().catch(() => false)) {
+    await audit("skipped", { reason: "unlinked_by_admin", githubId: sender.id }, `GitHub user ${sender.login} was unlinked by an admin; acting as the service identity`).catch(() => undefined);
+    return null;
+  }
   try {
     const octokit = await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, payload));
     const profile = await octokit.request("GET /users/{username}", { username: sender.login });
@@ -53,6 +59,7 @@ export async function ensureLinkedByEmail(ctx: AppContext, mapping: Mapping, sen
       await audit("failed", { reason: match.reason, candidates: match.candidates }, `email match for ${sender.login}: ${match.reason === "multiple" ? "several Plane members share the email" : match.reason === "none" ? "no Plane member has the email" : "the email is not valid"}`);
       return null;
     }
+    if (await tombstoned()) { await audit("skipped", { reason: "unlinked_by_admin", githubId: sender.id }); return null; } // unlinked while we were looking up
     const inserted = await ctx.db.query(
       "INSERT INTO user_map (workspace_slug, plane_user_id, gh_login, gh_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING id",
       [mapping.workspaceSlug, match.planeUserId, sender.login, sender.id]);
