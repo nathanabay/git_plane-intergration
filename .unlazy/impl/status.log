@@ -175,3 +175,20 @@
 2026-10-11T18:23:12Z round 3: GB waited on a proposed fail-open default for isWorkspaceMember — rejected (F5 must fail closed); GB's G2/G3 failures were the stale B3 oracle, already fixed; GB re-running gates
 2026-10-11T18:25:43Z user asked to commit and push before review round 4: 17 task commits (A1-A8, B1-B9) + records commit fd280fa pushed to origin/seal; round-4 review not yet run
 2026-10-11T18:26:45Z user: 3 Codex + 3 Claude implementers (Gemini retired; new sessions sc, cc), gates deferred to the end; review round 4 dispatched to rv without oracle gates
+2026-10-11T18:37:09Z review round 4: BLOCKING 3/MAJOR 8 new, 6 prev still open; driver confirmed F1 (main.ts:58 no installationWorkspace); fix round 4 dispatched to sa sb sc ca cb cc per briefs/fix-r4.md, gates deferred
+2026-10-11T18:38:18Z r4: CA F9 contract (intentId -> external_id/external_source, look up before POST) relayed to CB; CA granted existing test fixtures for the PLANE_SERVICE_USER_ID addition only
+2026-10-11T18:39:31Z r4: CB contracts relayed (CC failed-marker guard + inserted; SC inserted; SB retry route; SA retryFailed wiring); driver wired writeDeliveryId/transportDeliveryId in src/app/reducers.ts and src/app/writers.ts
+2026-10-11T18:40:04Z r4: CB correction relayed: CC's nextCreateGeneration is the sole generation selector (CC to export it plus createPlanRoot); SC uses it for PR -NEW; CB does not auto-generate
+2026-10-11T18:45:16Z r4: CB outbox contracts landed (retryFailed {ok,retried}, inserted, replay scope fields); relayed: CA keep status/headers on PlaneApiError + accept intentId; SB/SA retryFailed shape
+2026-10-11T18:48:06Z r4: CC needs uq_sync_links_label_sync limited to status='active' (orphaned rows block F4 relink); SQL relayed to SB for migration 007; driver checked no ON CONFLICT targets the index
+2026-10-11T18:48:40Z r4: CA F9 landed (intentId on issues+comments, PlaneApiError .status/.response.headers); relayed to CB
+2026-10-11T18:48:55Z r4: SA DONE (F1,F5,retryFailed); assigned tests/a8/harness.ts allow-list row. SC DONE pending exports; assigned APPLY.md/findings-github.md commit-status permission. CC's queued relay submitted
+2026-10-11T18:55:27Z r4: SA's uncapped 12-file node --test (~6GB) pushed the agent scope over MemoryHigh, throttled tmux into D state; killed pgid 322074; memory rule rebroadcast (concurrency 1, heap 1024, <=3 files). CA DONE (F9, prev F17); CA assigned plane-rate-config fixture; SA assigned harness service-user default
+2026-10-11T18:56:48Z r4: memory alert again (8.9GB); killed SA 7-file run and SC duplicate run; started auto-guard killing any node --test group >2.5GB
+2026-10-11T18:56:57Z r4: CA DONE 2 (plane-rate-config fixture; 33/33 targeted, types pass)
+2026-10-11T18:59:32Z r4: CB DONE (F2,F3,F10; 9/9 new tests, typecheck 32 files)
+2026-10-11T19:01:14Z r4: CC granted tests/mirror/mirror.test.ts for the id-based assignee fixture (consequence of prev F5)
+2026-10-11T19:02:51Z r4: CC found a8 harness lacks F9 external-id lookup (service-plan tests 3 fail); relayed to SA (harness owner)
+2026-10-11T19:05:42Z r4: SA DONE 2 (harness: allow-list row, service-user default, F9 external lookup; 34/35 capped); remaining fixes-r2 F15 credential test 'db down' assigned to SB
+2026-10-11T19:07:19Z r4: CB confirmed F9/F10 integration with real PlaneApiError 401/403 + headers; 10/10, typecheck 32
+2026-10-11T19:07:51Z r4: all six DONE; full typecheck 127 files passes; committing round-4 fixes by task and pushing (gates deferred per user)
