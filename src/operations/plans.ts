@@ -25,7 +25,7 @@ export interface OutboxPlanOptions {
   /** Reserve all Plane steps against an existing issue, including dependent label upserts. */
   target?: { slug: string; projectId: string; issueId: string };
 }
-export type PlanWriter = (key: string | undefined, steps: OutboxPlanStep[], opts?: OutboxPlanOptions) => Promise<{ ok: true }>;
+export type PlanWriter = (key: string | undefined, steps: OutboxPlanStep[], opts?: OutboxPlanOptions) => Promise<{ ok: true; inserted?: boolean }>;
 /** SA handles this target-specific continuation, rather than replaying an entire reducer. */
 export interface ReducerContinuation {
   kind: "pr_created" | "mirror_created" | "mirror_pending";
@@ -38,6 +38,7 @@ export interface ReducerContinuation {
 }
 export interface PlanMetadata {
   root: string;
+  marker?: { key: string; root: string; link: Record<string, unknown> };
   bind?: string;
   predecessor?: string;
   bindings: Record<string, string>;

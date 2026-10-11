@@ -6,13 +6,15 @@ import type { Sleep } from "./backoff.ts";
 import { opHash } from "./ophash.ts";
 
 export class PlaneApiError extends Error {
-  status: number;
+  readonly status: number;
   body: unknown;
-  constructor(status: number, body: unknown, message: string) {
+  readonly response: { readonly status: number; readonly headers: Readonly<Record<string, string>> };
+  constructor(status: number, body: unknown, message: string, headers: Record<string, string> = {}) {
     super(message);
     this.name = "PlaneApiError";
     this.status = status;
     this.body = body;
+    this.response = Object.freeze({ status, headers: Object.freeze({ ...headers }) });
   }
 }
 
@@ -125,10 +127,11 @@ export class PlaneClient {
     return this.#rateLimiter.ratePerMinute;
   }
 
-  /** `path` may omit the /api/v1 prefix. Retries 429 and 5xx per §9; never logs the token or a body. */
+  /** Retries rejected 429s and idempotent requests. Ambiguous POST failures belong to the durable outbox. */
   async request<T = unknown>(method: string, path: string, body?: unknown, opts?: { token?: SecretString }): Promise<T> {
     const url = this.#baseUrl + (path.startsWith(`${API_PREFIX}/`) ? path : API_PREFIX + path);
     const key = (opts?.token ?? this.#token).reveal();
+    const post = method.toUpperCase() === "POST";
     for (let attempt = 0; ; attempt++) {
       await this.#rateLimiter.acquire();
       let res: Response;
@@ -139,7 +142,7 @@ export class PlaneClient {
           body: body === undefined ? undefined : JSON.stringify(body),
         });
       } catch (err) {
-        if (attempt >= this.#maxRetries) throw new Error(`Plane ${method} ${path} failed: ${err instanceof Error ? err.message : "network error"}`);
+        if (post || attempt >= this.#maxRetries) throw new Error(`Plane ${method} ${path} failed: ${err instanceof Error ? err.message : "network error"}`);
         await this.#sleep(backoffMs(attempt));
         continue;
       }
@@ -147,24 +150,29 @@ export class PlaneClient {
       let parsed: unknown = text;
       if (text) { try { parsed = JSON.parse(text); } catch { /* non-JSON body is kept as text */ } } else parsed = undefined;
       if (res.ok) return parsed as T;
-      const retriable = res.status === 429 || res.status >= 500;
+      const retriable = res.status === 429 || (!post && res.status >= 500);
       if (retriable && attempt < this.#maxRetries) {
         await this.#sleep(retryDelayMs((n) => res.headers.get(n), attempt));
         continue;
       }
       const detail = parsed && typeof parsed === "object" && typeof (parsed as { error?: unknown }).error === "string" ? `: ${(parsed as { error: string }).error}` : "";
-      throw new PlaneApiError(res.status, parsed, `Plane ${method} ${path} returned ${res.status}${detail}`);
+      const headers: Record<string, string> = {};
+      for (const name of ["retry-after", "x-ratelimit-remaining", "x-ratelimit-reset"]) {
+        const value = res.headers.get(name);
+        if (value !== null) headers[name] = value;
+      }
+      throw new PlaneApiError(res.status, parsed, `Plane ${method} ${path} returned ${res.status}${detail}`, headers);
     }
   }
 
   /** Follows `next_cursor` while `next_page_results` is true; a bare array is a single page. */
-  async listAll<T>(path: string): Promise<T[]> {
+  async listAll<T>(path: string, opts?: { token?: SecretString }): Promise<T[]> {
     const out: T[] = [];
     let cursor: string | null = null;
     const sep = path.includes("?") ? "&" : "?";
     for (let page = 0; page < 1000; page++) {
       const url: string = cursor ? `${path}${sep}cursor=${encodeURIComponent(cursor)}` : path;
-      const res = await this.request<T[] | { results?: T[]; next_cursor?: string | null; next_page_results?: boolean }>("GET", url);
+      const res = await this.request<T[] | { results?: T[]; next_cursor?: string | null; next_page_results?: boolean }>("GET", url, undefined, opts);
       if (Array.isArray(res)) return res;
       out.push(...(res?.results ?? []));
       if (!res?.next_page_results || !res.next_cursor) return out;
@@ -195,6 +203,11 @@ export type PlaneWrite =
   | { kind: "upsert_label"; slug: string; projectId: string; name: string; color?: string };
 
 export interface PlaneWriteResult { ok: boolean; id?: string; duplicate?: boolean }
+export interface PlaneWriteOptions {
+  actorToken?: SecretString;
+  /** Stable durable outbox id, supplied by the executor rather than webhook data. */
+  intentId?: string;
+}
 
 export class UnknownPlaneState extends Error {
   constructor(message: string) { super(message); this.name = "UnknownPlaneState"; }
@@ -244,7 +257,7 @@ export class PlaneWritePath {
     if (write.kind === "update_issue" || write.kind === "create_issue") await this.#guardState(write.slug, write.projectId, write.fields);
   }
 
-  async apply(write: PlaneWrite, opts: { actorToken?: SecretString } = {}): Promise<PlaneWriteResult> {
+  async apply(write: PlaneWrite, opts: PlaneWriteOptions = {}): Promise<PlaneWriteResult> {
     const req = <T>(method: string, path: string, body?: unknown) => this.#client.request<T>(method, path, body, opts.actorToken ? { token: opts.actorToken } : undefined);
     const base = (w: { slug: string; projectId: string }) => `/workspaces/${w.slug}/projects/${w.projectId}`;
 
@@ -286,33 +299,9 @@ export class PlaneWritePath {
         }
         return { ok: true, id: write.issueId };
       }
-      case "create_issue": {
-        await this.#guardState(write.slug, write.projectId, write.fields);
-        const name = typeof write.fields.name === "string" ? write.fields.name : "";
-        const markers = [
-          pendingCreateHash(write.projectId),
-          ...(name ? [pendingCreateHash(write.projectId, name)] : []),
-        ];
-        for (const m of markers) await markCreatePending(this.#db, m, "to_plane");
-        try {
-          const created = await req<{ id: string }>("POST", `${base(write)}/issues/`, write.fields);
-          await this.#recordCreated(created.id);
-          return { ok: true, id: created.id };
-        } finally {
-          for (const m of markers) await clearCreatePending(this.#db, m);
-        }
-      }
-      case "add_comment": {
-        const marker = pendingCommentHash(write.issueId);
-        await markCreatePending(this.#db, marker, "to_plane");
-        try {
-          const created = await req<{ id: string }>("POST", `${base(write)}/issues/${write.issueId}/comments/`, { comment_html: write.commentHtml });
-          await this.#recordCreated(created.id);
-          return { ok: true, id: created.id };
-        } finally {
-          await clearCreatePending(this.#db, marker);
-        }
-      }
+      case "create_issue":
+      case "add_comment":
+        return this.#create(write, opts);
       case "add_link": {
         try {
           const created = await req<{ id?: string }>("POST", `${base(write)}/issues/${write.issueId}/links/`, { url: write.url, title: write.title });
@@ -340,8 +329,68 @@ export class PlaneWritePath {
     }
   }
 
+  async #create(write: Extract<PlaneWrite, { kind: "create_issue" | "add_comment" }>, opts: PlaneWriteOptions): Promise<PlaneWriteResult> {
+    if (write.kind === "create_issue") await this.#guardState(write.slug, write.projectId, write.fields);
+    const intentId = opts.intentId;
+    if (intentId !== undefined && (typeof intentId !== "string" || !intentId.trim() || intentId.length > 255)) {
+      throw new Error("Plane create intent id must be a nonempty string of at most 255 characters");
+    }
+    const path = `/workspaces/${write.slug}/projects/${write.projectId}/issues/`
+      + (write.kind === "add_comment" ? `${write.issueId}/comments/` : "");
+    const requestOptions = opts.actorToken ? { token: opts.actorToken } : undefined;
+    if (intentId) {
+      let existing: { id?: unknown; external_id?: unknown; external_source?: unknown } | undefined;
+      if (write.kind === "create_issue") {
+        // v1.4.2 returns one object (not a page) for this external-id lookup; absence is 404.
+        try {
+          existing = await this.#client.request("GET", `${path}?${new URLSearchParams({ external_source: "gitsync", external_id: intentId })}`, undefined, requestOptions);
+        } catch (err) { if (!(err instanceof PlaneApiError) || err.status !== 404) throw err; }
+      } else {
+        const comments = await this.#client.listAll<{ id?: unknown; external_id?: unknown; external_source?: unknown }>(path, requestOptions);
+        existing = comments.find((c) => c.external_source === "gitsync" && c.external_id === intentId);
+      }
+      if (existing !== undefined) {
+        if (!existing || typeof existing.id !== "string" || !existing.id || existing.external_id !== intentId || existing.external_source !== "gitsync") {
+          throw new PlaneApiError(502, {}, "Plane intent lookup returned an invalid or mismatched object");
+        }
+        await this.#recordCreated(existing.id);
+        return { ok: true, id: existing.id };
+      }
+    }
+    const name = write.kind === "create_issue" && typeof write.fields.name === "string" ? write.fields.name : "";
+    const markers = write.kind === "add_comment" ? [pendingCommentHash(write.issueId)]
+      : [pendingCreateHash(write.projectId), ...(name ? [pendingCreateHash(write.projectId, name)] : [])];
+    try {
+      for (const marker of markers) await markCreatePending(this.#db, marker, "to_plane");
+      const fields = write.kind === "create_issue" ? write.fields : { comment_html: write.commentHtml };
+      let created: { id?: unknown };
+      try {
+        created = await this.#client.request("POST", path, { ...fields,
+          ...(intentId ? { external_source: "gitsync", external_id: intentId } : {}),
+        }, requestOptions);
+      } catch (err) {
+        // A read replica can miss a committed create. Plane's exact conflict identifies its id.
+        const duplicate = write.kind === "create_issue" ? "Issue with the same external id and external source already exists"
+          : "Work item comment with the same external id and external source already exists";
+        const body = err instanceof PlaneApiError && err.status === 409 && err.body && typeof err.body === "object"
+          ? err.body as { error?: unknown; id?: unknown } : undefined;
+        if (!intentId || body?.error !== duplicate || typeof body.id !== "string" || !body.id) throw err;
+        created = { id: body.id };
+      }
+      if (!created || typeof created.id !== "string" || !created.id) throw new PlaneApiError(502, {}, "Plane create response has no id");
+      await this.#recordCreated(created.id);
+      return { ok: true, id: created.id };
+    } finally {
+      for (const marker of markers) {
+        try { await clearCreatePending(this.#db, marker); }
+        catch { console.error("Plane create pending-marker cleanup failed"); }
+      }
+    }
+  }
+
   async #recordCreated(id: string | undefined): Promise<void> {
     if (!id) return;
-    await recordAppliedOps(this.#db, [{ opHash: opHash("plane", id, "created", null), direction: "to_plane" }]);
+    try { await recordAppliedOps(this.#db, [{ opHash: opHash("plane", id, "created", null), direction: "to_plane" }]); }
+    catch { console.error("Plane create succeeded but its echo-ledger bookkeeping failed"); }
   }
 }

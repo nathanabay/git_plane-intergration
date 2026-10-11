@@ -1,6 +1,7 @@
 // Durable FIFO per target. Redis jobs wake the executor; the database preserves intent and completion.
 import { createHash, randomUUID } from "node:crypto";
 import { resolvePlanValue } from "./plans.ts";
+import { OperationError } from "./tooling.ts";
 import type { OutboxPlanStep, OutboxPlanOptions, PlanMetadata, ReducerContinuation } from "./plans.ts";
 import type { Queue } from "bullmq";
 import type { SecretString } from "../auth/identity.ts";
@@ -24,7 +25,7 @@ type ResumeWrite = { kind: "resume_reducer"; continuation: ReducerContinuation }
 type Write = (ResumeWrite | RollupWrite | PlaneWrite | GithubWrite | PlaneMutationWrite | GithubAssigneeWrite) & { _plan?: PlanMetadata };
 type Result = PlaneWriteResult | { ok: true; id?: number; number?: number };
 type Enqueue = Pick<Queue, "add" | "getJob">;
-export interface DeliveryContext { deliveryId: string; seq?: number; workspaceSlug?: string; occurrences?: Map<string, number>; operationId?: string }
+export interface DeliveryContext { deliveryId: string; writeDeliveryId?: string; transportDeliveryId?: string; seq?: number; workspaceSlug?: string; occurrences?: Map<string, number>; operationId?: string }
 
 export interface OutboxMeta {
   id: string;
@@ -123,8 +124,8 @@ const held = new WeakMap<Db, Set<string>>();
 
 export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
   const now = deps.now ?? Date.now;
-  const maxAttempts = deps.maxAttempts ?? 10;
-  const maxBlockMs = deps.maxTargetBlockDurationMs ?? 1_200_000;
+  const maxAttempts = deps.maxAttempts ?? 30;
+  const maxBlockMs = deps.maxTargetBlockDurationMs ?? 6 * 60 * 60_000;
   if (!Number.isFinite(maxBlockMs) || maxBlockMs <= 0) throw new Error("outbox maximum target blocking duration must be positive");
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new Error("outbox maxAttempts must be a positive integer");
   const find = async (id: string, db: Db = deps.db): Promise<Row> => {
@@ -156,10 +157,59 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
     }
     await queue.add("write", jobData(row), { jobId: row.id });
   };
-  const wakeFollowing = async (row: Row): Promise<void> => {
+  const wakeFollowing = async (row: Pick<Row, "id" | "target_key">): Promise<void> => {
     const candidates = (await deps.db.query<{ id: string }>(`SELECT id FROM outbound_writes WHERE status = 'pending'
       AND (target_key = $1 OR write->'_plan'->>'predecessor' = $2) ORDER BY sequence LIMIT 100`, [row.target_key, row.id])).rows;
     for (const candidate of candidates) await wake(await find(candidate.id)).catch(() => {});
+  };
+
+  const isReplay = (scope: DeliveryContext | undefined) => Boolean(scope?.writeDeliveryId && scope.transportDeliveryId
+    && scope.writeDeliveryId !== scope.transportDeliveryId);
+
+  /** An explicit retry preserves completed steps and API checkpoints, restarting only failed work. */
+  const resetFailed = async (conn: Db, row: Row): Promise<boolean> => {
+    const root = row.write._plan?.root;
+    if (!(await conn.query("SELECT 1 FROM outbound_writes WHERE status = 'failed' AND (id = $1 OR write->'_plan'->>'root' = $2) LIMIT 1", [row.id, root ?? null])).rows.length) return false;
+    let marker: PlanMetadata["marker"];
+    if (root) {
+      const first = await find(root, conn);
+      marker = first.write._plan?.marker;
+      // Existing round-3 plans predate the marker metadata; recover their serialized link/key.
+      if (!marker) {
+        const actions = (await conn.query<{ step: any }>(`SELECT step FROM outbound_writes w,
+          LATERAL jsonb_array_elements(COALESCE(w.write->'_plan'->'after', '[]'::jsonb)) step
+          WHERE w.write->'_plan'->>'root' = $1 AND step->>'kind' IN ('sync_link','clear_pending_link')
+          ORDER BY w.sequence LIMIT 2`, [root])).rows.map((r) => r.step);
+        const key = actions.find((a) => a.kind === "clear_pending_link")?.key;
+        const link = actions.find((a) => a.kind === "sync_link")?.link;
+        if (key && link) marker = { key, root, link };
+      }
+      if (deps.db.withConnection) for (const target of [...new Set([first.target_key,
+        ...(marker ? [JSON.stringify([first.side, "create", marker.key])] : [])])].sort())
+        await conn.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`gitsync:outbound-register:${target}`]);
+      if (marker) {
+        const live = (await conn.query<{ outbox_id: string }>("SELECT outbox_id FROM pending_sync_links WHERE key = $1", [marker.key])).rows[0];
+        if (live && live.outbox_id !== root) throw new PlaneApiError(409, {}, "a newer create workflow already owns this object");
+        // A later generation may already have installed its partner and removed its marker.
+        const failedCreate = (await conn.query("SELECT 1 FROM outbound_writes WHERE write->'_plan'->>'root' = $1 AND status = 'failed' AND write->>'kind' = 'create_issue' AND result IS NULL LIMIT 1", [root])).rows.length;
+        const link = marker.link;
+        if (failedCreate && typeof link.planeWorkspaceSlug === "string" && typeof link.planeProjectId === "string"
+          && (typeof link.ghNumber === "number" || typeof link.planeIssueId === "string")) {
+          const active = await conn.query(`SELECT 1 FROM sync_links WHERE status = 'active' AND plane_workspace_slug = $1
+            AND plane_project_id = $2 AND gh_repo_id = $3 AND gh_kind = $4
+            AND (($5::int IS NOT NULL AND gh_number = $5) OR ($6::text IS NOT NULL AND plane_issue_id = $6)) LIMIT 1`,
+          [link.planeWorkspaceSlug, link.planeProjectId, link.ghRepoId, link.ghKind ?? "issue",
+            typeof link.ghNumber === "number" ? link.ghNumber : null, typeof link.planeIssueId === "string" ? link.planeIssueId : null]);
+          if (active.rows.length) throw new PlaneApiError(409, {}, "this object already has an active partner");
+        }
+      }
+    }
+    await conn.query(`UPDATE outbound_writes SET status = 'pending', attempts = 0,
+      error = NULL, retry_at = NULL, updated_at = now()
+      WHERE status = 'failed' AND (id = $1 OR ($2::text IS NOT NULL AND write->'_plan'->>'root' = $2))`, [row.id, root ?? null]);
+    if (marker) await conn.query(`INSERT INTO pending_sync_links (key,outbox_id,link) VALUES ($1,$2,$3::jsonb)
+      ON CONFLICT (key) DO NOTHING`, [marker.key, root, JSON.stringify(marker.link)]);
+    return true;
   };
 
   const enqueue = async (side: Side, write: Write, actorToken?: SecretString): Promise<Result> => {
@@ -179,16 +229,20 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
     // Reserve ordering before any remote guard/read. The real Plane write path still validates states
     // immediately before recording echo ops and applying the API write, including on every retry.
     const target = targetKey(side, write, id);
-    const insert = (db: Db) => db.query(`INSERT INTO outbound_writes
+    const insert = async (db: Db) => {
+      await db.query(`INSERT INTO outbound_writes
       (id, side, target_key, delivery_id, workspace_slug, actor_user_id, write)
       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT (id) DO NOTHING`,
     [id, side, target, scope?.deliveryId ?? null, workspaceSlug ?? null, actorUserId ?? null, JSON.stringify(write)]);
+      if (isReplay(scope)) await resetFailed(db, await find(id, db));
+    };
     if (deps.db.withConnection) {
       // Serialize registration commits, separately from execution. Otherwise an uncommitted lower
       // sequence can be invisible while another replica commits and executes a higher sequence.
       await deps.db.withConnection(async (conn) => {
         await conn.exec("BEGIN");
         try {
+          if (isReplay(scope)) await conn.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`gitsync:outbound:${target}`]);
           await conn.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`gitsync:outbound-register:${target}`]);
           await insert(conn);
           await conn.exec("COMMIT");
@@ -203,7 +257,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
     return { ok: true };
   };
 
-  const plan = async (key: string | undefined, steps: OutboxPlanStep[], opts: OutboxPlanOptions = {}): Promise<{ ok: true }> => {
+  const plan = async (key: string | undefined, steps: OutboxPlanStep[], opts: OutboxPlanOptions = {}): Promise<{ ok: true; inserted: boolean }> => {
     if (!steps.length || steps.length > 256 || steps[0]?.kind !== "write") throw new Error("outbox plans need 1–256 steps, starting with a write");
     // Copy before registration so templates cannot change after IDs have been chosen.
     steps = JSON.parse(JSON.stringify(steps));
@@ -238,24 +292,44 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
       }
     }
     const marker = opts.pendingMarker ?? (key && opts.pendingLink ? { key, root, link: opts.pendingLink } : undefined);
-    if (marker) intents.at(-1)!.write._plan!.after.push({ kind: "clear_pending_link", key: marker.key });
+    if (marker) {
+      intents.at(-1)!.write._plan!.after.push({ kind: "clear_pending_link", key: marker.key });
+      if (!group) intents[0]!.write._plan!.marker = marker;
+    }
+    let didInsert = false;
     const register = async (conn: Db) => {
       await conn.exec("BEGIN");
       try {
-        if (deps.db.withConnection) for (const target of [...new Set(intents.map((i) => i.target))].sort())
+        if (deps.db.withConnection) for (const target of [...new Set([...intents.map((i) => i.target),
+          ...(marker ? [JSON.stringify([first.side, "create", marker.key])] : [])])].sort())
           await conn.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`gitsync:outbound-register:${target}`]);
+        if (group && (await conn.query("SELECT 1 FROM outbound_writes WHERE write->'_plan'->>'root' = $1 AND status = 'failed' LIMIT 1", [group.id])).rows.length) {
+          await conn.exec("COMMIT");
+          return;
+        }
+        if (marker) {
+          const existingMarker = (await conn.query<{ outbox_id: string; failed: boolean }>(`SELECT p.outbox_id,
+            EXISTS (SELECT 1 FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id AND w.status = 'failed') AS failed
+            FROM pending_sync_links p WHERE p.key = $1`, [marker.key])).rows[0];
+          if (existingMarker?.failed) await conn.query("DELETE FROM pending_sync_links WHERE key = $1 AND outbox_id = $2", [marker.key, existingMarker.outbox_id]);
+          else if (existingMarker && existingMarker.outbox_id !== marker.root) {
+            await conn.exec("COMMIT");
+            return;
+          }
+        }
         // The root's first registration fixes the whole plan, even if a later delivery has a changed title.
         const inserted = await conn.query(`INSERT INTO outbound_writes (id, side, target_key, delivery_id, workspace_slug, actor_user_id, write)
           VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT (id) DO NOTHING RETURNING id`,
           [root, first.side, intents[0]!.target, scope?.deliveryId ?? null, intents[0]!.workspace, first.side === "plane" ? actorUserId ?? null : null, JSON.stringify(intents[0]!.write)]);
-        if (inserted.rows.length) {
+        didInsert = inserted.rows.length > 0;
+        if (didInsert) {
           for (const intent of intents.slice(1)) await conn.query(`INSERT INTO outbound_writes (id, side, target_key, delivery_id, workspace_slug, actor_user_id, write)
             VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`, [intent.id, intent.side, intent.target, scope?.deliveryId ?? null,
             intent.workspace, intent.side === "plane" ? actorUserId ?? null : null, JSON.stringify(intent.write)]);
           // Re-establish the barrier if the previous head completed after this event read its marker.
           if (marker) await conn.query(`INSERT INTO pending_sync_links (key, outbox_id, link) VALUES ($1,$2,$3::jsonb)
             ON CONFLICT (key) DO NOTHING`, [marker.key, marker.root, JSON.stringify(marker.link)]);
-        }
+        } else if (isReplay(scope)) await resetFailed(conn, await find(root, conn));
         await conn.exec("COMMIT");
       } catch (err) { await conn.exec("ROLLBACK").catch(() => {}); throw err; }
     };
@@ -266,7 +340,35 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
       const row = await find(intent.id);
       await wake(row).catch(() => {});
     }
-    return { ok: true };
+    return { ok: true, inserted: didInsert };
+  };
+
+  const retryFailed = async (id: string, workspaceSlug: string): Promise<{ ok: true; retried: boolean }> => {
+    const row = (await deps.db.query<Row>("SELECT * FROM outbound_writes WHERE id = $1 AND workspace_slug = $2", [id, workspaceSlug])).rows[0];
+    if (!workspaceSlug || !row) throw new OperationError(404, "outbound write not found in this workspace");
+    let retried = false;
+    const reset = async (conn: Db) => {
+      await conn.exec("BEGIN");
+      try {
+        if (deps.db.withConnection) await conn.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`gitsync:outbound:${row.target_key}`]);
+        retried = await resetFailed(conn, await find(id, conn));
+        if (retried) await appendAudit(conn, { kind: "outbound_write_retry", source: row.side, workspaceSlug,
+          ...(row.delivery_id ? { deliveryId: row.delivery_id } : {}), outcome: "queued", detail: { outboxId: id } });
+        await conn.exec("COMMIT");
+      } catch (err) { await conn.exec("ROLLBACK").catch(() => {}); throw err; }
+    };
+    try {
+      if (deps.db.withConnection) await deps.db.withConnection(reset); else await reset(deps.db);
+    } catch (err) {
+      if (err instanceof PlaneApiError && (err.status === 404 || err.status === 409)) throw new OperationError(err.status, err.message);
+      throw err;
+    }
+    if (retried) {
+      const root = row.write._plan?.root;
+      const pending = (await deps.db.query<{ id: string }>("SELECT id FROM outbound_writes WHERE status = 'pending' AND (id = $1 OR write->'_plan'->>'root' = $2) ORDER BY sequence LIMIT 100", [id, root ?? null])).rows;
+      for (const intent of pending) await wake(await find(intent.id)).catch(() => {});
+    }
+    return { ok: true, retried };
   };
 
   const failIntent = async (conn: Db, head: Row, id: string, err: unknown, actor?: SecretString): Promise<never> => {
@@ -287,6 +389,21 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
         retry_at = $4, error = $5::jsonb, updated_at = now() WHERE id = $1`,
       [head.id, attempts, terminal ? "failed" : "pending",
         terminal ? null : new Date(now() + retryAfter), JSON.stringify({ message, retryStartedAt })]);
+      if (terminal && head.write._plan) {
+        const root = head.write._plan.root;
+        if (deps.db.withConnection) {
+          const rootTarget = (await conn.query<{ target_key: string }>("SELECT target_key FROM outbound_writes WHERE id = $1", [root])).rows[0]?.target_key;
+          if (rootTarget) await conn.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`gitsync:outbound-register:${rootTarget}`]);
+        }
+        await conn.query(`UPDATE outbound_writes SET status = 'failed', retry_at = NULL, error = $2::jsonb, updated_at = now()
+          WHERE status = 'pending' AND write->'_plan'->>'root' = $1`, [root, JSON.stringify({ message: `plan failed at ${head.id}: ${message}` })]);
+        const markers = await conn.query<{ key: string }>("DELETE FROM pending_sync_links WHERE outbox_id = $1 RETURNING key", [root]);
+        if (markers.rows.length && !(await conn.query("SELECT 1 FROM audit_log WHERE kind = 'mirror_create_failed' AND detail->>'root' = $1", [root])).rows.length)
+          await appendAudit(conn, { kind: "mirror_create_failed", source: head.side,
+            ...(head.delivery_id ? { deliveryId: head.delivery_id } : {}),
+            ...(head.workspace_slug ? { workspaceSlug: head.workspace_slug } : {}), outcome: "failed", error: message,
+            detail: { root, outboxId: head.id, markerKey: markers.rows[0]!.key } });
+      }
       if (terminal) await appendAudit(conn, { kind: "outbound_write_failed", source: head.side,
         ...(head.delivery_id ? { deliveryId: head.delivery_id } : {}),
         ...(head.workspace_slug ? { workspaceSlug: head.workspace_slug } : {}), outcome: "failed", error: message,
@@ -295,6 +412,10 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
     } catch (err) { if (transactional) await conn.exec("ROLLBACK").catch(() => {}); throw err; }
     if (terminal) {
       await wakeFollowing(head);
+      if (head.write._plan) {
+        const siblings = (await conn.query<Pick<Row, "id" | "target_key">>("SELECT id, target_key FROM outbound_writes WHERE write->'_plan'->>'root' = $1 AND status = 'failed' ORDER BY sequence LIMIT 100", [head.write._plan.root])).rows;
+        for (const sibling of siblings) await wakeFollowing(sibling);
+      }
       if (head.id === id) throw new QueuedWriteFailedError(id, message);
     }
     throw new OrderedWriteDeferredError(terminal ? 1 : retryAfter);
@@ -343,8 +464,13 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
           }
           const { _plan: _metadata, ...template } = head.write;
           const actualWrite = resolvePlanValue(template, results) as Write;
+          let tokenSnapshot: string | undefined;
           if (head.actor_user_id && !head.result) {
-            actor = await deps.loadActorToken(head.actor_user_id) ?? undefined;
+            const rejected = (await conn.query("SELECT 1 FROM audit_log WHERE kind = 'identity_fallback' AND detail->>'outboxId' = $1 AND detail->>'reason' = 'token_rejected'", [head.id])).rows.length > 0;
+            if (!rejected) {
+              tokenSnapshot = (await conn.query<{ ciphertext: string }>("SELECT ciphertext FROM user_tokens WHERE plane_user_id = $1 AND kind = 'plane_pat'", [head.actor_user_id])).rows[0]?.ciphertext;
+              actor = await deps.loadActorToken(head.actor_user_id) ?? undefined;
+            }
             if (!actor && !(await conn.query("SELECT 1 FROM audit_log WHERE kind = 'identity_fallback' AND detail->>'outboxId' = $1", [head.id])).rows.length) {
               await appendAudit(conn, { kind: "identity_fallback", source: head.side,
                 ...(head.delivery_id ? { deliveryId: head.delivery_id } : {}),
@@ -352,6 +478,32 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
                 detail: { outboxId: head.id, actorUserId: head.actor_user_id, reason: "token_revoked", identity: "service" } });
             }
           }
+          const applyPlane = async (write: PlaneWrite): Promise<PlaneWriteResult> => {
+            // The immutable intent ID lets the Plane create path recover ambiguous POST outcomes.
+            const options = { intentId: head.id, ...(actor ? { actorToken: actor } : {}) };
+            try { return await deps.plane.apply(write, options); }
+            catch (err) {
+              const e = err as { status?: number; response?: { status?: number; headers?: Record<string, unknown> } } | null;
+              const status = e?.status ?? e?.response?.status;
+              const headers = e?.response?.headers ?? {};
+              const rateLimited = headers["retry-after"] !== undefined || String(headers["x-ratelimit-remaining"]) === "0";
+              if (!actor || !(status === 401 || (status === 403 && !rateLimited))) throw err;
+              const transactional = Boolean(deps.db.withConnection);
+              if (transactional) await conn.exec("BEGIN");
+              try {
+                // Compare the ciphertext snapshot so an independently rotated PAT is not deleted.
+                if (tokenSnapshot) await conn.query("DELETE FROM user_tokens WHERE plane_user_id = $1 AND kind = 'plane_pat' AND ciphertext = $2", [head.actor_user_id, tokenSnapshot]);
+                if (!(await conn.query("SELECT 1 FROM audit_log WHERE kind = 'identity_fallback' AND detail->>'outboxId' = $1 AND detail->>'reason' = 'token_rejected'", [head.id])).rows.length)
+                  await appendAudit(conn, { kind: "identity_fallback", source: head.side,
+                    ...(head.delivery_id ? { deliveryId: head.delivery_id } : {}),
+                    ...(head.workspace_slug ? { workspaceSlug: head.workspace_slug } : {}), outcome: "service_fallback",
+                    detail: { outboxId: head.id, actorUserId: head.actor_user_id, reason: "token_rejected", identity: "service" } });
+                if (transactional) await conn.exec("COMMIT");
+              } catch (dbError) { if (transactional) await conn.exec("ROLLBACK").catch(() => {}); throw dbError; }
+              actor = undefined;
+              return deps.plane.apply(write, { intentId: head.id });
+            }
+          };
           if (head.result?.ok === true) result = head.result;
           else if (actualWrite.kind === "resume_reducer") {
             if (!deps.resumeReducer) throw new PlaneApiError(503, {}, "outbox reducer continuation handler is required");
@@ -361,16 +513,16 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
             const w = actualWrite;
             const stored = await getDevInfoLink(conn, w.issueId, w.key);
             const add = async (): Promise<PlaneWriteResult> => {
-              const created = await deps.plane.apply({ kind: "add_link", slug: w.slug, projectId: w.projectId, issueId: w.issueId, url: w.url, title: w.title }, actor ? { actorToken: actor } : {});
+              const created = await applyPlane({ kind: "add_link", slug: w.slug, projectId: w.projectId, issueId: w.issueId, url: w.url, title: w.title });
               if (created.id) return created;
               const found = await deps.findPlaneLinkId?.(w, w.url);
               if (!found) throw new PlaneApiError(503, {}, "cannot recover the existing rollup link ID");
-              await deps.plane.apply({ kind: "update_link", slug: w.slug, projectId: w.projectId, issueId: w.issueId, linkId: found, url: w.url, title: w.title }, actor ? { actorToken: actor } : {});
+              await applyPlane({ kind: "update_link", slug: w.slug, projectId: w.projectId, issueId: w.issueId, linkId: found, url: w.url, title: w.title });
               return { ok: true, id: found };
             };
             if (!stored) result = await add();
             else try {
-              await deps.plane.apply({ kind: "update_link", slug: w.slug, projectId: w.projectId, issueId: w.issueId, linkId: stored, url: w.url, title: w.title }, actor ? { actorToken: actor } : {});
+              await applyPlane({ kind: "update_link", slug: w.slug, projectId: w.projectId, issueId: w.issueId, linkId: stored, url: w.url, title: w.title });
               result = { ok: true, id: stored };
             } catch (err) { if (!(err instanceof PlaneApiError) || err.status !== 404) throw err; result = await add(); }
           } else if (actualWrite.kind === "mutate_issue") {
@@ -384,8 +536,8 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
             const wanted = mutation.kind === "remove_label" ? previous.filter((id) => id !== mutation.id)
               : [...new Set([...previous, mutation.id])];
             result = normalizeValue(previous) === normalizeValue(wanted) ? { ok: true, id: w.issueId }
-              : await deps.plane.apply({ kind: "update_issue", slug: w.slug, projectId: w.projectId,
-                issueId: w.issueId, fields: { [field]: wanted } }, actor ? { actorToken: actor } : {});
+              : await applyPlane({ kind: "update_issue", slug: w.slug, projectId: w.projectId,
+                issueId: w.issueId, fields: { [field]: wanted } });
           } else if (actualWrite.kind === "set_assignees") {
             const w = actualWrite;
             if (!deps.listGithubAssignees) throw new PlaneApiError(503, {}, "ordered GitHub assignee sync needs a current-assignee reader");
@@ -400,7 +552,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
             if (remove.length) await deps.github.apply({ ...target, kind: "remove_assignees", assignees: remove });
             if (add.length) await deps.github.apply({ ...target, kind: "add_assignees", assignees: add });
             result = { ok: true };
-          } else result = head.side === "plane" ? await deps.plane.apply(actualWrite as PlaneWrite, actor ? { actorToken: actor } : {})
+          } else result = head.side === "plane" ? await applyPlane(actualWrite as PlaneWrite)
             : await deps.github.apply(actualWrite as GithubWrite);
           if (!result || result.ok !== true) throw new Error("outbound executor returned no successful result");
         } catch (err) {
@@ -500,6 +652,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
     executePlane: (job: OutboxJob) => execute("plane", job),
     executeGithub: (job: OutboxJob) => execute("github", job),
     recover,
+    retryFailed,
   };
 }
 
