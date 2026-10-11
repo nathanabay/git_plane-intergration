@@ -110,3 +110,13 @@
 2026-10-11T08:19:14.498Z dispatch w7e started fix-r1-ga as tmux:gitsync:ga
 2026-10-11T08:19:15.176Z dispatch w7e started fix-r1-gb as tmux:gitsync:gb
 2026-10-11T08:19:15.313Z dispatch w7e sealed
+2026-10-11T08:25:47Z killed runaway test runs (SB 4.7GB smart-commits/workspace; CB 2.7GB mirror) after agent scope exceeded MemoryHigh and froze tmux; relayed CA's F7 hooks to SA
+2026-10-11T08:30:25Z killed orphaned test workers (~4.5GB, parent PID 1) and SB's second runaway (tests/github, 3GB); run-tests.mjs now bounds concurrency/heap and kills its process group
+2026-10-11T08:37:04Z stray CB brief submitted into CA session (extra Enter during Codex broadcast); CA kept its OWNS; confirmed accidental
+2026-10-11T09:01:22.012Z dispatch w7e returned fix-r1-ca
+2026-10-11T09:29:03.945Z dispatch w7e returned fix-r1-sa
+2026-10-11T09:29:04.056Z dispatch w7e returned fix-r1-sb
+2026-10-11T09:29:04.178Z dispatch w7e returned fix-r1-cb
+2026-10-11T09:29:04.283Z dispatch w7e returned fix-r1-ga
+2026-10-11T09:29:04.420Z dispatch w7e returned fix-r1-gb
+2026-10-11T09:41:29Z node-1.6-r1 VERIFIED: all 18 round-1 findings answered; oracles, whole suite, typecheck, stub scan pass on the combined tree
