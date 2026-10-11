@@ -1,0 +1,108 @@
+diff --git a/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/git-sync/page.tsx b/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/git-sync/page.tsx
+new file mode 100644
+index 0000000..edab51b
+--- /dev/null
++++ b/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/git-sync/page.tsx
+@@ -0,0 +1,47 @@
++import { observer } from "mobx-react";
++import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
++import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view";
++import { LogoSpinner } from "@/components/common/logo-spinner";
++import { useUserPermissions } from "@/hooks/store/user";
++import { SettingsContentWrapper } from "@/components/settings/content-wrapper";
++import { PageHead } from "@/components/core/page-title";
++import type { Route } from "./+types/page";
++
++function GitSyncWorkspacePage({ params }: Route.ComponentProps) {
++  const { workspaceSlug } = params;
++  const { workspaceUserInfo, allowPermissions } = useUserPermissions();
++  
++  // EUserPermissions.ADMIN value is 20 - verified in Plane source
++  const canPerformWorkspaceAdminActions = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE);
++
++  if (!workspaceUserInfo) {
++    return (
++      <SettingsContentWrapper>
++        <PageHead title="GitHub Sync" />
++        <div className="grid size-full place-items-center px-4">
++          <LogoSpinner />
++        </div>
++      </SettingsContentWrapper>
++    );
++  }
++
++  if (!canPerformWorkspaceAdminActions) {
++    return <NotAuthorizedView section="settings" className="h-auto" />;
++  }
++
++  // Server-side enforcement of writes belongs to the config API (B3), not here.
++  return (
++    <SettingsContentWrapper>
++      <PageHead title="GitHub Sync" />
++      <div className="h-full w-full">
++        <iframe
++          src={`/git-sync/ui/workspaces/${workspaceSlug}`}
++          className="h-full w-full border-none"
++          title="GitHub Sync Workspace Configuration"
++        />
++      </div>
++    </SettingsContentWrapper>
++  );
++}
++
++export default observer(GitSyncWorkspacePage);
+diff --git a/apps/web/app/routes/extended.ts b/apps/web/app/routes/extended.ts
+index 452d214..0bacf0a 100644
+--- a/apps/web/app/routes/extended.ts
++++ b/apps/web/app/routes/extended.ts
+@@ -4,6 +4,17 @@
+  * See the LICENSE file for details.
+  */
+ 
++import { layout, route } from "@react-router/dev/routes";
+ import type { RouteConfigEntry } from "@react-router/dev/routes";
+ 
+-export const extendedRoutes: RouteConfigEntry[] = [];
++export const extendedRoutes: RouteConfigEntry[] = [
++  layout("./(all)/layout.tsx", [
++    layout("./(all)/[workspaceSlug]/layout.tsx", [
++      layout("./(all)/[workspaceSlug]/(settings)/layout.tsx", [
++        layout("./(all)/[workspaceSlug]/(settings)/settings/(workspace)/layout.tsx", [
++          route(":workspaceSlug/settings/git-sync", "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/git-sync/page.tsx")
++        ])
++      ])
++    ])
++  ])
++];
+diff --git a/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx b/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx
+index dbc9306..3592c90 100644
+--- a/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx
++++ b/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx
+@@ -7,8 +7,10 @@
+ import { observer } from "mobx-react";
+ import { usePathname } from "next/navigation";
+ import { useParams } from "react-router";
++import { Github } from "lucide-react";
+ // plane imports
+ import {
++  EUserPermissions,
+   EUserPermissionsLevel,
+   GROUPED_WORKSPACE_SETTINGS,
+   WORKSPACE_SETTINGS_CATEGORIES,
+@@ -65,6 +67,16 @@ export const WorkspaceSettingsSidebarItemCategories = observer(function Workspac
+                   />
+                 );
+               })}
++              {category === "developer" && allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE, workspaceSlug) && (
++                <SettingsSidebarItem
++                  key="git-sync"
++                  as="link"
++                  href={joinUrlPath(workspaceSlug ?? "", "/settings/git-sync")}
++                  isActive={new RegExp(`^/${workspaceSlug}/settings/git-sync/`).test(pathname)}
++                  icon={Github}
++                  label="GitHub Sync"
++                />
++              )}
+             </div>
+           </div>
+         );
