@@ -478,6 +478,66 @@
       },
       "sealedAt": "2026-10-11T08:19:15.300Z",
       "completedAt": "2026-10-11T09:29:04.409Z"
+    },
+    "w8": {
+      "leaves": [
+        "leaf-1.6.2"
+      ],
+      "state": "complete",
+      "openedAt": "2026-10-11T09:42:13.365Z",
+      "started": {
+        "leaf-1.6.2": {
+          "handle": "tmux:gitsync:rv",
+          "at": "2026-10-11T09:42:23.784Z"
+        }
+      },
+      "returned": {
+        "leaf-1.6.2": {
+          "at": "2026-10-11T09:54:09.041Z"
+        }
+      },
+      "sealedAt": "2026-10-11T09:42:23.884Z",
+      "completedAt": "2026-10-11T09:54:09.041Z"
+    },
+    "w9": {
+      "leaves": [
+        "fix-r2-sa",
+        "fix-r2-sb",
+        "fix-r2-ca",
+        "fix-r2-cb",
+        "fix-r2-ga",
+        "fix-r2-gb"
+      ],
+      "state": "sealed",
+      "openedAt": "2026-10-11T09:55:51.842Z",
+      "started": {
+        "fix-r2-sa": {
+          "handle": "tmux:gitsync:sa",
+          "at": "2026-10-11T09:55:52.588Z"
+        },
+        "fix-r2-sb": {
+          "handle": "tmux:gitsync:sb",
+          "at": "2026-10-11T09:55:53.285Z"
+        },
+        "fix-r2-ca": {
+          "handle": "tmux:gitsync:ca",
+          "at": "2026-10-11T09:55:54.945Z"
+        },
+        "fix-r2-cb": {
+          "handle": "tmux:gitsync:cb",
+          "at": "2026-10-11T09:55:56.590Z"
+        },
+        "fix-r2-ga": {
+          "handle": "tmux:gitsync:ga",
+          "at": "2026-10-11T09:55:57.225Z"
+        },
+        "fix-r2-gb": {
+          "handle": "tmux:gitsync:gb",
+          "at": "2026-10-11T09:55:57.867Z"
+        }
+      },
+      "returned": {},
+      "sealedAt": "2026-10-11T09:55:57.968Z"
     }
   }
 }

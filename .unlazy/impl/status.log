@@ -120,3 +120,15 @@
 2026-10-11T09:29:04.283Z dispatch w7e returned fix-r1-ga
 2026-10-11T09:29:04.420Z dispatch w7e returned fix-r1-gb
 2026-10-11T09:41:29Z node-1.6-r1 VERIFIED: all 18 round-1 findings answered; oracles, whole suite, typecheck, stub scan pass on the combined tree
+2026-10-11T09:42:13.371Z dispatch w8 opened: leaf-1.6.2
+2026-10-11T09:42:23.793Z dispatch w8 started leaf-1.6.2 as tmux:gitsync:rv
+2026-10-11T09:42:23.892Z dispatch w8 sealed
+2026-10-11T09:54:09.047Z dispatch w8 returned leaf-1.6.2
+2026-10-11T09:55:51.853Z dispatch w9 opened: fix-r2-sa, fix-r2-sb, fix-r2-ca, fix-r2-cb, fix-r2-ga, fix-r2-gb
+2026-10-11T09:55:52.597Z dispatch w9 started fix-r2-sa as tmux:gitsync:sa
+2026-10-11T09:55:53.299Z dispatch w9 started fix-r2-sb as tmux:gitsync:sb
+2026-10-11T09:55:54.952Z dispatch w9 started fix-r2-ca as tmux:gitsync:ca
+2026-10-11T09:55:56.600Z dispatch w9 started fix-r2-cb as tmux:gitsync:cb
+2026-10-11T09:55:57.242Z dispatch w9 started fix-r2-ga as tmux:gitsync:ga
+2026-10-11T09:55:57.876Z dispatch w9 started fix-r2-gb as tmux:gitsync:gb
+2026-10-11T09:55:57.972Z dispatch w9 sealed

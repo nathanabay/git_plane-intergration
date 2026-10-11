@@ -10,6 +10,17 @@ Shared working tree: `/home/claudeuser/orca/workspaces/git_plane-intergration/se
 the implementation is committed yet (commits come after a clean review), so review the working
 tree, not git history. Two implementers may be idle in other terminals; do not message them.
 
+## Round 2+ additions
+
+- The implementers' answers to the previous round are in `docs/impl/fixes-r<N-1>-*.md` (one file per
+  implementer; for round 2: `fixes-r1-SA.md`, `-CA`, `-SB`, `-CB`, `-GA`, `-GB`). Adjudicate **every**
+  previous finding against the code, not against those documents: `- prev F<n>: CLOSED — "<quoted line>"`
+  or `STILL OPEN`. A finding split across implementers (F2, F5, F16) is CLOSED only if both halves are.
+- Look for regressions the fixes introduced, not only for whether the old findings are gone.
+- **Resource rule:** this host is the live Plane server and an earlier run hit the OOM killer. Run oracles
+  and the whole suite only through `sh scripts/heavy.sh <command>`; run ad-hoc tests as
+  `NODE_OPTIONS=--max-old-space-size=1024 node --test --test-timeout=60000 <file>`.
+
 ## What to review
 
 The implementation of all 17 plan tasks (A1–A8, B1–B9) against:
@@ -84,7 +95,7 @@ two files) with at least:
       EVIDENCE: pending
 
     - [ ] G2: every driver oracle passes on the tree I reviewed
-      CHECK: sh -c 'for o in verify-a1-deploy verify-rules-contract verify-identity-contract verify-a3-schema verify-a2-ingress verify-a4-writepath verify-b3-config-api verify-a5-a7 verify-b4-b8 verify-wiring verify-fork-patch; do a=""; [ $o = verify-fork-patch ] && a=all; node scripts/$o.mjs $a >/dev/null 2>&1 || { echo "FAIL $o"; exit 1; }; done; echo "all oracles passed"'
+      CHECK: sh scripts/heavy.sh sh -c 'for o in verify-a1-deploy verify-rules-contract verify-identity-contract verify-a3-schema verify-a2-ingress verify-a4-writepath verify-b3-config-api verify-a5-a7 verify-b4-b8 verify-wiring verify-fork-patch; do a=""; [ $o = verify-fork-patch ] && a=all; node scripts/$o.mjs $a >/dev/null 2>&1 || { echo "FAIL $o"; exit 1; }; done; echo "all oracles passed"'
       EXPECT: all oracles passed
       EVIDENCE: pending
 
