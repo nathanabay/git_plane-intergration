@@ -14,7 +14,7 @@ resolving actors by `sender.id` and the unlink tombstone live in `src/app` / the
 
 ## F14 Large pushes (Smart Commit half)
 `commitsOf` in `src/github/smart-commits.ts` treats `listCommitRange` as untrusted: malformed entries are dropped, duplicates collapse, the
-range is capped at `MAX_RANGE_COMMITS` (1000, audited as `smart_commit_truncated`), and the payload's own commits are always kept, so an
+range is capped at `MAX_RANGE_COMMITS` (10000, audited as `smart_commit_truncated`), and the payload's own commits are always kept, so an
 empty or short range loses nothing. Without a lookup the loud audit stays. Tests: "r2 F14" x2 in `tests/github/smart-commits.test.ts`.
 SA wires the lookup in `src/app/push.ts`.
 

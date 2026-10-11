@@ -168,3 +168,8 @@
 2026-10-11T14:07:33Z reconciled heavy-lock queue: killed SA's 4 stale gate-check runs, SB's orphaned run and all orphan supervisor groups; kept SA newest (4000157) and CA (4004772); rule added: one gate-check per agent
 2026-10-11T14:12:18Z round 3 F11: GA token bucket verified (acquire before every attempt, default 60/min); SA to wire PLANE_API_RATE_PER_MINUTE into config/main/APPLY
 2026-10-11T14:37:21Z round 3: audit.test.ts fixture stale per review-3 F14 (once-per-delivery, superseded on success) — GA updates the test; cleared GA orphan supervisor 4026971
+2026-10-11T15:29:17.798Z dispatch w11 returned fix-r3-ca
+2026-10-11T15:40:04Z round 3: CB found issue events lost while the mirror partner is pending; relayed mirror_pending deferred-action contract to SA
+2026-10-11T15:47:12Z round 3: relayed Plane-side mirror_pending refinement to SA (createContinuation in Plane mirrorDeps, source branch, workspace authorization, no Plane rule rerun, issue_comment)
+2026-10-11T16:15:42.679Z dispatch w11 returned fix-r3-cb
+2026-10-11T18:23:12Z round 3: GB waited on a proposed fail-open default for isWorkspaceMember — rejected (F5 must fail closed); GB's G2/G3 failures were the stale B3 oracle, already fixed; GB re-running gates
