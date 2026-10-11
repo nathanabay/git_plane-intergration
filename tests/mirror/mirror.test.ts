@@ -41,6 +41,7 @@ const mapping = (over: Partial<MirrorMapping> = {}): MirrorMapping =>
 async function setup(over: Partial<MirrorMapping> = {}, extra: Partial<MirrorDeps> = {}) {
   const db = await freshDb();
   await db.query(`INSERT INTO repo_mappings (id, workspace_slug, gh_repo_id, gh_repo_full_name, plane_project_id, sync_direction) VALUES (1, 'qelal', 555, 'acme/web', 'p-qll', $1)`, [over.syncDirection ?? "bidirectional"]);
+  await db.query(`INSERT INTO user_map (workspace_slug, plane_user_id, gh_login, gh_id) VALUES ('qelal', 'u-octo', 'octo', 1)`);
   const plane = fakePlaneWriter();
   const github = fakeGithubWriter();
   const deps: MirrorDeps = {
@@ -53,7 +54,7 @@ async function setup(over: Partial<MirrorMapping> = {}, extra: Partial<MirrorDep
   return { db, plane, github, deps };
 }
 
-const ghIssue = (o: object = {}) => ({ number: 41, title: "Mirror me", body: "line one\n\nline <two>", labels: [{ name: "plane" }, { name: "bug" }], state: "open", assignees: [{ login: "octo" }, { login: "stranger" }], html_url: "https://github.com/acme/web/issues/41", ...o });
+const ghIssue = (o: object = {}) => ({ number: 41, title: "Mirror me", body: "line one\n\nline <two>", labels: [{ name: "plane" }, { name: "bug" }], state: "open", assignees: [{ id: 1, login: "octo" }, { id: 2, login: "stranger" }], html_url: "https://github.com/acme/web/issues/41", ...o });
 const ghEvent = (action: string, o: object = {}, extra: object = {}) => ({ action, issue: ghIssue(o), repository: { id: 555 }, sender: { login: "octo" }, ...extra });
 
 async function linked(db: any, ghNumber = 41, planeIssueId = "pi-1") {

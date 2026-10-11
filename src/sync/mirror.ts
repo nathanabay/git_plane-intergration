@@ -2,6 +2,7 @@
 // work item, `github` on a Plane item creates a GitHub issue. Per field, the mapping's conflict
 // policy and direction decide whether a change from one side is applied to the other. Every write
 // goes through A4's write paths, which own echo suppression and the triage ban.
+import { createHash } from "node:crypto";
 import { resultRef, resultText } from "../operations/plans.ts";
 import type { PlanWriter, OutboxPlanStep } from "../operations/plans.ts";
 import type { InboundJob } from "../queue/index.ts";
@@ -80,16 +81,41 @@ async function deferPendingMirror(deps: MirrorDeps, key: string, side: "plane" |
     (SELECT w.id FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id
       AND w.write->>'kind' = 'create_issue' AND w.side = $2 ORDER BY sequence LIMIT 1) AS created_id,
     (SELECT w.id FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id ORDER BY sequence DESC LIMIT 1) AS fence_id
-    FROM pending_sync_links p WHERE p.key = $1`, [key, side])).rows[0];
+    FROM pending_sync_links p WHERE p.key = $1
+      AND NOT EXISTS (SELECT 1 FROM outbound_writes w
+        WHERE w.write->'_plan'->>'root' = p.outbox_id AND w.status = 'failed')`, [key, side])).rows[0];
   if (!pending) return false;
   if (!pending.created_id || !pending.fence_id) throw new Error("pending mirror has no create or continuation fence");
   const job = deps.createContinuation.job, m = deps.mapping;
-  await plan(`mirror-event:${key}:${job.source}:${job.writeDeliveryId ?? job.deliveryId}`, [
+  const registered = await plan(`mirror-event:${key}:${job.source}:${job.writeDeliveryId ?? job.deliveryId}`, [
     { kind: "write", side, write: { kind: "resume_reducer", continuation: { kind: "mirror_pending", job,
       mappingId: m.id, projectId: m.planeProjectId, issueId, identifier: "pending mirror event" } } },
   ], { groupRoot: pending.outbox_id, bindings: { partner: pending.created_id }, predecessor: pending.fence_id,
     pendingMarker: { key, root: pending.outbox_id, link: pending.link } });
-  return true;
+  // Legacy plan adapters acknowledge insertion without returning the newer flag.
+  return (registered.inserted ?? true) === true;
+}
+
+/** Shared with PR creates: a generation's root must match the outbox's deterministic key hash. */
+export const createPlanRoot = (key: string): string => `plan-${createHash("sha256").update(key).digest("hex")}`;
+
+/** Called after checking for an active link. Finished creates get a new identity, under one stable barrier. */
+export async function nextCreateGeneration(db: Db, key: string): Promise<string | null> {
+  const live = await db.query(`SELECT 1 FROM pending_sync_links p WHERE p.key = $1
+    AND NOT EXISTS (SELECT 1 FROM outbound_writes w
+      WHERE w.write->'_plan'->>'root' = p.outbox_id AND w.status = 'failed')`, [key]);
+  if (live.rows.length) return null;
+  const last = (await db.query<{ sequence: string | number; pending: boolean; failed: boolean }>(`SELECT r.sequence,
+    EXISTS (SELECT 1 FROM outbound_writes w
+      WHERE w.write->'_plan'->>'root' = COALESCE(r.write->'_plan'->>'root', r.id) AND w.status = 'pending') AS pending,
+    EXISTS (SELECT 1 FROM outbound_writes w
+      WHERE w.write->'_plan'->>'root' = COALESCE(r.write->'_plan'->>'root', r.id) AND w.status = 'failed') AS failed
+    FROM outbound_writes r WHERE r.id = $1 OR r.write->'_plan'->'after' @> $2::jsonb
+    ORDER BY r.sequence DESC LIMIT 1`, [createPlanRoot(key), JSON.stringify([{ kind: "clear_pending_link", key }])])).rows[0];
+  if (!last) return key;
+  if (last.pending && !last.failed) return null;
+  // A later retained marker step also identifies the generation if retention pruned its root first.
+  return `${key}:generation:${last.sequence}`;
 }
 
 async function loadPolicies(db: Db, mappingId: number): Promise<Record<ConflictField, ConflictPolicy>> {
@@ -234,8 +260,12 @@ async function planeLabelIds(deps: MirrorDeps, t: { slug: string; projectId: str
 async function planeAssigneeIds(deps: MirrorDeps, assignees: unknown): Promise<string[]> {
   const ids: string[] = [];
   for (const a of Array.isArray(assignees) ? assignees : []) {
-    if (typeof a?.login !== "string") continue;
-    const id = await deps.users.planeUserIdForGithubLogin(a.login);
+    // Logins can be renamed and re-registered. Only the stable account ID authorises a mapping.
+    if (!Number.isSafeInteger(a?.id) || a.id <= 0) continue;
+    const row = (await deps.db.query<{ plane_user_id: string }>(
+      "SELECT plane_user_id FROM user_map WHERE workspace_slug = $1 AND gh_id = $2",
+      [deps.mapping.workspaceSlug, a.id])).rows[0];
+    const id = row?.plane_user_id;
     if (id && !ids.includes(id)) ids.push(id);
   }
   return ids;
@@ -280,11 +310,13 @@ async function createPlaneItem(payload: any, deps: MirrorDeps): Promise<MirrorRe
   return { action: "created" };
 }
 
-/** One durable plan per source object; creation and its link can survive an arbitrarily long outage. */
+/** One durable plan per create generation; creation and its link survive an arbitrarily long outage. */
 async function planPlaneCreate(payload: any, deps: MirrorDeps, fields: Record<string, unknown>): Promise<MirrorResult> {
   const { mapping } = deps, issue = payload.issue;
   const slug = mapping.workspaceSlug, projectId = mapping.planeProjectId;
   const key = `create:gh:${slug}:${mapping.ghRepoId}#${issue.number}:${projectId}`;
+  const generation = await nextCreateGeneration(deps.db, key);
+  if (!generation) return ignored("creation in progress");
   const assignees = await planeAssigneeIds(deps, issue.assignees);
   if (assignees.length) fields.assignees = assignees;
   if (issue.state === "closed" && deps.listStates) {
@@ -319,8 +351,11 @@ async function planPlaneCreate(payload: any, deps: MirrorDeps, fields: Record<st
     kind: "mirror_created", job: deps.createContinuation.job, mappingId: mapping.id, projectId,
     issueId: id, identifier: `${mapping.owner}/${mapping.repo}#${issue.number}`,
   } } });
-  await deps.plane.plan!(key, steps, { pendingLink: { direction: "github_to_plane", ...link } });
-  return { action: "created" };
+  const registered = await deps.plane.plan!(generation, steps, {
+    pendingLink: { direction: "github_to_plane", ...link },
+    pendingMarker: { key, root: createPlanRoot(generation), link: { direction: "github_to_plane", ...link } },
+  });
+  return (registered.inserted ?? true) === true ? { action: "created" } : ignored("create plan already registered");
 }
 
 // ---- Plane → GitHub ----------------------------------------------------------------------------------
@@ -474,10 +509,12 @@ async function createGithubIssue(data: any, issueId: string, names: string[], de
   const labels = [GATE_LABELS.onGithub, ...names.filter((n) => lc(n) !== GATE_LABELS.onPlane)];
   if (deps.github.plan) {
     const key = `create:plane:${slug}:${mapping.planeProjectId}:${issueId}:${mapping.ghRepoId}`;
+    const generation = await nextCreateGeneration(db, key);
+    if (!generation) return ignored("creation in progress");
     const number = resultRef("created.number");
     const link = { planeWorkspaceSlug: slug, planeProjectId: mapping.planeProjectId, planeIssueId: issueId,
       ghRepoId: mapping.ghRepoId, ghNumber: number, ghKind: "issue" as const, tier: "relation" as const, createdBy: "label_sync" as const };
-    await deps.github.plan(key, [
+    const registered = await deps.github.plan(generation, [
       { kind: "write", side: "github", write: { kind: "create_issue", installationId: mapping.installationId,
         owner: mapping.owner, repo: mapping.repo, repoId: mapping.ghRepoId, title: String(data.name ?? ""), body: description + footer, labels }, bind: "created" },
       { kind: "sync_link", link },
@@ -485,8 +522,9 @@ async function createGithubIssue(data: any, issueId: string, names: string[], de
         commentHtml: resultText(`<p>Mirrored to GitHub issue ${escapeHtml(`${mapping.owner}/${mapping.repo}#`)}`, number, ".</p>") } },
       { kind: "audit", entry: { kind: "mirror_created", source: "plane", workspaceSlug: slug, outcome: "applied",
         detail: { direction: "plane_to_github", ghNumber: number, planeIssueId: issueId, mappingId: mapping.id } } },
-    ], { pendingLink: { direction: "plane_to_github", ...link } });
-    return { action: "created" };
+    ], { pendingLink: { direction: "plane_to_github", ...link },
+      pendingMarker: { key, root: createPlanRoot(generation), link: { direction: "plane_to_github", ...link } } });
+    return (registered.inserted ?? true) === true ? { action: "created" } : ignored("create plan already registered");
   }
   const created = await deps.github.apply({ kind: "create_issue", installationId: mapping.installationId, owner: mapping.owner,
     repo: mapping.repo, repoId: mapping.ghRepoId, title: String(data.name ?? ""), body: description + footer, labels });
