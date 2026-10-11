@@ -1,0 +1,63 @@
+diff --git a/apps/admin/app/(all)/(dashboard)/git-sync/page.tsx b/apps/admin/app/(all)/(dashboard)/git-sync/page.tsx
+new file mode 100644
+index 0000000..1479c89
+--- /dev/null
++++ b/apps/admin/app/(all)/(dashboard)/git-sync/page.tsx
+@@ -0,0 +1,11 @@
++export default function GitSyncPage() {
++  return (
++    <div className="h-full w-full">
++      <iframe
++        src="/git-sync/ui/admin"
++        className="h-full w-full border-none"
++        title="GitHub Sync Admin Configuration"
++      />
++    </div>
++  );
++}
+diff --git a/apps/admin/app/(all)/(dashboard)/sidebar-menu.tsx b/apps/admin/app/(all)/(dashboard)/sidebar-menu.tsx
+index af0848c..bb3fdee 100644
+--- a/apps/admin/app/(all)/(dashboard)/sidebar-menu.tsx
++++ b/apps/admin/app/(all)/(dashboard)/sidebar-menu.tsx
+@@ -22,6 +22,20 @@ export const AdminSidebarMenu = observer(function AdminSidebarMenu() {
+   // derived values
+   const sidebarMenu = useSidebarMenu();
+ 
++  const gitSyncItem = {
++    Icon: () => (
++      <svg className="h-4 w-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
++        <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
++        <path d="M9 18c-4.51 2-5-2-7-2" />
++      </svg>
++    ),
++    name: "GitHub Sync",
++    description: "Manage GitHub synchronization.",
++    href: "/git-sync/",
++  };
++
++  const allMenus = [...sidebarMenu, gitSyncItem];
++
+   const handleItemClick = () => {
+     if (window.innerWidth < 768) {
+       toggleSidebar(!isSidebarCollapsed);
+@@ -30,7 +44,7 @@ export const AdminSidebarMenu = observer(function AdminSidebarMenu() {
+ 
+   return (
+     <div className="vertical-scrollbar flex scrollbar-sm h-full w-full flex-col gap-2.5 overflow-y-scroll px-4 py-4">
+-      {sidebarMenu.map((item) => {
++      {allMenus.map((item) => {
+         const isActive = item.href === pathName || pathName?.startsWith(item.href);
+         return (
+           <Link key={item.href} href={item.href} onClick={handleItemClick}>
+diff --git a/apps/admin/app/routes.ts b/apps/admin/app/routes.ts
+index 184bed2..0e90eb9 100644
+--- a/apps/admin/app/routes.ts
++++ b/apps/admin/app/routes.ts
+@@ -21,6 +21,7 @@ export default [
+     route("authentication/gitea", "./(all)/(dashboard)/authentication/gitea/page.tsx"),
+     route("ai", "./(all)/(dashboard)/ai/page.tsx"),
+     route("image", "./(all)/(dashboard)/image/page.tsx"),
++    route("git-sync", "./(all)/(dashboard)/git-sync/page.tsx"),
+   ]),
+   // Catch-all route for 404 handling - must be last
+   route("*", "./components/404.tsx"),
