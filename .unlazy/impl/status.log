@@ -136,3 +136,10 @@
 2026-10-11T10:06:09Z round 2: rejected a legacy saved-table upgrade (pre-release, nothing persisted)
 2026-10-11T10:10:08Z round 2: F7 wiring assigned — SA calls GB's checkPrReadiness from checks.ts/pr.ts and exports a status handler; CA routes 'status' to it; GB fixes editor hint (check_suite.success/failure)
 2026-10-11T10:54:23Z round 2 F6: relayed CB's ordered-outbox integration contract to GA/SA/GB/SB/CA; CA deferred G3 until tests/writers/service.test.ts is green; B3 oracle updated to inject a fake verifier (review-2 F1 fail-closed)
+2026-10-11T11:59:46.769Z dispatch w9 returned fix-r2-ca
+2026-10-11T12:10:06.545Z dispatch w9 returned fix-r2-sa
+2026-10-11T12:10:06.768Z dispatch w9 returned fix-r2-sb
+2026-10-11T12:10:06.860Z dispatch w9 returned fix-r2-cb
+2026-10-11T12:10:06.960Z dispatch w9 returned fix-r2-ga
+2026-10-11T12:10:07.134Z dispatch w9 returned fix-r2-gb
+2026-10-11T12:56:46Z node-1.6-r2 VERIFIED: all 17 round-2 findings answered; oracles, whole suite, typecheck, stubs pass
