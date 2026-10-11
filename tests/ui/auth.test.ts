@@ -1,0 +1,107 @@
+import test, { after, before } from "node:test";
+import { strictEqual, ok, deepStrictEqual } from "node:assert/strict";
+import { ADM, INST, MAPPING, MEM, ORIGIN, setup } from "./harness.ts";
+import type { Harness } from "./harness.ts";
+
+let h: Harness;
+before(async () => { h = await setup(); });
+after(async () => { await h.close(); });
+
+test("auth: no cookie, forged cookie and a member session are 401/401/403 and write nothing", async () => {
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings")).status, 401);
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: "session-id=forged" })).status, 401);
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: MEM })).status, 403);
+  strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: MEM, body: MAPPING })).status, 403);
+  strictEqual(await h.count("repo_mappings"), 0);
+});
+
+test("auth: error bodies are {error} and never echo Plane's text or cookies", async () => {
+  const r = await h.call("GET", "/workspaces/acme/mappings", { cookie: "session-id=forged" });
+  const body = await r.json() as { error: string };
+  deepStrictEqual(Object.keys(body), ["error"]);
+  ok(!/forged|Authentication credentials/.test(body.error), body.error);
+});
+
+test("auth: only the relevant Plane cookie is forwarded and Plane only sees GETs", async () => {
+  h.plane.calls.length = 0;
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).status, 200);
+  ok(h.plane.calls.length >= 2);
+  for (const c of h.plane.calls) {
+    strictEqual(c.method, "GET");
+    strictEqual(c.cookie, "session-id=adm");
+  }
+  h.plane.calls.length = 0;
+  strictEqual((await h.call("GET", "/instance/health", { cookie: `${INST}; session-id=adm; csrftoken=x` })).status, 200);
+  strictEqual(h.plane.calls.length, 1);
+  strictEqual(h.plane.calls[0]!.cookie, "admin-session-id=inst");
+});
+
+test("auth: the web cookie does not satisfy an instance endpoint, nor the admin cookie a workspace one", async () => {
+  strictEqual((await h.call("GET", "/instance/settings", { cookie: ADM })).status, 401);
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: INST })).status, 401);
+});
+
+test("auth: a cookie named like the real one but longer (xsession-id) is ignored", async () => {
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: "xsession-id=adm" })).status, 401);
+});
+
+test("auth: a demoted admin fails the very next write; no result is cached", async () => {
+  h.plane.roles["u-adm"]!.acme = 20;
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).status, 200);
+  h.plane.roles["u-adm"]!.acme = 15;
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).status, 403);
+  strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: MAPPING })).status, 403);
+  h.plane.roles["u-adm"]!.acme = 20;
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).status, 200);
+});
+
+test("auth: an admin of one workspace is 403 in a workspace where they are a member", async () => {
+  strictEqual((await h.call("GET", "/workspaces/other/mappings", { cookie: ADM })).status, 403);
+});
+
+test("auth: a Plane outage is 502, never a pass", async () => {
+  h.plane.state.unavailable = true;
+  try {
+    strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).status, 502);
+    strictEqual((await h.call("GET", "/instance/settings", { cookie: INST })).status, 502);
+  } finally { h.plane.state.unavailable = false; }
+});
+
+test("auth: an unusable slug is 404 without calling Plane", async () => {
+  h.plane.calls.length = 0;
+  strictEqual((await h.call("GET", "/workspaces/a%20b/mappings", { cookie: ADM })).status, 404);
+  strictEqual(h.plane.calls.length, 0);
+});
+
+test("csrf: a missing or foreign Origin is 403, even for DELETE without a body", async () => {
+  strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: MAPPING, origin: null })).status, 403);
+  strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: MAPPING, origin: "https://evil.example" })).status, 403);
+  strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: MAPPING, origin: ORIGIN + ".evil.example" })).status, 403);
+  strictEqual((await h.call("DELETE", "/workspaces/acme/mappings/1", { cookie: ADM, origin: "https://evil.example" })).status, 403);
+  strictEqual(await h.count("repo_mappings"), 0);
+});
+
+test("csrf: a body that is not application/json is 415; a charset parameter is accepted", async () => {
+  strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: "a=b", type: "application/x-www-form-urlencoded" })).status, 415);
+  strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: JSON.stringify(MAPPING), type: "text/plain" })).status, 415);
+  const ok201 = await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: MAPPING, type: "application/json; charset=utf-8" });
+  strictEqual(ok201.status, 201);
+  strictEqual(await h.count("repo_mappings"), 1);
+});
+
+test("csrf: GET does not need an Origin", async () => {
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM, origin: null })).status, 200);
+});
+
+test("body: over 1 MiB is 413, malformed JSON is 400, a non-object is 422", async () => {
+  const big = JSON.stringify({ ...MAPPING, ghRepoFullName: "a/" + "b".repeat(1024 * 1024) });
+  strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: big })).status, 413);
+  strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: "{nope" })).status, 400);
+  strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: "[1]" })).status, 422);
+});
+
+test("instance: needs the admin-app session; a bad one is 401", async () => {
+  strictEqual((await h.call("GET", "/instance/github-app")).status, 401);
+  strictEqual((await h.call("GET", "/instance/github-app", { cookie: "admin-session-id=nope" })).status, 401);
+  strictEqual((await h.call("GET", "/instance/github-app", { cookie: INST })).status, 200);
+});
