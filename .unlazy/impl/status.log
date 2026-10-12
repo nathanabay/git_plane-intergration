@@ -203,3 +203,9 @@
 2026-10-12T04:21:13Z r5: CD — PR linkbacks registered with NULL workspace now refused; CB to infer workspace at registration only from unique verified mapping; CD granted fixes-r3.test.ts + a8/reducers.test.ts for deliberate F3 fixture changes
 2026-10-12T04:34:07Z r5: all five DONE; typecheck 136 files passes; CE assigned its 5 listed fixture adjustments (ui harness/workspace/review-r4-sb, fixes-r2, queue fixes-r1)
 2026-10-12T04:39:30Z r5: all five DONE incl. CE fixture follow-up (46/46); typecheck 136 files; driver oracles a1/a2/wiring pass; committing round 5 by task and pushing
+2026-10-12T04:40:51Z round 5 committed+pushed (ab32b13); launched gate run r5 (CC) and review round 6 (new Codex reviewer session cr)
+2026-10-12T05:02:07Z gate run r5: 12/14 (b3 oracle fixture stale; 5 stale suite fixtures). review-6: BLOCKING 1/4/0 (+prev F3,F6 partial). Fix round 6 dispatched (CB F2-reg,F3,fixtures; CD F1,F4,F2-validate; CA F5,fixtures) with driver _authority contract
+2026-10-12T05:02:58Z r6: driver fixed verify-b3-config-api fixture (verifier certifies installation 1, review-5 F3) — 14/14 pass
+2026-10-12T05:04:12Z r6: CD seam accepted (DeliveryContext.authority -> write._authority once; FrozenWriteAuthority/freezeMappingAuthority from mappings.ts); relayed CB, CA; CC assigned mirror.ts scope entry
+2026-10-12T05:12:03Z r6: driver wrapped handlePush per-mapping work in frozen authority scope (src/app/push.ts, mapping's verified installation)
+2026-10-12T05:23:28Z r6: CA CB CC CD DONE; typecheck 140 files; committing round 6 by task and pushing
