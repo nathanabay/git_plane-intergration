@@ -231,11 +231,10 @@ test("F3 seam: GitHub registration freezes only a unique authorized repo/install
   strictEqual(unique.data._gitsync.workspaceSlug, "ws");
   await outbox.executeGithub(unique); strictEqual(effects, 1);
   await h.mapping({ projectId: "other-project" });
-  await outbox.github.apply({ ...comment, body: "ambiguous" });
-  const ambiguous = await intentJob(h.db);
-  strictEqual(ambiguous.data._gitsync.workspaceSlug, undefined);
-  await h.db.query("DELETE FROM repo_mappings WHERE plane_project_id = 'other-project'");
-  await rejects(outbox.executeGithub(ambiguous), /authority is missing or revoked/);
+  await outbox.github.apply({ ...comment, body: "same-workspace projects" });
+  const sameWorkspace = await intentJob(h.db);
+  strictEqual(sameWorkspace.data._gitsync.workspaceSlug, "ws");
+  await outbox.executeGithub(sameWorkspace); strictEqual(effects, 2);
   await outbox.github.apply({ ...comment, repoId: 556, body: "unknown" });
   const unknown = await intentJob(h.db);
   strictEqual(unknown.data._gitsync.workspaceSlug, undefined);
@@ -246,5 +245,37 @@ test("F3 seam: GitHub registration freezes only a unique authorized repo/install
   const unlisted = await intentJob(h.db);
   strictEqual(unlisted.data._gitsync.workspaceSlug, undefined);
   await rejects(outbox.executeGithub(unlisted), /authority is missing or revoked/);
+  strictEqual(effects, 2);
+});
+
+test("F3 seam: conflicting cross-workspace legacy grants refuse inference and cannot repair stored NULL ownership", async (t) => {
+  const h = await makeHarness(); t.after(() => h.close());
+  await h.mapping();
+  await h.mapping({ slug: "other", installationId: 2 });
+  // The production PK forbids these conflicting grants. Model legacy/corrupt inventory only in this
+  // disposable database so the actual inference SQL sees two distinct authorized workspaces.
+  await h.db.exec("ALTER TABLE workspace_installations DROP CONSTRAINT workspace_installations_pkey");
+  await h.db.query("UPDATE workspace_installations SET installation_id = 1 WHERE workspace_slug = 'other'");
+  await h.db.query("UPDATE repo_mappings SET installation_id = 1 WHERE workspace_slug = 'other'");
+  let effects = 0;
+  const outbox = createOrderedOutbox({ db: h.db, queues: { plane: queue() as any, github: queue() as any }, loadActorToken: async () => null,
+    authoriseWrite: createOutboundAuthoriser(h.db),
+    github: { apply: async () => { effects++; return { ok: true }; } }, plane: { preflight: async () => {}, apply: async () => ({ ok: true }) } });
+  const comment = { kind: "comment" as const, installationId: 1, owner: "a", repo: "b", repoId: 555, number: 12, body: "conflicting workspaces" };
+  await outbox.github.apply(comment);
+  const ambiguous = await intentJob(h.db);
+  strictEqual(ambiguous.data._gitsync.workspaceSlug, undefined);
+  strictEqual((await h.db.query<{ workspace_slug: string | null }>("SELECT workspace_slug FROM outbound_writes WHERE id = $1", [ambiguous.id])).rows[0]!.workspace_slug, null);
+  await rejects(outbox.executeGithub(ambiguous), /authority is missing or revoked/);
+  strictEqual(effects, 0);
+  await h.db.query("DELETE FROM repo_mappings WHERE workspace_slug = 'other'");
+  await h.db.query("DELETE FROM workspace_installations WHERE workspace_slug = 'other'");
+  await h.db.exec("ALTER TABLE workspace_installations ADD PRIMARY KEY (installation_id)");
+  await rejects(outbox.executeGithub(ambiguous), /authority is missing or revoked/);
+  await rejects(outbox.retryFailed(ambiguous.id, "ws"), /not found in this workspace/);
+  await outbox.github.apply({ ...comment, body: "new uniquely owned intent" });
+  const resolved = await intentJob(h.db);
+  strictEqual(resolved.data._gitsync.workspaceSlug, "ws");
+  await outbox.executeGithub(resolved);
   strictEqual(effects, 1);
 });
