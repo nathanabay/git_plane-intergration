@@ -56,6 +56,8 @@ const verifyMapping = async (check) => {
   verified.push(check);
   if (check.planeProjectId && check.planeProjectId !== "p1") return "That Plane project does not belong to this workspace";
   if (check.repo && (check.repo.id !== 555 || check.repo.fullName !== "acme/web")) return "The GitHub App cannot reach that repository";
+  // Review round 5 F3: a verifier certifies the installation it reached the repository through.
+  check.onInstallationVerified?.(1);
   return null;
 };
 const lookupGithubUser = async (login) => ({ memgh: { login: "memgh", id: 777 } })[login.toLowerCase()] ?? null;
