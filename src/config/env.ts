@@ -1,3 +1,5 @@
+export const DEFAULT_CREDENTIAL_MARKER_PATH = "/var/lib/gitsync/credentials/bootstrap-retired";
+
 export interface Config {
   PORT: number;
   HOST: string;
@@ -9,6 +11,8 @@ export interface Config {
   PLANE_WEBHOOK_SECRET: string;
   GITHUB_APP_ID: string;
   GITHUB_PRIVATE_KEY_PATH: string;
+  /** Durable writable storage, separate from the read-only private-key mount. */
+  GITHUB_CREDENTIAL_MARKER_PATH?: string;
   GITHUB_WEBHOOK_SECRET: string;
   GITSYNC_TOKEN_KEY: string;
   PLANE_SERVICE_USER_ID: string;
@@ -43,6 +47,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     PLANE_API_RATE_PER_MINUTE: 60,
     GITHUB_APP_ID: req("GITHUB_APP_ID"),
     GITHUB_PRIVATE_KEY_PATH: req("GITHUB_PRIVATE_KEY_PATH"),
+    GITHUB_CREDENTIAL_MARKER_PATH: env.GITHUB_CREDENTIAL_MARKER_PATH || DEFAULT_CREDENTIAL_MARKER_PATH,
     GITHUB_WEBHOOK_SECRET: req("GITHUB_WEBHOOK_SECRET"),
     GITSYNC_TOKEN_KEY: req("GITSYNC_TOKEN_KEY"),
     PUBLIC_ORIGIN: env.PUBLIC_ORIGIN || "https://tasks.qelal.et",
