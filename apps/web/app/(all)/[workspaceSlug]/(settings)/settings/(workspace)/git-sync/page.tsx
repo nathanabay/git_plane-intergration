@@ -36,7 +36,9 @@ function GitSyncWorkspacePage({ params }: Route.ComponentProps) {
       <div className="h-full w-full">
         <iframe
           src={`/git-sync/ui/workspaces/${workspaceSlug}`}
-          className="h-full w-full border-none"
+          className="w-full border-none"
+          // h-full collapses here: the settings container has no fixed height, so fill the viewport.
+          style={{ height: "calc(100vh - 8rem)" }}
           title="GitHub Sync Workspace Configuration"
         />
       </div>
