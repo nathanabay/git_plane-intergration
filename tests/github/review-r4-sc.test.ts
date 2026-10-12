@@ -4,7 +4,8 @@ import test from "node:test";
 import { ok, rejects, strictEqual, deepStrictEqual } from "node:assert/strict";
 import { checkPrReadiness } from "../../src/github/pr-automation.ts";
 import { fireReadyForMerge, handlePullRequest } from "../../src/app/pr.ts";
-import { handlePlaneIssue } from "../../src/app/issues.ts";
+import { notInstalledWriter, planeInstallation } from "../../src/app/issues.ts";
+import { mappingsForProject } from "../../src/app/mappings.ts";
 import { runRules } from "../../src/app/rules.ts";
 import { ghJob, LABELS, makeHarness, planeJob, prPayload, sha } from "../a8/harness.ts";
 
@@ -73,9 +74,13 @@ test("F8: a rate-limited 403 from the installation lookup fails the delivery so 
   for (const headers of [{ "retry-after": "30" }, { "x-ratelimit-remaining": "0" }] as Record<string, string>[]) {
     const h = await makeHarness();
     try {
-      await h.mapping({ smartCommits: false, installationId: null });
+      await h.mapping({ smartCommits: false, installationId: 1 });
+      const mapping = (await mappingsForProject(h.db, "p-qll"))[0]!;
+      strictEqual(mapping.installationId, 1, "lookup fixture is admitted under a verified stored installation");
+      // A verified mapping normally uses its cached ID. Exercise the classifier with an uncached
+      // snapshot at the helper boundary; NULL database mappings are deliberately disabled (R5 F3).
       (h.ctx.ghClient as any).installationIdFor = async () => { throw err(403, headers); };
-      await rejects(handlePlaneIssue(h.ctx, planeJob("issue", optInPayload)), /403/);
+      await rejects(planeInstallation(h.ctx, { ...mapping, installationId: null }), /403/);
       strictEqual(h.gh.writes().length, 0);
     } finally { await h.close(); }
   }
@@ -85,10 +90,18 @@ test("F8: a plain 403/404 means not installed: nothing is registered with instal
   for (const status of [403, 404]) {
     const h = await makeHarness();
     try {
-      await h.mapping({ smartCommits: false, installationId: null, policies: { title: "last_write_wins" } });
+      await h.mapping({ smartCommits: false, installationId: 1, policies: { title: "last_write_wins" } });
+      const mapping = (await mappingsForProject(h.db, "p-qll"))[0]!;
+      strictEqual(mapping.installationId, 1);
       (h.ctx.ghClient as any).installationIdFor = async () => { throw err(status); };
-      await handlePlaneIssue(h.ctx, planeJob("issue", optInPayload));
+      const installationId = await planeInstallation(h.ctx, { ...mapping, installationId: null });
+      strictEqual(installationId, 0, "permanent lookup failures select the no-registration writer");
+      const writer = notInstalledWriter(h.ctx, mapping, planeJob("issue", optInPayload));
+      strictEqual(writer.plan, undefined, "installation 0 cannot register a create plan");
+      await rejects(writer.apply({ kind: "comment", installationId, owner: mapping.owner, repo: mapping.repo,
+        repoId: mapping.ghRepoId, number: 12, body: "must not be registered" }), /not installed/);
       strictEqual(h.gh.writes().length, 0);
+      strictEqual((await h.db.query("SELECT 1 FROM outbound_writes")).rows.length, 0);
       ok((await h.audit("github_not_installed")).length >= 1, "audited github_not_installed");
     } finally { await h.close(); }
   }

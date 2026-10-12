@@ -13,6 +13,7 @@ import { actorTokenFor, installationFor, loadMagicWords, planeIssueUrl, projectO
 import type { AppContext } from "./context.ts";
 import { mappingsForRepo } from "./mappings.ts";
 import type { Mapping } from "./mappings.ts";
+import { mappingWriterContext } from "./issues.ts";
 import { linkedIssuesFor, runRules } from "./rules.ts";
 import { resultRef } from "./writers.ts";
 import type { ReducerContinuation } from "./writers.ts";
@@ -122,6 +123,7 @@ async function createRequested(ctx: AppContext, mapping: Mapping, job: InboundJo
  * commit status) cannot fire it twice. A new push is a new head commit and can become ready again.
  */
 export async function fireReadyForMerge(ctx: AppContext, mapping: Mapping, job: InboundJob, octokit: any, pr: any): Promise<boolean> {
+  ctx = mappingWriterContext(ctx, mapping);
   if (!pr || !Number.isSafeInteger(pr.number) || pr.draft === true || pr.merged === true || String(pr.state ?? "open").toLowerCase() !== "open") return false;
   const headSha: unknown = pr.head?.sha;
   if (typeof headSha !== "string" || !headSha) return false;
@@ -157,45 +159,57 @@ export async function handlePullRequest(ctx: AppContext, job: InboundJob): Promi
     await appendAudit(ctx.db, { kind: "pull_request", source: "github", deliveryId: job.deliveryId, detail: { repoId, number: pr.number }, outcome: "unmapped_repo" });
     return;
   }
-  for (const mapping of mappings) await withObjectLock(ctx.db, `pr:${mapping.workspaceSlug}:${repoId}#${pr.number}`, () => handleForMapping(ctx, mapping, job));
+  for (const mapping of mappings) await withObjectLock(ctx.db, `pr:${mapping.workspaceSlug}:${repoId}#${pr.number}`, () => handleForMapping(mappingWriterContext(ctx, mapping), mapping, job));
 }
 
-/** Save each later delivery behind the create and its original continuation, even after linking. */
-async function deferPendingPr(ctx: AppContext, mapping: Mapping, job: InboundJob): Promise<{ owned: Set<string>; pending: boolean }> {
+/** Retain later deliveries on live or failed creates; only explicit repair revives failed remote work. */
+async function deferPendingPr(ctx: AppContext, mapping: Mapping, job: InboundJob): Promise<{ owned: Set<string>; pending: boolean; identifiers: Set<string> }> {
   const owned = new Set<string>();
-  if (!ctx.plane.plan) return { owned, pending: false };
+  const identifiers = new Set<string>();
+  if (!ctx.plane.plan) return { owned, pending: false, identifiers };
   const pr: any = (job.payload as any).pull_request;
-  const pending = await ctx.db.query<{ key: string; outbox_id: string; link: Record<string, unknown>; created_id: string; fence_id: string; owns_event: boolean; result: { id?: string } | null }>(`SELECT p.key, p.outbox_id, p.link,
+  const pending = await ctx.db.query<{ key: string; outbox_id: string; link: Record<string, unknown>; created_id: string; fence_id: string; identifier: string; owns_event: boolean; result: { id?: string } | null }>(`WITH candidates AS (
+    SELECT p.key, p.outbox_id, p.link, r.sequence FROM pending_sync_links p JOIN outbound_writes r ON r.id = p.outbox_id
+    UNION ALL
+    SELECT r.write->'_plan'->'marker'->>'key', r.id, r.write->'_plan'->'marker'->'link', r.sequence
+    FROM outbound_writes r WHERE r.write->'_plan'->'marker' IS NOT NULL AND EXISTS (
+      SELECT 1 FROM outbound_writes f WHERE f.write->'_plan'->>'root' = r.id AND f.status = 'failed')
+    ), workflows AS (SELECT DISTINCT ON (key) key, outbox_id, link FROM candidates ORDER BY key, sequence DESC)
+    SELECT p.key, p.outbox_id, p.link,
     (SELECT w.id FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id
       AND w.write->>'kind' = 'create_issue' AND w.side = 'plane' ORDER BY sequence LIMIT 1) AS created_id,
     (SELECT w.id FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id ORDER BY sequence DESC LIMIT 1) AS fence_id,
     (SELECT w.result FROM outbound_writes w WHERE w.id = p.outbox_id) AS result,
+    (SELECT w.write->'continuation'->>'identifier' FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id
+      AND w.write->'continuation'->>'kind' = 'pr_created' AND w.write->'continuation'->>'identifier' <> '' ORDER BY sequence LIMIT 1) AS identifier,
     EXISTS (SELECT 1 FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id
       AND w.write->>'kind' = 'resume_reducer' AND w.write->'continuation'->'job'->>'source' = $4
       AND COALESCE(w.write->'continuation'->'job'->>'writeDeliveryId', w.write->'continuation'->'job'->>'deliveryId') = $5) AS owns_event
-    FROM pending_sync_links p WHERE p.link->>'ghKind' = 'pr' AND p.link->>'ghRepoId' = $1
-      AND p.link->>'ghNumber' = $2 AND p.link->>'planeWorkspaceSlug' = $3
-      AND NOT EXISTS (SELECT 1 FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id AND w.status = 'failed')`,
+    FROM workflows p WHERE p.link->>'ghKind' = 'pr' AND p.link->>'ghRepoId' = $1
+      AND p.link->>'ghNumber' = $2 AND p.link->>'planeWorkspaceSlug' = $3`,
     [String(mapping.ghRepoId), String(pr.number), mapping.workspaceSlug, job.source, job.writeDeliveryId ?? job.deliveryId]);
   for (const p of pending.rows) {
-    if (!p.created_id || !p.fence_id || typeof p.link.planeProjectId !== "string") throw new Error("pending PR create has no continuation fence");
+    if (!p.created_id || !p.fence_id || !p.identifier || typeof p.link.planeProjectId !== "string") throw new Error("retained PR create has no continuation fence");
+    identifiers.add(p.identifier);
     if (p.result?.id) owned.add(p.result.id);
     // Replay restores the saved workflow before reducing the event. Its existing continuation owns
     // this event's rules, including a saved original create continuation after terminal failure.
     if (p.owns_event) continue;
+    const opts = { groupRoot: p.outbox_id, bindings: { created: p.created_id }, predecessor: p.fence_id,
+      pendingMarker: { key: p.key, root: p.outbox_id, link: p.link }, holdOnFailure: true };
     await ctx.plane.plan(`pr-event:${p.key}:${job.source}:${job.writeDeliveryId ?? job.deliveryId}`, [
       { kind: "write", side: "plane", write: { kind: "resume_reducer", continuation: { kind: "pr_created", job,
         mappingId: mapping.id, projectId: p.link.planeProjectId, issueId: resultRef("created.id"), identifier: "" } } },
-    ], { groupRoot: p.outbox_id, bindings: { created: p.created_id }, predecessor: p.fence_id,
-      pendingMarker: { key: p.key, root: p.outbox_id, link: p.link } });
+    ], opts);
   }
-  return { owned, pending: pending.rows.length > 0 };
+  return { owned, pending: pending.rows.length > 0, identifiers };
 }
 
 async function handleForMapping(ctx: AppContext, mapping: Mapping, job: InboundJob): Promise<void> {
   const p: any = job.payload;
   const pr = p.pull_request;
   const slug = mapping.workspaceSlug;
+  const deferred = await deferPendingPr(ctx, mapping, job);
   const parsed = parseReferences({
     ...(typeof pr.head?.ref === "string" ? { branch: pr.head.ref } : {}),
     ...(typeof pr.title === "string" ? { title: pr.title } : {}),
@@ -228,12 +242,10 @@ async function handleForMapping(ctx: AppContext, mapping: Mapping, job: InboundJ
     items.push({ ref: { identifier: `${r.plane_issue_id}`, project: "", sequence: 0, tier: r.tier, source: "body" }, issueId: r.plane_issue_id, projectId: r.plane_project_id, identifier: r.plane_issue_id });
   }
   if (["opened", "edited", "reopened"].includes(p.action)) {
-    const created = await createRequested(ctx, mapping, job, parsed.createRequests);
+    const created = await createRequested(ctx, mapping, job, parsed.createRequests.filter((id) => !deferred.identifiers.has(id)));
     items.push(...created);
     fresh.push(...created);
   }
-  // Generation lookup can revive a failed create. Fence this event after that recovery as well.
-  const deferred = await deferPendingPr(ctx, mapping, job);
   // F7/F8: readiness is judged from GitHub and targets the PR's stored links, so it does not depend on this delivery naming
   // an item. It runs after the delivery's own lifecycle rules (`pull_request.approved` included): when both points are in
   // the table the ready state must be the one the item ends in.
@@ -297,6 +309,7 @@ export async function handleCreatedPr(ctx: AppContext, request: ReducerContinuat
     await appendAudit(ctx.db, { kind: "pr_create_request", source: "github", deliveryId: request.job.deliveryId, detail: { mappingId: request.mappingId, issueId: request.issueId }, outcome: "failed", error: "the mapping or pull request for a created work item is gone" });
     return;
   }
+  ctx = mappingWriterContext(ctx, mapping, request.authority);
   const item: LinkedItem = { ref: { identifier: `${request.identifier}-NEW`, project: request.identifier, sequence: 0, tier: "closing", source: "body" }, issueId: request.issueId, projectId: request.projectId, identifier: request.identifier };
   // Empty identifier denotes a later event fenced behind the create, rather than a new linkback.
   const pApproval = request.job.event === "pull_request_review" && p.action === "submitted" && String(p.review?.state ?? "").toLowerCase() === "approved";

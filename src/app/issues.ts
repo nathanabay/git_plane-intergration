@@ -6,11 +6,35 @@ import type { GithubWrite } from "../sync/github.ts";
 import type { InboundJob } from "../queue/index.ts";
 import { actorTokenFor, installationFor, mappedLogins, payloadBelongsToMapping, planeIssueUrl, usersFor, withObjectLock } from "./context.ts";
 import type { AppContext } from "./context.ts";
-import { mappingsForProject, mappingsForRepo } from "./mappings.ts";
-import type { Mapping } from "./mappings.ts";
+import { freezeMappingAuthority, mappingsForProject, mappingsForRepo } from "./mappings.ts";
+import type { FrozenWriteAuthority, Mapping } from "./mappings.ts";
 import { githubRuleEvent, planeRuleEvent } from "./rule-events.ts";
 import { linkedIssuesFor, runRules } from "./rules.ts";
 import type { ReducerContinuation } from "./writers.ts";
+
+/** Freeze the verified source mapping on every write admitted by this reducer, on either side. */
+export function mappingWriterContext(ctx: AppContext, mapping: Mapping, authority: FrozenWriteAuthority = freezeMappingAuthority(mapping)): AppContext {
+  const stamp = <T extends object>(write: T): T & { _authority: typeof authority } => ({ ...write, _authority: authority });
+  const stampPlan: NonNullable<AppContext["plane"]["plan"]> = (key, steps, opts) => ctx.plane.plan!(key,
+    steps.map((step) => step.kind === "write" ? { ...step, write: stamp(step.write) } : step), { ...opts, authority });
+  return { ...ctx,
+    plane: { ...ctx.plane,
+      apply: (write, opts) => ctx.plane.apply(stamp(write), opts),
+      ...(ctx.plane.plan ? { plan: stampPlan } : {}),
+      ...(ctx.plane.upsertRollup ? { upsertRollup: (target, key, link) => ctx.plane.upsertRollup!(stamp(target), key, link) } : {}),
+      ...(ctx.plane.mutateIssue ? { mutateIssue: (target, mutation, opts) => {
+        const admissionOpts = { ...opts, authority };
+        return ctx.plane.mutateIssue!(stamp(target), mutation, admissionOpts);
+      } } : {}),
+    },
+    github: { ...ctx.github,
+      apply: (write) => ctx.github.apply(stamp(write)),
+      ...(ctx.github.plan ? { plan: (key, steps, opts) => ctx.github.plan!(key,
+        steps.map((step) => step.kind === "write" ? { ...step, write: stamp(step.write) } : step), { ...opts, authority }) } : {}),
+      ...(ctx.github.setAssignees ? { setAssignees: (write, slug) => ctx.github.setAssignees!(stamp(write), slug) } : {}),
+    },
+  };
+}
 
 /**
  * The mirror asks for assignees to be added or removed; Plane→GitHub sync must make GitHub's list match Plane's
@@ -75,6 +99,7 @@ export async function handleMirroredIssue(ctx: AppContext, request: ReducerConti
   const mapping = (await mappingsForRepo(ctx.db, Number(p?.repository?.id))).find((m) => m.id === request.mappingId);
   const event = githubRuleEvent(request.job.event, p);
   if (!mapping || !event) return;
+  ctx = mappingWriterContext(ctx, mapping, request.authority);
   await runRules(ctx, mapping, event, [{ slug: mapping.workspaceSlug, projectId: request.projectId, issueId: request.issueId, tier: "closing" }], {
     deliveryId: request.job.deliveryId,
     actor: () => actorTokenFor(ctx, mapping, p.sender, event.trigger, p),
@@ -91,6 +116,7 @@ export async function handlePendingMirroredIssue(ctx: AppContext, request: Reduc
   const p: any = request.job.payload;
   const mapping = (await mappingsForRepo(ctx.db, Number(p?.repository?.id))).find((m) => m.id === request.mappingId);
   if (!mapping) return;
+  ctx = mappingWriterContext(ctx, mapping, request.authority);
   const deps = mirrorDeps(ctx, mapping, await installationFor(ctx, mapping, p));
   await withObjectLock(ctx.db, `gh:${mapping.ghRepoId}#${p?.issue?.number}`, () => onGithubIssue(p, deps));
   const event = githubRuleEvent(request.job.event, p);
@@ -110,6 +136,7 @@ async function handlePendingPlaneEvent(ctx: AppContext, request: ReducerContinua
   const p: any = request.job.payload;
   const mapping = (await mappingsForProject(ctx.db, request.projectId)).find((m) => m.id === request.mappingId);
   if (!mapping || !(await payloadBelongsToMapping(ctx, mapping, p))) return;
+  ctx = mappingWriterContext(ctx, mapping, request.authority);
   const deps = mirrorDeps(ctx, mapping, await planeInstallation(ctx, mapping));
   await withObjectLock(ctx.db, `plane:${request.issueId}`, () => onPlaneIssue({ event: request.job.event, payload: p }, deps));
 }
@@ -125,7 +152,9 @@ export async function handleGithubIssue(ctx: AppContext, job: InboundJob): Promi
     return;
   }
   for (const mapping of mappings) {
-    const deps = mirrorDeps(ctx, mapping, await installationFor(ctx, mapping, p), { job });
+    const installationId = await installationFor(ctx, mapping, p);
+    const mapped = mappingWriterContext(ctx, mapping);
+    const deps = mirrorDeps(mapped, mapping, installationId, { job });
     try {
       // One GitHub issue at a time, across replicas: the lock is what stops two `labeled` events creating two items.
       const mirrored = await withObjectLock(ctx.db, `gh:${repoId}#${p?.issue?.number}`, () => onGithubIssue(p, deps));
@@ -135,7 +164,7 @@ export async function handleGithubIssue(ctx: AppContext, job: InboundJob): Promi
       const event = githubRuleEvent(job.event, p);
       const resumeOwnsRules = (mirrored.action === "created" && ctx.plane.plan !== undefined) || mirrored.action === "deferred";
       if (event && !resumeOwnsRules && Number.isSafeInteger(p?.issue?.number)) {
-        await runRules(ctx, mapping, event, await linkedIssuesFor(ctx, mapping, p.issue.pull_request ? "pr" : "issue", p.issue.number), { deliveryId: job.deliveryId, actor: () => actorTokenFor(ctx, mapping, p.sender, event.trigger, p) });
+        await runRules(mapped, mapping, event, await linkedIssuesFor(mapped, mapping, p.issue.pull_request ? "pr" : "issue", p.issue.number), { deliveryId: job.deliveryId, actor: () => actorTokenFor(mapped, mapping, p.sender, event.trigger, p) });
       }
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
@@ -157,7 +186,7 @@ function isRateLimited(err: unknown): boolean {
  * limiting. A throttled 403 (retry-after / x-ratelimit-remaining: 0) and every other failure is transient and fails the
  * delivery so it retries (F7, R4 F8).
  */
-async function planeInstallation(ctx: AppContext, mapping: Mapping): Promise<number> {
+export async function planeInstallation(ctx: AppContext, mapping: Mapping): Promise<number> {
   try {
     return await installationFor(ctx, mapping);
   } catch (err) {
@@ -172,7 +201,7 @@ class GithubNotInstalled extends Error {
 }
 
 /** Installation 0 means no App access: a GitHub write is audited `github_not_installed` and never registered or planned (R4 F8). */
-function notInstalledWriter(ctx: AppContext, mapping: Mapping, job: InboundJob): MirrorDeps["github"] {
+export function notInstalledWriter(ctx: AppContext, mapping: Mapping, job: InboundJob): MirrorDeps["github"] {
   return {
     async apply(write: GithubWrite) {
       await appendAudit(ctx.db, { kind: "github_not_installed", source: "plane", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, write: write.kind }, outcome: "ignored", error: "the GitHub App is not installed on this repository" });
@@ -199,8 +228,9 @@ export async function handlePlaneIssue(ctx: AppContext, job: InboundJob): Promis
     // needs it will say so. Any other failure (GitHub 5xx, network) is transient and fails the delivery so it retries (F7):
     // registering writes with installation 0 made them fail permanently on the first attempt.
     // `createContinuation` lets the mirror register this event behind a create that is still in flight (`mirror_pending`).
-    const installationId = await planeInstallation(ctx, mapping);
-    const deps = mirrorDeps(ctx, mapping, installationId, { job });
+    const mapped = mappingWriterContext(ctx, mapping);
+    const installationId = await planeInstallation(mapped, mapping);
+    const deps = mirrorDeps(mapped, mapping, installationId, { job });
     if (installationId === 0) deps.github = notInstalledWriter(ctx, mapping, job);
     // A comment event's `data.id` is the comment's; the work item it belongs to is `data.issue`.
     const issueRef = typeof data?.issue === "string" ? data.issue : data?.issue?.id;
@@ -217,7 +247,7 @@ export async function handlePlaneIssue(ctx: AppContext, job: InboundJob): Promis
     // §7.5 `issue.*` / `comment.*` rules on the Plane item itself (F7).
     const event = planeRuleEvent(job.event, p, mapping.planeProjectId, mapping.ghRepoFullName);
     if (event && typeof planeIssueId === "string") {
-      await runRules(ctx, mapping, event, [{ slug: mapping.workspaceSlug, projectId: mapping.planeProjectId, issueId: planeIssueId, tier: "closing" }], { deliveryId: job.deliveryId, actor: async () => undefined, source: "plane" });
+      await runRules(mapped, mapping, event, [{ slug: mapping.workspaceSlug, projectId: mapping.planeProjectId, issueId: planeIssueId, tier: "closing" }], { deliveryId: job.deliveryId, actor: async () => undefined, source: "plane" });
     }
   }
 }
