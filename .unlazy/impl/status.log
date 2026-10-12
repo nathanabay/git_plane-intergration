@@ -213,3 +213,7 @@
 2026-10-12T05:44:10Z gate run r6: 12/14 (wiring oracle readiness race - driver; 3 stale suite expectations). review-7: BLOCKING 0/3/0, all review-6 findings CLOSED. Fix round 7 dispatched: CA F1,F2 + mirror fixture; CD F3 + fixes-r3 fixture; CB review-r5-cb fixture; driver wiring race
 2026-10-12T05:45:22Z r7: driver fixed verify-wiring readiness race (waits for last migration); 2/2 consecutive runs pass (6 checks)
 2026-10-12T05:53:12Z r7: CA CB CD DONE; typecheck 142 files; committing round 7 and pushing
+2026-10-12T05:53:29Z round 7 committed+pushed (8c59007); launched gate run r7 (CC) and review round 8 (CR)
+2026-10-12T06:09:56Z gate run r7: 14/14 PASS (first fully green). review-8: 0 BLOCKING, 1 MAJOR (orphan linkback picks first mapping), all review-7 CLOSED. Fix round 8: CD
+2026-10-12T06:15:51Z r8: CD granted review-r7-cd.test.ts + a8/reducers.test.ts orphan fixtures (full mirror metadata)
+2026-10-12T06:22:13Z r8: CD DONE (F1 + 2 fixtures); driver verified 24/24 capped + typecheck 143; committing and pushing
