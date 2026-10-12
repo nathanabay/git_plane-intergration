@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Oracle for tasks B1 and B2 (spec §8). Applies each fork patch to a pristine makeplane/plane
-// v1.4.2 checkout, enforces the six-file fork surface, and checks the mirrored files are exactly
+// v1.4.2 checkout, enforces the seven-file fork surface (admin 3, web 4), and checks the mirrored files are exactly
 // the patched result. usage: node scripts/verify-fork-patch.mjs admin|web|all
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdtempSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -25,9 +25,9 @@ if (!existsSync(join(cache, ".git"))) {
 if (git(["status", "--porcelain"], cache).stdout.trim()) { console.error(`FAIL: pristine cache ${cache} has local edits; delete it and re-run`); process.exit(1); }
 
 const APPS = {
-  admin: { patch: "apps/admin/git-sync.patch", prefixes: ["apps/admin/"], routes: ["apps/admin/app/routes.ts"], ui: /\/git-sync\/ui\/admin\b/,
+  admin: { maxFiles: 3, patch: "apps/admin/git-sync.patch", prefixes: ["apps/admin/"], routes: ["apps/admin/app/routes.ts"], ui: /\/git-sync\/ui\/admin\b/,
     routePath: "git-sync", ancestor: null },
-  web: { patch: "apps/web/git-sync.patch", prefixes: ["apps/web/", "packages/constants/"], routes: ["apps/web/app/routes.ts", "apps/web/app/routes/extended.ts"], ui: /\/git-sync\/ui\/workspaces\//,
+  web: { maxFiles: 4, patch: "apps/web/git-sync.patch", prefixes: ["apps/web/", "packages/constants/"], routes: ["apps/web/app/routes.ts", "apps/web/app/routes/extended.ts"], ui: /\/git-sync\/ui\/workspaces\//,
     routePath: ":workspaceSlug/settings/git-sync", ancestor: "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/layout.tsx" },
 };
 // Evaluates the patched React Router route config with a stub of @react-router/dev/routes and
@@ -101,7 +101,7 @@ for (const app of which === "all" ? ["admin", "web"] : [which]) {
   const files = [...patch.matchAll(/^diff --git a\/(\S+) b\/(\S+)$/gm)].map((m) => m[2]);
   total += files.length;
   if (files.length === 0) { fail(`${app}: patch touches no files`); continue; }
-  if (files.length > 3) fail(`${app}: patch touches ${files.length} files; the fork surface is three files per app`);
+  if (files.length > a.maxFiles) fail(`${app}: patch touches ${files.length} files; the ${app} fork surface is ${a.maxFiles} files`);
   const routesFile = a.routes.find((r) => files.includes(r));
   if (!routesFile) fail(`${app}: patch registers no route in ${a.routes.join(" or ")}`);
   for (const f of files) if (!a.prefixes.some((p) => f.startsWith(p))) fail(`${app}: patch touches ${f}, outside ${a.prefixes.join(", ")}`);
@@ -127,6 +127,12 @@ for (const app of which === "all" ? ["admin", "web"] : [which]) {
     if (/<iframe\b/.test(patched)) iframe = true;
     if (a.ui.test(patched)) ui = true;
   }
+  // Plane's workspace settings layout renders NotAuthorizedView for any path missing from
+  // WORKSPACE_SETTINGS_ACCESS, so the web fork must list its page there, admin-only.
+  if (app === "web") {
+    const access = existsSync(join(tmp, "packages/constants/src/settings/workspace.ts")) ? readFileSync(join(tmp, "packages/constants/src/settings/workspace.ts"), "utf8") : "";
+    if (!/"\/settings\/git-sync":\s*\[EUserWorkspaceRoles\.ADMIN\]/.test(access)) fail("web: WORKSPACE_SETTINGS_ACCESS does not authorize /settings/git-sync for workspace admins");
+  }
   rmSync(tmp, { recursive: true, force: true });
   if (!iframe) fail(`${app}: no patched file renders an <iframe>`);
   if (!ui) fail(`${app}: no patched file points at the service UI path ${a.ui}`);
@@ -135,7 +141,7 @@ for (const app of which === "all" ? ["admin", "web"] : [which]) {
   if (/\bas any\b|@ts-ignore|@ts-expect-error/.test(patch)) fail(`${app}: patch suppresses type errors (as any / @ts-ignore / @ts-expect-error)`);
   await checkRouteTree(app, a, patchPath);
 }
-if (which === "all" && total > 6) fail(`fork surface is ${total} files across both apps; the limit is six`);
+if (which === "all" && total > 7) fail(`fork surface is ${total} files across both apps; the limit is seven`);
 
 if (fails.length) { for (const f of fails) console.error("FAIL: " + f); process.exit(1); }
 console.log(`fork patch verification passed (${which})`);

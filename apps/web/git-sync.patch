@@ -106,3 +106,22 @@ index dbc9306..3592c90 100644
              </div>
            </div>
          );
+diff --git a/packages/constants/src/settings/workspace.ts b/packages/constants/src/settings/workspace.ts
+index e9d326e..e8e7aeb 100644
+--- a/packages/constants/src/settings/workspace.ts
++++ b/packages/constants/src/settings/workspace.ts
+@@ -64,9 +64,11 @@ export const WORKSPACE_SETTINGS: Record<TWorkspaceSettingsTabs, TWorkspaceSettin
+   },
+ };
+ 
+-export const WORKSPACE_SETTINGS_ACCESS = Object.fromEntries(
+-  Object.entries(WORKSPACE_SETTINGS).map(([_, { href, access }]) => [href, access])
+-);
++export const WORKSPACE_SETTINGS_ACCESS: Record<string, EUserWorkspaceRoles[]> = {
++  ...Object.fromEntries(Object.entries(WORKSPACE_SETTINGS).map(([_, { href, access }]) => [href, access])),
++  // git-sync fork: the settings layout authorizes only listed paths; the GitHub page is admin-only.
++  "/settings/git-sync": [EUserWorkspaceRoles.ADMIN],
++};
+ 
+ export const GROUPED_WORKSPACE_SETTINGS: Record<WORKSPACE_SETTINGS_CATEGORY, TWorkspaceSettingsItem[]> = {
+   [WORKSPACE_SETTINGS_CATEGORY.ADMINISTRATION]: [

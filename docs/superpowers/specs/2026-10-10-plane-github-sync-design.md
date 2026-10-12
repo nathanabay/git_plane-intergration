@@ -395,7 +395,7 @@ markdown links ending in "Preview" are surfaced as named shortcuts on the work i
 Plane's schema** — we do not own it. The achievable version is a reserved title prefix
 (`[CI] Build #42`, `[Deploy] production`) that our UI renders with an icon, degrading to readable
 plain text in Plane's native UI. Anything richer requires a Plane fork, which §8 deliberately
-limits to six files.
+limits to seven files.
 
 **Autolinks are optional and off by default.** Turning `WEB-344` into a clickable link in GitHub
 uses `POST /repos/{owner}/{repo}/autolinks`, which requires repository **`Administration: Write`**
@@ -461,8 +461,11 @@ Split across the two Plane frontends, per the approved decision:
 **Mechanism:** each fork adds a nav entry and a route component that renders an `<iframe>`
 pointing at our proxied UI. Both frontends use an *explicit* React Router route config
 (`app/routes.ts` imports `index`/`layout`/`route` from `@react-router/dev/routes`), so each app
-also needs its `routes.ts` edited: **three files per app, six files of fork surface total**
-(nav entry, route component, route registration). At v1.4.2 the workspace-settings nav entries
+also needs its `routes.ts` edited: **seven files of fork surface total** — three in admin (nav
+entry, route component, route registration) and four in web, because the workspace settings
+layout renders "not authorized" for any path missing from `WORKSPACE_SETTINGS_ACCESS` in
+`packages/constants/src/settings/workspace.ts`, so the web fork also lists `/settings/git-sync`
+there, admin-only (found by running the fork against a real v1.4.2 install). At v1.4.2 the workspace-settings nav entries
 are defined in `packages/constants/src/settings/workspace.ts` and the admin nav in
 `apps/admin/app/(all)/(dashboard)/sidebar-menu.tsx`; the exact files are recorded with the fork
 patches. All real UI is one React app
