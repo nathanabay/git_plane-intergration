@@ -1,7 +1,7 @@
 // Round-2 fixes F1, F12, F14, F15 (implementer SA): the production wiring, id-based actors, the commit-range
 // lookup and the credential source. PGlite plus the A8 harness fakes; no Redis.
 import test from "node:test";
-import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -75,27 +75,30 @@ test("F14: a push as large as GitHub's payload limit is completed from the compa
 test("F15: the credential source says where credentials come from and never falls back to the environment once a row was read", async () => {
   const db = new PGlite(); await db.waitReady; await migrate(db);
   const key = randomBytes(32);
-  const keyFile = join(mkdtempSync(join(tmpdir(), "gh-key-")), "key.pem");
+  const keyDir = mkdtempSync(join(tmpdir(), "gh-key-"));
+  const keyFile = join(keyDir, "key.pem");
   writeFileSync(keyFile, "PEM-ENV");
-  const config = { GITHUB_APP_ID: "1", GITHUB_PRIVATE_KEY_PATH: keyFile, GITHUB_WEBHOOK_SECRET: "leaked-env-secret", GITHUB_API_BASE_URL: "https://ghe.env/api/v3" };
+  const config = { GITHUB_APP_ID: "1", GITHUB_PRIVATE_KEY_PATH: keyFile, GITHUB_WEBHOOK_SECRET: "leaked-env-secret", GITHUB_API_BASE_URL: "https://ghe.env/api/v3", GITHUB_CREDENTIAL_MARKER_PATH: join(keyDir, "credential-state", "bootstrap-retired") };
   try {
     const src = createCredentialSource(db, key, config, 0);
     deepStrictEqual(await src.describe(), { source: "environment", decryptOk: true });
+    strictEqual(await src.webhookSecret(), "leaked-env-secret", "healthy-database bootstrap remains available");
     await db.query("INSERT INTO github_app_config (id, app_id, private_key_v1, webhook_secret_v1, ghe_base_url) VALUES (1, 42, $1, $2, NULL)", [encryptSecret("PEM-1", key), encryptSecret("rotated", key)]);
     const creds = await src.load();
     deepStrictEqual([creds.source, creds.baseUrl], ["database", undefined]); // cleared URL means github.com, not the env URL
     deepStrictEqual(await src.describe(), { source: "database", decryptOk: true });
     // database outage: the last stored secret keeps verifying; the environment secret never comes back
     const broken: any = { query: async () => { throw new Error("db down"); } };
-    // A restart during the outage: a row was read earlier (the durable marker beside the key says so), so the environment
+    // A restart during the outage: a row was read earlier (the configured durable marker says so), so the environment
     // secret must NOT come back (review-4 prev F15; the old in-memory-only rule let it back after a restart).
     const outage = createCredentialSource(broken, key, config, 0);
     let outageRefused = false; try { await outage.webhookSecret(); } catch { outageRefused = true; }
     ok(outageRefused);
-    // A cold start where no row was ever read (a fresh key directory, so no marker) still verifies with the environment.
-    const freshKey = join(mkdtempSync(join(tmpdir(), "gh-key-")), "key.pem");
+    // A missing marker cannot establish retirement history during a cold database outage.
+    const freshDir = mkdtempSync(join(tmpdir(), "gh-key-"));
+    const freshKey = join(freshDir, "key.pem");
     writeFileSync(freshKey, "PEM-ENV");
-    strictEqual(await createCredentialSource(broken, key, { ...config, GITHUB_PRIVATE_KEY_PATH: freshKey }, 0).webhookSecret(), "leaked-env-secret");
+    await rejects(createCredentialSource(broken, key, { ...config, GITHUB_PRIVATE_KEY_PATH: freshKey, GITHUB_CREDENTIAL_MARKER_PATH: join(freshDir, "credential-state", "bootstrap-retired") }, 0).webhookSecret(), /db down/);
     // an undecryptable row is reported and refused, not replaced by the environment
     await db.query("UPDATE github_app_config SET webhook_secret_v1 = 'garbage' WHERE id = 1");
     deepStrictEqual(await src.describe(), { source: "database", decryptOk: false });

@@ -64,7 +64,7 @@ async function credentialRig() {
   const dir = mkdtempSync(join(tmpdir(), "gh-key-"));
   const keyFile = join(dir, "key.pem");
   writeFileSync(keyFile, "PEM-ENV");
-  const config = { GITHUB_APP_ID: "1", GITHUB_PRIVATE_KEY_PATH: keyFile, GITHUB_WEBHOOK_SECRET: "leaked-env-secret" };
+  const config = { GITHUB_APP_ID: "1", GITHUB_PRIVATE_KEY_PATH: keyFile, GITHUB_WEBHOOK_SECRET: "leaked-env-secret", GITHUB_CREDENTIAL_MARKER_PATH: join(dir, "credential-state", "bootstrap-retired") };
   const storeRow = () => db.query("INSERT INTO github_app_config (id, app_id, private_key_v1, webhook_secret_v1) VALUES (1, 42, $1, $2) ON CONFLICT (id) DO NOTHING", [encryptSecret("PEM-1", key), encryptSecret("rotated", key)]);
   return { db, key, dir, config, storeRow };
 }
@@ -75,7 +75,7 @@ test("prev F15: after a restart with the database down, the environment secret i
     await storeRow();
     const first = createCredentialSource(db, key, config, 0);
     strictEqual(await first.webhookSecret(), "rotated");
-    ok(existsSync(join(dir, ".gitsync-db-credentials")), "a durable marker is left beside the key");
+    ok(existsSync(config.GITHUB_CREDENTIAL_MARKER_PATH), "a durable marker is left at the configured path");
     // a new process (no in-memory state) while the database is unreachable
     const broken: any = { query: async () => { throw new Error("db down"); } };
     const restarted = createCredentialSource(broken, key, config, 0);

@@ -61,9 +61,10 @@ test("F5: emptying the mapped set removes mapped assignees only", async () => {
 test("F6: credentials saved in the admin UI win over the environment and changes are picked up", async () => {
   const db = new PGlite(); await db.waitReady; await migrate(db);
   const key = randomBytes(32);
-  const keyFile = join(mkdtempSync(join(tmpdir(), "gh-key-")), "key.pem");
+  const keyDir = mkdtempSync(join(tmpdir(), "gh-key-"));
+  const keyFile = join(keyDir, "key.pem");
   writeFileSync(keyFile, "PEM-ENV");
-  const config = { GITHUB_APP_ID: "1", GITHUB_PRIVATE_KEY_PATH: keyFile, GITHUB_WEBHOOK_SECRET: "env-secret" };
+  const config = { GITHUB_APP_ID: "1", GITHUB_PRIVATE_KEY_PATH: keyFile, GITHUB_WEBHOOK_SECRET: "env-secret", GITHUB_CREDENTIAL_MARKER_PATH: join(keyDir, "credential-state", "bootstrap-retired") };
   try {
     const src = createCredentialSource(db, key, config, 0);
     strictEqual(await src.webhookSecret(), "env-secret"); // no row: environment fallback

@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Route } from "../index.ts";
 import type { Db } from "../db/migrate.ts";
 import { PgTokenStore } from "../db/token-store.ts";
-import { addUserLinkTombstone, clearUserLinkTombstone, markCredentialRowSeen } from "../db/ledgers.ts";
+import { addUserLinkTombstone, clearUserLinkTombstone, withUserLinkTransaction } from "../db/ledgers.ts";
 import { TokenVault, decryptSecret, encryptSecret } from "../auth/identity.ts";
 import { parseRules } from "../rules/engine.ts";
 import { QLL_DEFAULTS, compileLifecycleRules } from "../github/pr-automation.ts";
@@ -148,16 +148,19 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
   });
 
   /** Refuses (422) a project outside the workspace or a repository the App cannot reach; Plane/GitHub outages are 502. */
-  async function authoriseMapping(slug: string, check: { planeProjectId?: string; repo?: { id: number; fullName: string } }): Promise<void> {
+  async function authoriseMapping(slug: string, check: { planeProjectId: string; repo: { id: number; fullName: string } }): Promise<number> {
     if (!deps.verifyMapping) throw new HttpError(503, "Mapping verification is not configured, so mappings cannot be changed");
     let reason: string | null;
+    let installationId: number | undefined;
     try {
-      reason = await deps.verifyMapping({ slug, ...check });
+      reason = await deps.verifyMapping({ slug, ...check, onInstallationVerified: (id) => { installationId = id; } });
     } catch (e) {
       console.error("mapping verification failed:", e instanceof Error ? e.message : "unknown");
       throw new HttpError(502, "Could not verify the mapping with Plane and GitHub");
     }
     if (reason) throw new ValidationError(reason);
+    if (installationId === undefined || !Number.isSafeInteger(installationId) || installationId <= 0) throw new HttpError(503, "Mapping verification did not establish GitHub installation authority");
+    return installationId;
   }
 
   /** The mapping must belong to the workspace in the path; anything else is 404, never a cross-workspace write. */
@@ -187,7 +190,7 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
 
   workspace("POST", "/mappings", async ({ res, slug, body }) => {
     const input = parseMappingInput(await body(), false);
-    await authoriseMapping(slug, { planeProjectId: input.planeProjectId!, repo: { id: input.ghRepoId!, fullName: input.ghRepoFullName! } });
+    const installationId = await authoriseMapping(slug, { planeProjectId: input.planeProjectId!, repo: { id: input.ghRepoId!, fullName: input.ghRepoFullName! } });
     const dup = await db.query(
       `SELECT 1 FROM repo_mappings WHERE workspace_slug = $1 AND gh_repo_id = $2 AND plane_project_id = $3`,
       [slug, input.ghRepoId, input.planeProjectId]);
@@ -195,29 +198,25 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
     const smartDefault = (await readInstanceSettings()).smartCommitsDefault;
     const { rows } = await db.query(
       `INSERT INTO repo_mappings (workspace_slug, gh_repo_id, gh_repo_full_name, plane_project_id, sync_direction,
-         smart_commits_enabled, linkback_enabled, autolinks_enabled)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+         smart_commits_enabled, linkback_enabled, autolinks_enabled, installation_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
       [slug, input.ghRepoId, input.ghRepoFullName, input.planeProjectId, input.syncDirection ?? "bidirectional",
-        input.smartCommitsEnabled ?? smartDefault, input.linkbackComments ?? true, input.autolinks ?? false]);
+        input.smartCommitsEnabled ?? smartDefault, input.linkbackComments ?? true, input.autolinks ?? false, installationId]);
     sendJson(res, 201, { id: Number(rows[0].id) });
   });
 
   workspace("PATCH", "/mappings/:id", async ({ res, slug, params, body }) => {
     const current = await loadMapping(slug, params.id);
     const input = parseMappingInput(await body(), true);
-    const projectChanged = input.planeProjectId !== undefined && input.planeProjectId !== current.plane_project_id;
-    const repoChanged = (input.ghRepoId !== undefined && input.ghRepoId !== Number(current.gh_repo_id))
-      || (input.ghRepoFullName !== undefined && input.ghRepoFullName !== current.gh_repo_full_name);
-    if (projectChanged || repoChanged) {
-      await authoriseMapping(slug, {
-        ...(projectChanged ? { planeProjectId: input.planeProjectId! } : {}),
-        ...(repoChanged ? { repo: { id: input.ghRepoId ?? Number(current.gh_repo_id), fullName: input.ghRepoFullName ?? current.gh_repo_full_name } } : {}),
-      });
-    }
+    const installationId = await authoriseMapping(slug, {
+      planeProjectId: input.planeProjectId ?? current.plane_project_id,
+      repo: { id: input.ghRepoId ?? Number(current.gh_repo_id), fullName: input.ghRepoFullName ?? current.gh_repo_full_name },
+    });
     const columns: Record<string, unknown> = {
       gh_repo_id: input.ghRepoId, gh_repo_full_name: input.ghRepoFullName, plane_project_id: input.planeProjectId,
       sync_direction: input.syncDirection, smart_commits_enabled: input.smartCommitsEnabled,
       linkback_enabled: input.linkbackComments, autolinks_enabled: input.autolinks,
+      installation_id: installationId,
     };
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -330,27 +329,29 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
     if (!member) throw new ValidationError("That Plane user is not a member of this workspace");
     const link = { githubLogin: found.login, githubId: found.id }; // store GitHub's canonical casing
     try {
-      await db.query(
-        `INSERT INTO user_map (workspace_slug, plane_user_id, gh_login, gh_id) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (workspace_slug, plane_user_id) DO UPDATE SET gh_login = EXCLUDED.gh_login, gh_id = EXCLUDED.gh_id`,
-        [slug, userId, link.githubLogin, link.githubId]);
+      await withUserLinkTransaction(db, slug, async (conn) => {
+        await conn.query(
+          `INSERT INTO user_map (workspace_slug, plane_user_id, gh_login, gh_id) VALUES ($1, $2, $3, $4)
+           ON CONFLICT (workspace_slug, plane_user_id) DO UPDATE SET gh_login = EXCLUDED.gh_login, gh_id = EXCLUDED.gh_id`,
+          [slug, userId, link.githubLogin, link.githubId]);
+        await clearUserLinkTombstone(conn, slug, link.githubId);
+      });
     } catch (e) {
       if (errorCode(e) === "23505") throw new HttpError(409, "That GitHub account is already linked to another user in this workspace");
       throw e;
     }
-    await clearUserLinkTombstone(db, slug, link.githubId); // a manual link is an explicit admin decision (F11)
     sendJson(res, 200, { planeUserId: userId, githubLogin: link.githubLogin, githubId: link.githubId });
   });
 
   workspace("DELETE", "/user-links/:planeUserId", async ({ res, slug, params }) => {
     const userId = planeUserId(params.planeUserId);
-    const del = await db.query(`DELETE FROM user_map WHERE workspace_slug = $1 AND plane_user_id = $2 RETURNING id, gh_id`, [slug, userId]);
-    if (!del.rows.length) throw new HttpError(404, "No link for that user");
-    // F11: without this the next event from that account would re-link it by email.
-    await addUserLinkTombstone(db, slug, Number(del.rows[0].gh_id));
-    // §9: unlinking must invalidate the user's stored tokens. Tokens are per Plane user, not per
-    // workspace, so this fails safe for a user linked in several workspaces.
-    await vault.revoke(userId);
+    await withUserLinkTransaction(db, slug, async (conn) => {
+      const del = await conn.query(`DELETE FROM user_map WHERE workspace_slug = $1 AND plane_user_id = $2 RETURNING id, gh_id`, [slug, userId]);
+      if (!del.rows.length) throw new HttpError(404, "No link for that user");
+      await addUserLinkTombstone(conn, slug, Number(del.rows[0].gh_id));
+      // Tokens are per Plane user, so revocation also covers their links in other workspaces.
+      await new PgTokenStore(conn).delete(userId);
+    });
     sendJson(res, 204);
   });
 
@@ -478,7 +479,7 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
          private_key_v1 = COALESCE($5, github_app_config.private_key_v1),
          webhook_secret_v1 = COALESCE($6, github_app_config.webhook_secret_v1)`,
       [input.appId, key ?? "", hook ?? "", input.gheBaseUrl, key, hook]);
-    await markCredentialRowSeen(db); // durable: the environment secret is never accepted again (prev F15)
+    // Migration 008 retires bootstrap credentials in the same transaction as the row save.
     sendJson(res, 200, { appId: input.appId, gheBaseUrl: input.gheBaseUrl, configured: true });
   });
 
