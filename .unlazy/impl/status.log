@@ -192,3 +192,14 @@
 2026-10-11T19:05:42Z r4: SA DONE 2 (harness: allow-list row, service-user default, F9 external lookup; 34/35 capped); remaining fixes-r2 F15 credential test 'db down' assigned to SB
 2026-10-11T19:07:19Z r4: CB confirmed F9/F10 integration with real PlaneApiError 401/403 + headers; 10/10, typecheck 32
 2026-10-11T19:07:51Z r4: all six DONE; full typecheck 127 files passes; committing round-4 fixes by task and pushing (gates deferred per user)
+2026-10-11T19:10:15Z user: parallel — CC runs full gate run (briefs/gate-run-r4.md), CA independently checks SB's deliberate fixes-r2 test change, rv runs review round 5 (no heavy tests); memory guard raised to 5GB for run-tests.mjs
+2026-10-11T19:10:59Z user: use Codex agents — review round 5 moved from rv (Claude, stopped) to CB (Codex); CA test-change check re-sent (swallowed by /new)
+2026-10-11T19:14:16Z r4: CA test-change check ACCEPT; CA found real residual (driver confirmed): F15 marker is written beside the key at /run/secrets (ro bind, non-root node user, not persistent) so restart-during-outage still falls back to env; queued for the round-5 fix batch (needs writable persistent state dir: credentials.ts, env.ts, compose, env example, APPLY.md)
+2026-10-12T04:09:58Z gate run r4: 10/14 pass (fails: a1/a2 oracle fixtures lack PLANE_SERVICE_USER_ID, wiring lacks allow-list row, 2 stale a8 fixtures). review-5: BLOCKING 4/6/1. Fix round 5 dispatched to Codex CC(F1,F2) CA(F4-6) CB(F9,F11) CD(F3,F10) CE(F7,F8); driver fixes oracles + a8 fixtures
+2026-10-12T04:13:33Z r5: CD F3 seam relayed — CE: onInstallationVerified capture + store installation_id on POST/PATCH; CB: outbox authoriseWrite(side,write,slug) before every dispatch, refusal terminal; CD implements + wires
+2026-10-12T04:15:33Z r5: CD authoriseWrite detail relayed to CB (pass stored head.write incl _plan, before resolution; missing workspace terminal 403)
+2026-10-12T04:15:46Z r5: CC F1 seam relayed to CA (deferPendingPr skips duplicate continuation for same source + original identity on replay)
+2026-10-12T04:16:51Z r5: driver oracles fixed — a1 PASS, a2 PASS (12), wiring FAIL 'workspace_installations does not exist' during CE's in-progress migration 008; re-run after round 5; CE asked to prove 008 on 001-007
+2026-10-12T04:21:13Z r5: CD — PR linkbacks registered with NULL workspace now refused; CB to infer workspace at registration only from unique verified mapping; CD granted fixes-r3.test.ts + a8/reducers.test.ts for deliberate F3 fixture changes
+2026-10-12T04:34:07Z r5: all five DONE; typecheck 136 files passes; CE assigned its 5 listed fixture adjustments (ui harness/workspace/review-r4-sb, fixes-r2, queue fixes-r1)
+2026-10-12T04:39:30Z r5: all five DONE incl. CE fixture follow-up (46/46); typecheck 136 files; driver oracles a1/a2/wiring pass; committing round 5 by task and pushing
