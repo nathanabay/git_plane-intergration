@@ -13,8 +13,11 @@ services:
     env_file:
       - path: git-sync.env
         required: false
+    environment:
+      GITHUB_CREDENTIAL_MARKER_PATH: /var/lib/gitsync/credentials/bootstrap-retired
     volumes:
       - ./git-sync/github-app.pem:/run/secrets/github-app.pem:ro
+      - ./git-sync/credential-state:/var/lib/gitsync/credentials
     healthcheck:
       test: ["CMD", "node", "-e", "http.get('http://127.0.0.1:3100/git-sync/healthz', (res) => { if (res.statusCode === 200) process.exit(0); else process.exit(1); }).on('error', () => process.exit(1))"]
       interval: 30s

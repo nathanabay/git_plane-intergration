@@ -61,7 +61,18 @@ mkdir -p /root/plane/git-sync
 # ... place your GitHub App private key in /root/plane/git-sync/github-app.pem ...
 chown 1000:1000 /root/plane/git-sync/github-app.pem
 chmod 400 /root/plane/git-sync/github-app.pem
+
+# Persistent state is written by the non-root node user; preserve this directory on upgrades.
+install -d -m 700 -o 1000 -g 1000 /root/plane/git-sync/credential-state
 ```
+
+`GITHUB_CREDENTIAL_MARKER_PATH` points inside that writable bind mount, separately from the read-only
+PEM secret. Keep the mount and marker across container recreation and include them in backups. A marker
+write failure refuses credential verification instead of claiming durable retirement. On a cold database
+outage the verifier answers 503 even when the marker is missing: absence cannot establish that bootstrap
+credentials were never retired. Bootstrap credentials are available only after a successful database
+check confirms both the config row and retirement state are absent. Migration 008 records retirement
+atomically on every credential save, protecting a save followed by restart before the first source read.
 
 ## 5. Create the Database
 
@@ -98,8 +109,11 @@ services:
     env_file:
       - path: git-sync.env
         required: false
+    environment:
+      GITHUB_CREDENTIAL_MARKER_PATH: /var/lib/gitsync/credentials/bootstrap-retired
     volumes:
       - ./git-sync/github-app.pem:/run/secrets/github-app.pem:ro
+      - ./git-sync/credential-state:/var/lib/gitsync/credentials
     healthcheck:
       test: ["CMD", "node", "-e", "http.get('http://127.0.0.1:3100/git-sync/healthz', (res) => { if (res.statusCode === 200) process.exit(0); else process.exit(1); }).on('error', () => process.exit(1))"]
       interval: 30s
