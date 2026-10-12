@@ -7,6 +7,7 @@ import { getDevInfoLink, upsertDevInfoLink } from "../db/ledgers.ts";
 import { safeUrl } from "../github/html.ts";
 import { PlaneApiError } from "./plane.ts";
 import type { PlaneWrite, PlaneWriteResult } from "./plane.ts";
+import type { FrozenWriteAuthority } from "../app/mappings.ts";
 
 export type PrStatus = "OPEN" | "MERGED" | "DECLINED";
 export type ReviewStatus = "REVIEW" | "APPROVAL" | "REJECTED";
@@ -96,7 +97,13 @@ export function prRollupKey(repoId: number | string, number: number): string {
   return `pr:${repoId}:${number}`;
 }
 
-export interface RollupTarget { slug: string; projectId: string; issueId: string }
+export interface RollupTarget {
+  slug: string;
+  projectId: string;
+  issueId: string;
+  /** Source mapping snapshot carried intact through standalone rollup registration and inline fallback. */
+  _authority?: FrozenWriteAuthority;
+}
 export interface RollupDeps {
   db: Db;
   writer: { upsertRollup?(target: RollupTarget, key: string, link: { title: string; url: string }): Promise<PlaneWriteResult>; apply(write: PlaneWrite, opts?: { actorToken?: SecretString }): Promise<PlaneWriteResult> };

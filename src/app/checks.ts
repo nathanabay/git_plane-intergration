@@ -5,18 +5,24 @@ import type { RollupTarget } from "../sync/dev-info.ts";
 import type { InboundJob } from "../queue/index.ts";
 import { actorTokenFor, installationFor } from "./context.ts";
 import type { AppContext } from "./context.ts";
-import { mappingsForRepo } from "./mappings.ts";
+import { freezeMappingAuthority, mappingsForRepo } from "./mappings.ts";
 import type { Mapping } from "./mappings.ts";
 import { findLinkId, fireReadyForMerge } from "./pr.ts";
 import { githubRuleEvent } from "./rule-events.ts";
 import { linkedIssuesFor, runRules } from "./rules.ts";
+import { deliveryScope } from "./writers.ts";
 
-interface Linked { number: number; targets: RollupTarget[] }
+function mappingScope(mapping: Mapping, job: InboundJob) {
+  const current = deliveryScope.getStore();
+  return { ...current, deliveryId: current?.deliveryId ?? `github-${job.writeDeliveryId ?? job.deliveryId}`,
+    workspaceSlug: mapping.workspaceSlug, authority: freezeMappingAuthority(mapping) };
+}
 
 async function linkedTargets(ctx: AppContext, mapping: Mapping, number: number): Promise<RollupTarget[]> {
   const { rows } = await ctx.db.query<{ plane_workspace_slug: string; plane_project_id: string; plane_issue_id: string }>(
-    "SELECT plane_workspace_slug, plane_project_id, plane_issue_id FROM sync_links WHERE gh_repo_id = $1 AND gh_number = $2 AND gh_kind = 'pr' AND status = 'active'", [mapping.ghRepoId, number]);
-  return rows.map((r) => ({ slug: r.plane_workspace_slug, projectId: r.plane_project_id, issueId: r.plane_issue_id }));
+    "SELECT DISTINCT plane_workspace_slug, plane_project_id, plane_issue_id FROM sync_links WHERE gh_repo_id = $1 AND gh_number = $2 AND gh_kind = 'pr' AND status = 'active' AND plane_workspace_slug = $3", [mapping.ghRepoId, number, mapping.workspaceSlug]);
+  const authority = freezeMappingAuthority(mapping);
+  return rows.map((r) => ({ slug: r.plane_workspace_slug, projectId: r.plane_project_id, issueId: r.plane_issue_id, _authority: authority }));
 }
 
 async function putLink(ctx: AppContext, job: InboundJob, targets: RollupTarget[], key: string, link: { title: string; url: string }): Promise<void> {
@@ -38,13 +44,16 @@ export async function handleChecks(ctx: AppContext, job: InboundJob): Promise<vo
     return;
   }
   for (const mapping of mappings) {
-    const octokit = await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, p));
-    const base = { owner: mapping.owner, repo: mapping.repo };
-    if (job.event === "deployment_status") await deployment(ctx, job, mapping, octokit, base);
-    else {
-      await build(ctx, job, mapping, octokit, base);
-      await readiness(ctx, job, mapping, octokit, (job.payload as any)?.check_run?.head_sha ?? (job.payload as any)?.check_suite?.head_sha, job.event === "check_suite" && (job.payload as any)?.action === "completed"); // not check_run: one suite completion is the readiness signal (F18)
-    }
+    const installationId = await installationFor(ctx, mapping, p);
+    await deliveryScope.run(mappingScope(mapping, job), async () => {
+      const octokit = await ctx.ghClient.installationOctokit(installationId);
+      const base = { owner: mapping.owner, repo: mapping.repo };
+      if (job.event === "deployment_status") await deployment(ctx, job, mapping, octokit, base);
+      else {
+        await build(ctx, job, mapping, octokit, base);
+        await readiness(ctx, job, mapping, octokit, (job.payload as any)?.check_run?.head_sha ?? (job.payload as any)?.check_suite?.head_sha, job.event === "check_suite" && (job.payload as any)?.action === "completed"); // not check_run: one suite completion is the readiness signal (F18)
+      }
+    });
   }
 }
 
@@ -58,8 +67,11 @@ export async function handleCommitStatus(ctx: AppContext, job: InboundJob): Prom
     return;
   }
   for (const mapping of mappings) {
-    const octokit = await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, p));
-    await readiness(ctx, job, mapping, octokit, p?.sha, p?.state === "success");
+    const installationId = await installationFor(ctx, mapping, p);
+    await deliveryScope.run(mappingScope(mapping, job), async () => {
+      const octokit = await ctx.ghClient.installationOctokit(installationId);
+      await readiness(ctx, job, mapping, octokit, p?.sha, p?.state === "success");
+    });
   }
 }
 
