@@ -22,8 +22,12 @@ type GithubAssigneeWrite = Omit<Extract<GithubWrite, { kind: "add_assignees" }>,
   { kind: "set_assignees"; workspaceSlug: string };
 type RollupWrite = IssueTarget & { kind: "upsert_rollup"; key: string; url: string; title: string };
 type ResumeWrite = { kind: "resume_reducer"; continuation: ReducerContinuation };
-type Write = (ResumeWrite | RollupWrite | PlaneWrite | GithubWrite | PlaneMutationWrite | GithubAssigneeWrite) & { _plan?: PlanMetadata };
+type Write = (ResumeWrite | RollupWrite | PlaneWrite | GithubWrite | PlaneMutationWrite | GithubAssigneeWrite) & {
+  _plan?: PlanMetadata;
+  _smartCommit?: { sha: string; stepId: string };
+};
 type Result = PlaneWriteResult | { ok: true; id?: number; number?: number };
+type RegistrationReceipt = Result & { registered?: true; outboxId?: string };
 type Enqueue = Pick<Queue, "add" | "getJob">;
 export interface DeliveryContext { deliveryId: string; writeDeliveryId?: string; transportDeliveryId?: string; seq?: number; workspaceSlug?: string; occurrences?: Map<string, number>; operationId?: string }
 
@@ -48,6 +52,7 @@ export interface OrderedOutboxDeps {
   listGithubAssignees?(target: GithubAssigneeWrite): Promise<string[]>;
   findPlaneLinkId?(target: IssueTarget, url: string): Promise<string | null>;
   resumeReducer?(continuation: ReducerContinuation): Promise<void>;
+  authoriseWrite?(side: Side, write: unknown, workspaceSlug: string | undefined): Promise<void>;
   scope?(): DeliveryContext | undefined;
   maxAttempts?: number;
   maxTargetBlockDurationMs?: number;
@@ -65,6 +70,12 @@ export class QueuedWriteFailedError extends PlaneApiError {
   constructor(id: string, reason: string) {
     super(422, { jobId: id }, `outbound write ${id} failed: ${reason}`);
     this.name = "QueuedWriteFailedError";
+  }
+}
+
+class WriteAuthorisationError extends PlaneApiError {
+  constructor(reason: unknown) {
+    super(403, {}, reason instanceof Error ? reason.message : "outbound write authority refused");
   }
 }
 /** The worker should move this wake-up to delayed without spending its BullMQ failure budget. */
@@ -166,10 +177,33 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
   const isReplay = (scope: DeliveryContext | undefined) => Boolean(scope?.writeDeliveryId && scope.transportDeliveryId
     && scope.writeDeliveryId !== scope.transportDeliveryId);
 
+  const registrationWorkspace = async (write: Write, workspaceSlug: string | undefined): Promise<string | undefined> => {
+    if (workspaceSlug || !("repoId" in write) || !("installationId" in write)) return workspaceSlug;
+    const matches = (await deps.db.query<{ workspace_slug: string }>(`SELECT rm.workspace_slug FROM repo_mappings rm
+      JOIN workspace_installations wi ON wi.installation_id = rm.installation_id AND wi.workspace_slug = rm.workspace_slug
+      WHERE rm.gh_repo_id = $1 AND rm.installation_id = $2 LIMIT 2`, [write.repoId, write.installationId])).rows;
+    return matches.length === 1 ? matches[0]!.workspace_slug : undefined;
+  };
+
   /** An explicit retry preserves completed steps and API checkpoints, restarting only failed work. */
   const resetFailed = async (conn: Db, row: Row): Promise<boolean> => {
     const root = row.write._plan?.root;
-    if (!(await conn.query("SELECT 1 FROM outbound_writes WHERE status = 'failed' AND (id = $1 OR write->'_plan'->>'root' = $2) LIMIT 1", [row.id, root ?? null])).rows.length) return false;
+    const failed = (await conn.query<Row>("SELECT * FROM outbound_writes WHERE status = 'failed' AND (id = $1 OR write->'_plan'->>'root' = $2) ORDER BY sequence", [row.id, root ?? null])).rows;
+    if (!failed.length) return false;
+    // Check the stored templates, including workflow metadata, before an explicit retry revives any row.
+    for (const intent of failed) {
+      try { await deps.authoriseWrite?.(intent.side, intent.write, intent.workspace_slug ?? undefined); }
+      catch (err) {
+        const refusal = new WriteAuthorisationError(err);
+        await conn.query("UPDATE outbound_writes SET error = $2::jsonb, retry_at = NULL, updated_at = now() WHERE id = $1 AND status = 'failed'",
+          [intent.id, JSON.stringify({ message: refusal.message.slice(0, 500) })]);
+        await appendAudit(conn, { kind: "outbound_write_failed", source: intent.side,
+          ...(intent.workspace_slug ? { workspaceSlug: intent.workspace_slug } : {}),
+          ...(intent.delivery_id ? { deliveryId: intent.delivery_id } : {}), outcome: "failed", error: refusal.message.slice(0, 500),
+          detail: { outboxId: intent.id, reason: "authority_refused", write: intent.write } });
+        throw refusal;
+      }
+    }
     let marker: PlanMetadata["marker"];
     if (root) {
       const first = await find(root, conn);
@@ -212,7 +246,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
     return true;
   };
 
-  const enqueue = async (side: Side, write: Write, actorToken?: SecretString): Promise<Result> => {
+  const enqueue = async (side: Side, write: Write, actorToken?: SecretString): Promise<RegistrationReceipt> => {
     // Persist the same immutable content used by the identity, even if a caller later mutates its object.
     write = JSON.parse(JSON.stringify(write)) as Write;
     let actorUserId: string | undefined;
@@ -224,8 +258,12 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
     }
     const scope = deps.scope?.();
     const id = nextWriteJobId(side, write, scope, actorUserId);
-    const workspaceSlug = side === "plane" ? (write as PlaneWrite).slug
+    // Persist command ownership without changing the existing intent hash (including older rows).
+    const command = /^sc:([0-9a-f]{7,64}):(.+)$/i.exec(scope?.operationId ?? "");
+    if (side === "plane" && command) write._smartCommit = { sha: command[1]!, stepId: scope!.operationId! };
+    let workspaceSlug = side === "plane" ? (write as PlaneWrite).slug
       : write.kind === "set_assignees" ? write.workspaceSlug : scope?.workspaceSlug;
+    if (side === "github") workspaceSlug = await registrationWorkspace(write, workspaceSlug);
     // Reserve ordering before any remote guard/read. The real Plane write path still validates states
     // immediately before recording echo ops and applying the API write, including on every retry.
     const target = targetKey(side, write, id);
@@ -246,7 +284,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
           await conn.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`gitsync:outbound-register:${target}`]);
           await insert(conn);
           await conn.exec("COMMIT");
-        } catch (err) { await conn.exec("ROLLBACK").catch(() => {}); throw err; }
+        } catch (err) { await conn.exec(err instanceof WriteAuthorisationError ? "COMMIT" : "ROLLBACK").catch(() => {}); throw err; }
       });
     } else await insert(deps.db);
     const row = await find(id);
@@ -254,7 +292,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
     // A committed intent is accepted even when Redis is unavailable; periodic recovery restores its wake-up.
     await wake(row).catch(() => {});
     // Acknowledges durable intent, not API completion. Outages belong to the outbound worker.
-    return { ok: true };
+    return { ok: true, registered: true, outboxId: id };
   };
 
   const plan = async (key: string | undefined, steps: OutboxPlanStep[], opts: OutboxPlanOptions = {}): Promise<{ ok: true; inserted: boolean }> => {
@@ -284,7 +322,8 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
       const write = { ...step.write, _plan: metadata } as Write;
       const target = group ? group.target_key : opts.target && step.side === "plane" ? targetKey("plane", { ...opts.target, kind: "update_issue", fields: {} })
         : key && opts.pendingLink && step.side === first.side ? JSON.stringify([step.side, "create", key]) : targetKey(step.side, write, id);
-      const workspace = step.side === "plane" ? (write as PlaneWrite).slug : scope?.workspaceSlug;
+      let workspace = step.side === "plane" ? (write as PlaneWrite).slug : scope?.workspaceSlug ?? planWorkspace ?? undefined;
+      if (step.side === "github") workspace = await registrationWorkspace(write, workspace);
       intents.push({ id, side: step.side, write, target, workspace: workspace ?? planWorkspace ?? null });
       if (step.bind) {
         if (bindings[step.bind]) throw new Error(`duplicate outbox result binding ${step.bind}`);
@@ -331,7 +370,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
             ON CONFLICT (key) DO NOTHING`, [marker.key, marker.root, JSON.stringify(marker.link)]);
         } else if (isReplay(scope)) await resetFailed(conn, await find(root, conn));
         await conn.exec("COMMIT");
-      } catch (err) { await conn.exec("ROLLBACK").catch(() => {}); throw err; }
+      } catch (err) { await conn.exec(err instanceof WriteAuthorisationError ? "COMMIT" : "ROLLBACK").catch(() => {}); throw err; }
     };
     if (deps.db.withConnection) await deps.db.withConnection(register); else await register(deps.db);
     // Redis is only a wake-up channel. Recovery can restore every committed row independently.
@@ -355,12 +394,12 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
         if (retried) await appendAudit(conn, { kind: "outbound_write_retry", source: row.side, workspaceSlug,
           ...(row.delivery_id ? { deliveryId: row.delivery_id } : {}), outcome: "queued", detail: { outboxId: id } });
         await conn.exec("COMMIT");
-      } catch (err) { await conn.exec("ROLLBACK").catch(() => {}); throw err; }
+      } catch (err) { await conn.exec(err instanceof WriteAuthorisationError ? "COMMIT" : "ROLLBACK").catch(() => {}); throw err; }
     };
     try {
       if (deps.db.withConnection) await deps.db.withConnection(reset); else await reset(deps.db);
     } catch (err) {
-      if (err instanceof PlaneApiError && (err.status === 404 || err.status === 409)) throw new OperationError(err.status, err.message);
+      if (err instanceof PlaneApiError && (err.status === 403 || err.status === 404 || err.status === 409)) throw new OperationError(err.status, err.message);
       throw err;
     }
     if (retried) {
@@ -369,6 +408,15 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
       for (const intent of pending) await wake(await find(intent.id)).catch(() => {});
     }
     return { ok: true, retried };
+  };
+
+  const reviveSmartCommit = async (sha: string, workspaceSlug: string, deliveryId: string): Promise<void> => {
+    const rows = (await deps.db.query<{ id: string }>(`SELECT id FROM outbound_writes
+      WHERE workspace_slug = $1 AND side = 'plane' AND status = 'failed'
+        AND (write->'_smartCommit'->>'sha' = $2 OR
+          (write->'_smartCommit' IS NULL AND delivery_id = $3 AND write->>'kind' IN ('update_issue','add_comment')))
+      ORDER BY sequence`, [workspaceSlug, sha, deliveryId])).rows;
+    for (const row of rows) await retryFailed(row.id, workspaceSlug);
   };
 
   const failIntent = async (conn: Db, head: Row, id: string, err: unknown, actor?: SecretString): Promise<never> => {
@@ -407,7 +455,8 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
       if (terminal) await appendAudit(conn, { kind: "outbound_write_failed", source: head.side,
         ...(head.delivery_id ? { deliveryId: head.delivery_id } : {}),
         ...(head.workspace_slug ? { workspaceSlug: head.workspace_slug } : {}), outcome: "failed", error: message,
-        detail: { outboxId: head.id, target: head.target_key, actorUserId: head.actor_user_id, write: head.write } });
+        detail: { outboxId: head.id, target: head.target_key, actorUserId: head.actor_user_id, write: head.write,
+          ...(err instanceof WriteAuthorisationError ? { reason: "authority_refused" } : {}) } });
       if (transactional) await conn.exec("COMMIT");
     } catch (err) { if (transactional) await conn.exec("ROLLBACK").catch(() => {}); throw err; }
     if (terminal) {
@@ -453,6 +502,8 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
         let actor: SecretString | undefined;
         let result: Result;
         try {
+          try { await deps.authoriseWrite?.(head.side, head.write, head.workspace_slug ?? undefined); }
+          catch (err) { throw new WriteAuthorisationError(err); }
           const plan = head.write._plan;
           const results: Record<string, unknown> = {};
           if (plan?.predecessor && !resultOf(await completion(plan.predecessor, conn))) throw new OrderedWriteDeferredError(1000);
@@ -462,7 +513,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
             if (!value) throw new OrderedWriteDeferredError(1000);
             results[name] = value;
           }
-          const { _plan: _metadata, ...template } = head.write;
+          const { _plan: _metadata, _smartCommit: _command, ...template } = head.write;
           const actualWrite = resolvePlanValue(template, results) as Write;
           let tokenSnapshot: string | undefined;
           if (head.actor_user_id && !head.result) {
@@ -591,6 +642,10 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
           }
           await conn.query(`UPDATE outbound_writes SET status = 'applied', result = $2::jsonb,
             retry_at = NULL, error = NULL, updated_at = now() WHERE id = $1`, [head.id, JSON.stringify(result)]);
+          if (head.write._smartCommit) await appendAudit(conn, { kind: "smart_commit_step_executed", source: "github",
+            ...(head.workspace_slug ? { workspaceSlug: head.workspace_slug } : {}),
+            deliveryId: head.write._smartCommit.stepId, outcome: "applied",
+            detail: { sha: head.write._smartCommit.sha, outboxId: head.id } });
           if (transactional) await conn.exec("COMMIT");
         } catch (err) {
           if (transactional) await conn.exec("ROLLBACK").catch(() => {});
@@ -633,6 +688,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
   return {
     plane: {
       plan,
+      reviveSmartCommit,
       upsertRollup: (target: IssueTarget, key: string, link: { url: string; title: string }) =>
         enqueue("plane", { ...target, ...link, kind: "upsert_rollup", key }) as Promise<PlaneWriteResult>,
       apply: (write: PlaneWrite, opts: { actorToken?: SecretString } = {}) =>
