@@ -217,3 +217,5 @@
 2026-10-12T06:09:56Z gate run r7: 14/14 PASS (first fully green). review-8: 0 BLOCKING, 1 MAJOR (orphan linkback picks first mapping), all review-7 CLOSED. Fix round 8: CD
 2026-10-12T06:15:51Z r8: CD granted review-r7-cd.test.ts + a8/reducers.test.ts orphan fixtures (full mirror metadata)
 2026-10-12T06:22:13Z r8: CD DONE (F1 + 2 fixtures); driver verified 24/24 capped + typecheck 143; committing and pushing
+2026-10-12T06:22:32Z round 8 committed+pushed (651ee39); launched final gate run r8 (CC) and confirmation review 9 (CR)
+2026-10-12T06:56:36Z FINAL: review-9 NON-BLOCKING (passes --clean); gate run r8 13/14 with flaky service FIFO test; driver fixed the race (waits for durable applied status, 3/3 runs); whole suite 792 tests in 78 files PASS; implementation complete pending deploy (C8/C9 owner decision)
