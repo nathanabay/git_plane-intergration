@@ -6,7 +6,7 @@ import { resolve, join } from "node:path";
 import { createServer } from "node:http";
 import { createHmac, generateKeyPairSync } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { strictEqual, ok } from "node:assert/strict";
 import { startValkey } from "./lib/valkey.mjs";
@@ -83,7 +83,12 @@ try {
     ok(ui.status === 0, `UI build failed: ${ui.stderr}`);
     ok(await until(async () => { try { return (await fetch(base + "/git-sync/healthz")).ok; } catch { return false; } }, 60000), `service did not start: ${out.slice(0, 500)}`);
     await sql.connect();
-    ok(await until(async () => (await sql.query(`SELECT to_regclass('public.repo_mappings') AS t`)).rows[0].t !== null, 30000), "migrations never ran");
+    // Wait for the LAST migration, not the first table: later checks write to tables from later migrations.
+    const lastMigration = readdirSync(join(root, "src/db/migrations")).filter((f) => f.endsWith(".sql")).sort().at(-1);
+    ok(await until(async () => {
+      if ((await sql.query(`SELECT to_regclass('public.schema_migrations') AS t`)).rows[0].t === null) return false;
+      return (await sql.query(`SELECT 1 FROM schema_migrations WHERE version = $1`, [lastMigration])).rows.length > 0;
+    }, 30000), `migrations never reached ${lastMigration}`);
     const page = await fetch(base + "/git-sync/ui/admin");
     strictEqual(page.status, 200); ok((await page.text()).includes('id="root"'));
     strictEqual((await fetch(base + "/git-sync/api/workspaces/qelal/mappings")).status, 401);
