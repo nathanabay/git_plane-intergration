@@ -113,6 +113,9 @@ test("F2/F6: the running service registers mirror and actor intents without wait
       `actor rule never completed; successful writes: ${JSON.stringify(applied)}`);
     ok(await until(async () => applied.length === 2), "outbound FIFO never completed");
     deepStrictEqual(applied, [{ state: "done", token: "SERVICE-PAT" }, { state: "released", token: "ACTOR-PAT" }]);
+    // The fake Plane records a write before it answers, so the worker marks the intent applied a moment later.
+    ok(await until(async () => (await db.query("SELECT 1 FROM outbound_writes WHERE status <> 'applied'")).rows.length === 0),
+      "outbound intents never reached applied");
     const intents = (await db.query<{ id: string; status: string; actor_user_id: string | null }>(
       "SELECT id, status, actor_user_id FROM outbound_writes ORDER BY sequence")).rows;
     deepStrictEqual(intents.map((r) => [r.status, r.actor_user_id]), [["applied", null], ["applied", "u-actor"]]);
