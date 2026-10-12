@@ -23,9 +23,10 @@ test("F6 inbound scope correlates Plane-origin writes to their declared workspac
   await plane(planeJob("scope", { workspace_slug: undefined, workspace_id: "workspace-uuid" }, "scope-uuid"));
   await inboundHandler(ctx, router, "github")(ghJob("scope", { workspace_slug: "spoofed" }, "scope-github"));
   deepStrictEqual(scopes, [
-    { deliveryId: "plane-scope-plane", seq: 0, workspaceSlug: "ws" },
-    { deliveryId: "plane-scope-uuid", seq: 0 },
-    { deliveryId: "github-scope-github", seq: 0 },
+    // transportDeliveryId lets the outbox tell an explicit replay (which carries its own writeDeliveryId) from a redelivery.
+    { deliveryId: "plane-scope-plane", seq: 0, transportDeliveryId: "scope-plane", workspaceSlug: "ws" },
+    { deliveryId: "plane-scope-uuid", seq: 0, transportDeliveryId: "scope-uuid" },
+    { deliveryId: "github-scope-github", seq: 0, transportDeliveryId: "scope-github" },
   ]);
   strictEqual(deliveryScope.getStore(), undefined, "delivery scope must not leak into the next job");
 });

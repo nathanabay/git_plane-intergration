@@ -184,7 +184,7 @@ test("F10 API assignees UUID-array echo causes zero additional writes", async (t
   const h = await setup(t);
   const user = "d2c59a29-f223-4c2d-bf16-0c5e43c16bbb";
   await h.db.query("INSERT INTO user_map (workspace_slug, plane_user_id, gh_login, gh_id) VALUES ('ws', $1, 'alice', 10)", [user]);
-  await h.feed(ghIssue("assigned", { assignees: [{ login: "alice" }] }, { assignee: { login: "alice" } }));
+  await h.feed(ghIssue("assigned", { assignees: [{ login: "alice", id: 10 }] }, { assignee: { login: "alice", id: 10 } })); // assignees resolve by GitHub id
   const patch = h.plane.writes().find((c) => c.method === "PATCH");
   deepStrictEqual(patch?.body, { assignees: [user] });
   const before = [h.plane.writes().length, h.gh.writes().length];
