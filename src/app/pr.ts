@@ -61,26 +61,38 @@ async function createRequested(ctx: AppContext, mapping: Mapping, job: InboundJo
   const projects = await ctx.planeClient.listAll<{ id: string; identifier: string }>(`/workspaces/${mapping.workspaceSlug}/projects/`);
   for (const identifier of identifiers) {
     const project = projects.find((x) => x.identifier?.toUpperCase() === identifier);
-    const seen = await ctx.db.query("SELECT 1 FROM audit_log WHERE kind = 'pr_create_request' AND detail->>'repoId' = $1 AND detail->>'number' = $2 AND detail->>'identifier' = $3 AND outcome = 'created'", [String(mapping.ghRepoId), String(pr.number), identifier]);
-    if (seen.rows.length) continue;
     if (!project) {
       await appendAudit(ctx.db, { kind: "pr_create_request", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, number: pr.number, identifier }, outcome: "failed", error: `no Plane project has the identifier ${identifier}` });
       continue;
     }
+    // A historical success is a guard only while its partner is active. An orphan confirmed by
+    // reconciliation permits a replacement; a missing local link does not prove the partner absent.
+    const previous = (await ctx.db.query<{ id: string | number; status: string | null; same_request: boolean }>(`SELECT a.id, l.status,
+      bool_or(a.delivery_id = $6) OVER () AS same_request
+      FROM audit_log a LEFT JOIN sync_links l ON l.plane_issue_id = a.detail->>'planeIssueId'
+        AND l.gh_repo_id = $1::bigint AND l.gh_number = $2::integer AND l.gh_kind = 'pr'
+        AND l.plane_workspace_slug = $4 AND l.plane_project_id = $5
+      WHERE a.kind = 'pr_create_request' AND a.detail->>'repoId' = $1::text
+        AND a.detail->>'number' = $2::text AND a.detail->>'identifier' = $3
+        AND a.workspace_slug = $4 AND a.outcome = 'created' ORDER BY a.id DESC LIMIT 1`,
+      [String(mapping.ghRepoId), String(pr.number), identifier, mapping.workspaceSlug, project.id, job.writeDeliveryId ?? job.deliveryId])).rows[0];
+    if (previous && (previous.same_request || previous.status !== "orphaned")) continue;
     const states = await ctx.planeClient.listStates(mapping.workspaceSlug, project.id);
     const started = resolveStateTarget(states, "started");
     if (ctx.plane.plan && ctx.github.plan) {
       // The created id is never read here: the create, its sync link, the audit and the resume of the remaining PR work for
       // this one target are a single durable plan (CB's outbox), keyed by object so a redelivery reuses it.
       const link = { planeWorkspaceSlug: mapping.workspaceSlug, planeProjectId: project.id, planeIssueId: resultRef("created.id"), ghRepoId: mapping.ghRepoId, ghNumber: pr.number, ghKind: "pr" as const, tier: "closing" as const, createdBy: "magic_word" as const };
-      // One stable object key, and a generation under it (CC): a create that finished without leaving a link may be redone,
-      // one still in progress (`null`) may not.
+      // Keep failed/ambiguous creates on their original identity; only a confirmed orphan gets a replacement.
       const objectKey = `create:pr:${mapping.workspaceSlug}:${mapping.ghRepoId}#${pr.number}:${project.id}`;
-      const generation = await nextCreateGeneration(ctx.db, objectKey);
+      let generation = await nextCreateGeneration(ctx.db, objectKey);
       if (generation === null) {
         await appendAudit(ctx.db, { kind: "pr_create_request", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId, number: pr.number, identifier }, outcome: "ignored", error: "a create for this pull request is already in progress" });
         continue;
       }
+      // Retention can prune the original outbox rows, but the orphan's audit still identifies a
+      // distinct replacement intent. Never recover a deleted partner using its old external id.
+      if (previous?.status === "orphaned" && generation === objectKey) generation = `${objectKey}:replacement:${previous.id}`;
       const registered = await ctx.plane.plan(generation, [
         { kind: "write", side: "plane", bind: "created", write: { kind: "create_issue", slug: mapping.workspaceSlug, projectId: project.id, fields: { name: String(pr.title ?? ""), ...(started.ok ? { state: started.stateId } : {}) } } },
         { kind: "sync_link", link },
@@ -145,7 +157,39 @@ export async function handlePullRequest(ctx: AppContext, job: InboundJob): Promi
     await appendAudit(ctx.db, { kind: "pull_request", source: "github", deliveryId: job.deliveryId, detail: { repoId, number: pr.number }, outcome: "unmapped_repo" });
     return;
   }
-  for (const mapping of mappings) await handleForMapping(ctx, mapping, job);
+  for (const mapping of mappings) await withObjectLock(ctx.db, `pr:${mapping.workspaceSlug}:${repoId}#${pr.number}`, () => handleForMapping(ctx, mapping, job));
+}
+
+/** Save each later delivery behind the create and its original continuation, even after linking. */
+async function deferPendingPr(ctx: AppContext, mapping: Mapping, job: InboundJob): Promise<{ owned: Set<string>; pending: boolean }> {
+  const owned = new Set<string>();
+  if (!ctx.plane.plan) return { owned, pending: false };
+  const pr: any = (job.payload as any).pull_request;
+  const pending = await ctx.db.query<{ key: string; outbox_id: string; link: Record<string, unknown>; created_id: string; fence_id: string; owns_event: boolean; result: { id?: string } | null }>(`SELECT p.key, p.outbox_id, p.link,
+    (SELECT w.id FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id
+      AND w.write->>'kind' = 'create_issue' AND w.side = 'plane' ORDER BY sequence LIMIT 1) AS created_id,
+    (SELECT w.id FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id ORDER BY sequence DESC LIMIT 1) AS fence_id,
+    (SELECT w.result FROM outbound_writes w WHERE w.id = p.outbox_id) AS result,
+    EXISTS (SELECT 1 FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id
+      AND w.write->>'kind' = 'resume_reducer' AND w.write->'continuation'->'job'->>'source' = $4
+      AND COALESCE(w.write->'continuation'->'job'->>'writeDeliveryId', w.write->'continuation'->'job'->>'deliveryId') = $5) AS owns_event
+    FROM pending_sync_links p WHERE p.link->>'ghKind' = 'pr' AND p.link->>'ghRepoId' = $1
+      AND p.link->>'ghNumber' = $2 AND p.link->>'planeWorkspaceSlug' = $3
+      AND NOT EXISTS (SELECT 1 FROM outbound_writes w WHERE w.write->'_plan'->>'root' = p.outbox_id AND w.status = 'failed')`,
+    [String(mapping.ghRepoId), String(pr.number), mapping.workspaceSlug, job.source, job.writeDeliveryId ?? job.deliveryId]);
+  for (const p of pending.rows) {
+    if (!p.created_id || !p.fence_id || typeof p.link.planeProjectId !== "string") throw new Error("pending PR create has no continuation fence");
+    if (p.result?.id) owned.add(p.result.id);
+    // Replay restores the saved workflow before reducing the event. Its existing continuation owns
+    // this event's rules, including a saved original create continuation after terminal failure.
+    if (p.owns_event) continue;
+    await ctx.plane.plan(`pr-event:${p.key}:${job.source}:${job.writeDeliveryId ?? job.deliveryId}`, [
+      { kind: "write", side: "plane", write: { kind: "resume_reducer", continuation: { kind: "pr_created", job,
+        mappingId: mapping.id, projectId: p.link.planeProjectId, issueId: resultRef("created.id"), identifier: "" } } },
+    ], { groupRoot: p.outbox_id, bindings: { created: p.created_id }, predecessor: p.fence_id,
+      pendingMarker: { key: p.key, root: p.outbox_id, link: p.link } });
+  }
+  return { owned, pending: pending.rows.length > 0 };
 }
 
 async function handleForMapping(ctx: AppContext, mapping: Mapping, job: InboundJob): Promise<void> {
@@ -177,8 +221,8 @@ async function handleForMapping(ctx: AppContext, mapping: Mapping, job: InboundJ
   // R4 F7: an item made by `{ID}-NEW` is a stored `pr` link, not a reference in the text, so later deliveries (merge, review,
   // close) find it among the PR's active links.
   const stored = await ctx.db.query<{ plane_project_id: string; plane_issue_id: string; tier: IssueRef["tier"] }>(
-    "SELECT plane_project_id, plane_issue_id, tier FROM sync_links WHERE gh_repo_id = $1 AND gh_number = $2 AND gh_kind = 'pr' AND status = 'active' AND plane_workspace_slug = $3 AND plane_project_id = $4",
-    [mapping.ghRepoId, pr.number, slug, mapping.planeProjectId]);
+    "SELECT plane_project_id, plane_issue_id, tier FROM sync_links WHERE gh_repo_id = $1 AND gh_number = $2 AND gh_kind = 'pr' AND status = 'active' AND plane_workspace_slug = $3",
+    [mapping.ghRepoId, pr.number, slug]);
   for (const r of stored.rows) {
     if (items.some((i) => i.issueId === r.plane_issue_id)) continue;
     items.push({ ref: { identifier: `${r.plane_issue_id}`, project: "", sequence: 0, tier: r.tier, source: "body" }, issueId: r.plane_issue_id, projectId: r.plane_project_id, identifier: r.plane_issue_id });
@@ -188,16 +232,18 @@ async function handleForMapping(ctx: AppContext, mapping: Mapping, job: InboundJ
     items.push(...created);
     fresh.push(...created);
   }
+  // Generation lookup can revive a failed create. Fence this event after that recovery as well.
+  const deferred = await deferPendingPr(ctx, mapping, job);
   // F7/F8: readiness is judged from GitHub and targets the PR's stored links, so it does not depend on this delivery naming
   // an item. It runs after the delivery's own lifecycle rules (`pull_request.approved` included): when both points are in
   // the table the ready state must be the one the item ends in.
   const approval = job.event === "pull_request_review" && p.action === "submitted" && String(p.review?.state ?? "").toLowerCase() === "approved";
   const readyAfter = async () => {
-    if (approval) await fireReadyForMerge(ctx, mapping, job, await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, p)), pr);
+    if (approval && !deferred.pending) await fireReadyForMerge(ctx, mapping, job, await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, p)), pr);
   };
   if (items.length === 0) { await readyAfter(); return; }
 
-  await completeItems(ctx, mapping, job, items, fresh, readyAfter);
+  await completeItems(ctx, mapping, job, items.filter((it) => !deferred.owned.has(it.issueId)), fresh.filter((it) => !deferred.owned.has(it.issueId)), readyAfter);
 }
 
 /** Lifecycle rules for the given items, then (optionally) readiness, the PR rollup link and the linkback comment (§7.1, §7.4). */
@@ -240,8 +286,8 @@ async function completeItems(ctx: AppContext, mapping: Mapping, job: InboundJob,
 }
 
 /**
- * Continuation of a `{ID}-NEW` create (the plan's last step): only the newly created target is processed — its lifecycle
- * rules, the PR rollup link and the linkback comment — never the rest of the original delivery.
+ * Continuation of a `{ID}-NEW` create or a later fenced event: process only this created target.
+ * An empty identifier marks a later event, which updates rules and rollup without another linkback.
  */
 export async function handleCreatedPr(ctx: AppContext, request: ReducerContinuation): Promise<void> {
   const p: any = request.job.payload;
@@ -252,7 +298,11 @@ export async function handleCreatedPr(ctx: AppContext, request: ReducerContinuat
     return;
   }
   const item: LinkedItem = { ref: { identifier: `${request.identifier}-NEW`, project: request.identifier, sequence: 0, tier: "closing", source: "body" }, issueId: request.issueId, projectId: request.projectId, identifier: request.identifier };
-  await completeItems(ctx, mapping, request.job, [item], [item]);
+  // Empty identifier denotes a later event fenced behind the create, rather than a new linkback.
+  const pApproval = request.job.event === "pull_request_review" && p.action === "submitted" && String(p.review?.state ?? "").toLowerCase() === "approved";
+  await completeItems(ctx, mapping, request.job, [item], request.identifier ? [item] : [], async () => {
+    if (pApproval) await fireReadyForMerge(ctx, mapping, request.job, await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, p)), p.pull_request);
+  });
 }
 
 export async function findLinkId(ctx: AppContext, t: RollupTarget, url: string): Promise<string | null> {

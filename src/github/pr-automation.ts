@@ -296,7 +296,10 @@ export async function checkPrReadiness(
       });
       return res?.data ?? { total_count: 0 };
     } catch (err) {
-      const status = Number((err as { status?: unknown } | null)?.status);
+      const failure = err as { status?: unknown; response?: { status?: unknown; headers?: Record<string, unknown> } } | null;
+      const status = Number(failure?.status ?? failure?.response?.status);
+      const headers = failure?.response?.headers ?? {};
+      if (status === 403 && (headers["retry-after"] !== undefined || String(headers["x-ratelimit-remaining"]) === "0")) throw err;
       if (status === 403 || status === 404) {
         await hooks?.onUnavailable?.({ what: "commit_status", status });
         return null;

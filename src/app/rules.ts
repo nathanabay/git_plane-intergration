@@ -49,7 +49,19 @@ export async function runRules(ctx: AppContext, mapping: Mapping, event: RuleEve
 }): Promise<void> {
   issues = uniqueIssues(issues.filter((issue) => issue.slug === mapping.workspaceSlug));
   if (issues.length === 0) return;
-  event = { ...event, repo: event.repo ?? mapping.ghRepoFullName, project: event.project ?? mapping.planeProjectId };
+  const projects = new Map<string, LinkedIssue[]>();
+  for (const issue of issues) projects.set(issue.projectId, [...(projects.get(issue.projectId) ?? []), issue]);
+  let actor: Promise<SecretString | undefined> | undefined;
+  for (const [project, targets] of projects) await runProjectRules(ctx, mapping, { ...event, project }, targets,
+    { ...opts, actor: () => actor ??= opts.actor() });
+}
+
+async function runProjectRules(ctx: AppContext, mapping: Mapping, event: RuleEvent, issues: LinkedIssue[], opts: {
+  actor: () => Promise<SecretString | undefined>;
+  deliveryId: string;
+  source?: "github" | "plane";
+}): Promise<void> {
+  event = { ...event, repo: event.repo ?? mapping.ghRepoFullName };
   const rules = parseRules(await rulesYamlFor(ctx, mapping));
   const evaluation = evaluate(rules, event);
   if (!evaluation.matched) return;
@@ -92,8 +104,8 @@ export async function runRules(ctx: AppContext, mapping: Mapping, event: RuleEve
  */
 export async function linkedIssuesFor(ctx: AppContext, mapping: Mapping, kind: "pr" | "issue", number: number): Promise<LinkedIssue[]> {
   const { rows } = await ctx.db.query<{ plane_workspace_slug: string; plane_project_id: string; plane_issue_id: string; tier: LinkedIssue["tier"]; created_by: string }>(
-    "SELECT plane_workspace_slug, plane_project_id, plane_issue_id, tier, created_by FROM sync_links WHERE gh_repo_id = $1 AND gh_number = $2 AND gh_kind = $3 AND status = 'active' AND plane_workspace_slug = $4 AND plane_project_id = $5",
-    [mapping.ghRepoId, number, kind, mapping.workspaceSlug, mapping.planeProjectId]);
+    `SELECT plane_workspace_slug, plane_project_id, plane_issue_id, tier, created_by FROM sync_links WHERE gh_repo_id = $1 AND gh_number = $2 AND gh_kind = $3 AND status = 'active' AND plane_workspace_slug = $4${kind === "issue" ? " AND plane_project_id = $5" : ""}`,
+    kind === "issue" ? [mapping.ghRepoId, number, kind, mapping.workspaceSlug, mapping.planeProjectId] : [mapping.ghRepoId, number, kind, mapping.workspaceSlug]);
   return uniqueIssues(rows.map((r) => ({ slug: r.plane_workspace_slug, projectId: r.plane_project_id, issueId: r.plane_issue_id, tier: r.created_by === "label_sync" ? "closing" : r.tier })));
 }
 
