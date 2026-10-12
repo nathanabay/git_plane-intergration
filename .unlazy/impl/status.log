@@ -219,3 +219,6 @@
 2026-10-12T06:22:13Z r8: CD DONE (F1 + 2 fixtures); driver verified 24/24 capped + typecheck 143; committing and pushing
 2026-10-12T06:22:32Z round 8 committed+pushed (651ee39); launched final gate run r8 (CC) and confirmation review 9 (CR)
 2026-10-12T06:56:36Z FINAL: review-9 NON-BLOCKING (passes --clean); gate run r8 13/14 with flaky service FIFO test; driver fixed the race (waits for durable applied status, 3/3 runs); whole suite 792 tests in 78 files PASS; implementation complete pending deploy (C8/C9 owner decision)
+2026-10-12T07:11:42Z test: building fork images (docker cap raised to 9G for the build)
+2026-10-12T13:55:59Z docs audit: Claude Opus (ao, Plane side) + Codex (ac, GitHub side) using Context7, brief .unlazy/impl/briefs/audit-docs.md
+2026-10-12T14:16:13Z docs audit done: Plane 0/3/7 (A2 archived=deleted confirmed in v1.4.2 source), GitHub 0/15/1 (A1 user lookup without installation auth reproduced live against the App)
