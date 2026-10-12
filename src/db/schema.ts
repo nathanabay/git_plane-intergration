@@ -7,6 +7,7 @@ export const TABLES = {
   auditLog: "audit_log",
   devInfoLinks: "dev_info_links",
   userLinkTombstones: "user_link_tombstones",
+  userLinkLocks: "user_link_locks",
   githubCredentialState: "github_credential_state",
 } as const;
 

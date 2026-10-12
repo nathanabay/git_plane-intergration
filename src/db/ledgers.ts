@@ -280,6 +280,35 @@ export async function getInstallationWorkspace(db: Db, installationId: number | 
 
 // ---- unlink tombstones (round-4 F11) ---------------------------------------------------------------------
 
+// Single-connection engines cannot open overlapping transactions. Production pools instead lease a
+// connection and lock a durable workspace row, so separate replicas share the same serialization.
+const userLinkTransactions = new WeakMap<Db, Promise<void>>();
+export async function withUserLinkTransaction<T>(db: Db, workspaceSlug: string, fn: (conn: Db) => Promise<T>): Promise<T> {
+  const run = async (conn: Db): Promise<T> => {
+    await conn.exec("BEGIN");
+    try {
+      // Lock the whole workspace: PUT can replace an account and DELETE addresses a Plane user,
+      // so choosing an account lock before reading the current map would itself introduce a race.
+      await conn.query("INSERT INTO user_link_locks (workspace_slug) VALUES ($1) ON CONFLICT DO NOTHING", [workspaceSlug]);
+      await conn.query("SELECT workspace_slug FROM user_link_locks WHERE workspace_slug = $1 FOR UPDATE", [workspaceSlug]);
+      const result = await fn(conn);
+      await conn.exec("COMMIT");
+      return result;
+    } catch (err) {
+      await conn.exec("ROLLBACK").catch(() => undefined);
+      throw err;
+    }
+  };
+  if (db.withConnection) return db.withConnection(run);
+  const previous = userLinkTransactions.get(db) ?? Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((resolve) => { release = resolve; });
+  userLinkTransactions.set(db, next);
+  await previous;
+  try { return await run(db); }
+  finally { release(); if (userLinkTransactions.get(db) === next) userLinkTransactions.delete(db); }
+}
+
 /** Remembers that an admin unlinked this GitHub account in this workspace, so email auto-linking does not undo it. */
 export async function addUserLinkTombstone(db: Db, workspaceSlug: string, ghId: number): Promise<void> {
   await db.query(`INSERT INTO user_link_tombstones (workspace_slug, gh_id) VALUES ($1, $2) ON CONFLICT (workspace_slug, gh_id) DO NOTHING`, [workspaceSlug, ghId]);
