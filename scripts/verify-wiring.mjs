@@ -91,7 +91,9 @@ try {
 
   await check("a PR opened with 'Fixes QLL-1' links the item, moves it to In Progress through A4, and adds a PR rollup link", async () => {
     const { compileLifecycleRules, QLL_DEFAULTS } = await import(join(root, "src/github/pr-automation.ts"));
-    const m = (await sql.query(`INSERT INTO repo_mappings (workspace_slug, gh_repo_id, gh_repo_full_name, plane_project_id, sync_direction, smart_commits_enabled) VALUES ('qelal', 555, 'acme/web', 'p-qll', 'bidirectional', true) RETURNING id`)).rows[0].id;
+    // The mapping's installation must be on the workspace's allow-list, or every event for it is refused.
+    await sql.query(`INSERT INTO workspace_installations (installation_id, workspace_slug, account_login) VALUES (1, 'qelal', 'acme') ON CONFLICT DO NOTHING`);
+    const m = (await sql.query(`INSERT INTO repo_mappings (workspace_slug, gh_repo_id, gh_repo_full_name, plane_project_id, sync_direction, smart_commits_enabled, installation_id) VALUES ('qelal', 555, 'acme/web', 'p-qll', 'bidirectional', true, 1) RETURNING id`)).rows[0].id;
     await sql.query(`INSERT INTO rule_sets (mapping_id, yaml_source, version) VALUES ($1, $2, 1)`, [m, compileLifecycleRules(QLL_DEFAULTS)]);
     plane.calls.length = 0;
     const r = await ghHook("pull_request", { action: "opened", installation: { id: 1 }, repository: repo, sender: { login: "octo", id: 1, type: "User" },

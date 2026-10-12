@@ -148,7 +148,7 @@ async function probe() {
   writeFileSync(join(dir, "key.pem"), generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs1", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } }).privateKey);
   const port = await freePort();
   const svcEnv = { ...process.env, PORT: String(port), HOST: "127.0.0.1", DATABASE_URL: pgs.url, REDIS_URL: vk.url, QUEUE_PREFIX: "gitsync",
-    PLANE_BASE_URL: "http://127.0.0.1:1", PLANE_SERVICE_PAT: "plane_api_oracle", PLANE_WEBHOOK_SECRET: "oracle-plane-secret", GITHUB_APP_ID: "4242",
+    PLANE_BASE_URL: "http://127.0.0.1:1", PLANE_SERVICE_PAT: "plane_api_oracle", PLANE_SERVICE_USER_ID: "u-gitsync-service", PLANE_WEBHOOK_SECRET: "oracle-plane-secret", GITHUB_APP_ID: "4242",
     GITHUB_PRIVATE_KEY_PATH: join(dir, "key.pem"), GITHUB_WEBHOOK_SECRET: "oracle-gh-secret", GITSYNC_TOKEN_KEY: Buffer.alloc(32, 3).toString("base64") };
   const cleanup = async () => { await vk.stop(); await pgs.stop(); rmSync(dir, { recursive: true, force: true }); };
   const child = spawn(process.execPath, [join(root, "src/index.ts")], { env: svcEnv, stdio: ["ignore", "pipe", "pipe"] });

@@ -209,7 +209,7 @@ await check("the wired service starts from env, verifies, and lands a Plane deli
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs1", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
   writeFileSync(join(dir, "key.pem"), privateKey);
   const port = 30000 + Math.floor(Math.random() * 20000);
-  const env = { ...process.env, PORT: String(port), HOST: "127.0.0.1", REDIS_URL: vk.url, QUEUE_PREFIX: "gitsync", PLANE_WEBHOOK_SECRET: PLANE_SECRET, GITHUB_WEBHOOK_SECRET: GH_SECRET, GITHUB_APP_ID: "4242", GITHUB_PRIVATE_KEY_PATH: join(dir, "key.pem"), PLANE_BASE_URL: "http://127.0.0.1:1", PLANE_SERVICE_PAT: "plane_api_x", DATABASE_URL: "postgres://u:p@127.0.0.1:1/gitsync", GITSYNC_TOKEN_KEY: Buffer.alloc(32, 1).toString("base64") };
+  const env = { ...process.env, PORT: String(port), HOST: "127.0.0.1", REDIS_URL: vk.url, QUEUE_PREFIX: "gitsync", PLANE_WEBHOOK_SECRET: PLANE_SECRET, GITHUB_WEBHOOK_SECRET: GH_SECRET, GITHUB_APP_ID: "4242", GITHUB_PRIVATE_KEY_PATH: join(dir, "key.pem"), PLANE_BASE_URL: "http://127.0.0.1:1", PLANE_SERVICE_PAT: "plane_api_x", PLANE_SERVICE_USER_ID: "u-gitsync-service", DATABASE_URL: "postgres://u:p@127.0.0.1:1/gitsync", GITSYNC_TOKEN_KEY: Buffer.alloc(32, 1).toString("base64") };
   const child = spawn(process.execPath, [join(root, "src/index.ts")], { env, stdio: ["ignore", "pipe", "pipe"] });
   let out = ""; child.stdout.on("data", (d) => (out += d)); child.stderr.on("data", (d) => (out += d));
   try {
@@ -225,7 +225,11 @@ await check("the wired service starts from env, verifies, and lands a Plane deli
     ok(job, "delivery did not reach the inbound-plane queue");
     strictEqual(job.data.payload.data.id, "i-e2e");
     ok(!out.includes(PLANE_SECRET) && !out.includes("plane_api_x"), "a secret appeared in the service output");
-  } finally { child.kill("SIGTERM"); await new Promise((r) => child.once("exit", r)); rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    // A child that already exited (for example on a config error) has no exit event left to wait for.
+    if (child.exitCode === null && child.signalCode === null) { child.kill("SIGTERM"); await new Promise((r) => child.once("exit", r)); }
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 await check("the service refuses to start without a webhook secret, naming the variable", async () => {
