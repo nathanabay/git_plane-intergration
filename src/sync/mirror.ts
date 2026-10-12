@@ -4,6 +4,7 @@
 // goes through A4's write paths, which own echo suppression and the triage ban.
 import { createHash } from "node:crypto";
 import { resultRef, resultText } from "../operations/plans.ts";
+import { restoreCreateWorkflow } from "../operations/tooling.ts";
 import type { PlanWriter, OutboxPlanStep } from "../operations/plans.ts";
 import type { InboundJob } from "../queue/index.ts";
 import type { SecretString } from "../auth/identity.ts";
@@ -87,6 +88,13 @@ async function deferPendingMirror(deps: MirrorDeps, key: string, side: "plane" |
   if (!pending) return false;
   if (!pending.created_id || !pending.fence_id) throw new Error("pending mirror has no create or continuation fence");
   const job = deps.createContinuation.job, m = deps.mapping;
+  // The original continuation already owns this delivery, including its explicit replay. Adding
+  // another event resume would run the original rule a second time after repairing a failed tail.
+  const original = await deps.db.query(`SELECT 1 FROM outbound_writes WHERE write->'_plan'->>'root' = $1
+    AND write->>'kind' = 'resume_reducer' AND write->'continuation'->'job'->>'source' = $2
+    AND COALESCE(write->'continuation'->'job'->>'writeDeliveryId', write->'continuation'->'job'->>'deliveryId') = $3 LIMIT 1`,
+  [pending.outbox_id, job.source, job.writeDeliveryId ?? job.deliveryId]);
+  if (original.rows.length) return true;
   const registered = await plan(`mirror-event:${key}:${job.source}:${job.writeDeliveryId ?? job.deliveryId}`, [
     { kind: "write", side, write: { kind: "resume_reducer", continuation: { kind: "mirror_pending", job,
       mappingId: m.id, projectId: m.planeProjectId, issueId, identifier: "pending mirror event" } } },
@@ -99,21 +107,45 @@ async function deferPendingMirror(deps: MirrorDeps, key: string, side: "plane" |
 /** Shared with PR creates: a generation's root must match the outbox's deterministic key hash. */
 export const createPlanRoot = (key: string): string => `plan-${createHash("sha256").update(key).digest("hex")}`;
 
-/** Called after checking for an active link. Finished creates get a new identity, under one stable barrier. */
+/** Only a confirmed orphan permits replacement. Failed/ambiguous creates recover their original intent. */
 export async function nextCreateGeneration(db: Db, key: string): Promise<string | null> {
   const live = await db.query(`SELECT 1 FROM pending_sync_links p WHERE p.key = $1
     AND NOT EXISTS (SELECT 1 FROM outbound_writes w
       WHERE w.write->'_plan'->>'root' = p.outbox_id AND w.status = 'failed')`, [key]);
   if (live.rows.length) return null;
-  const last = (await db.query<{ sequence: string | number; pending: boolean; failed: boolean }>(`SELECT r.sequence,
+  const last = (await db.query<{ sequence: string | number; root: string; pending: boolean; failed: boolean }>(`SELECT r.sequence,
+    COALESCE(r.write->'_plan'->>'root', r.id) AS root,
     EXISTS (SELECT 1 FROM outbound_writes w
       WHERE w.write->'_plan'->>'root' = COALESCE(r.write->'_plan'->>'root', r.id) AND w.status = 'pending') AS pending,
     EXISTS (SELECT 1 FROM outbound_writes w
       WHERE w.write->'_plan'->>'root' = COALESCE(r.write->'_plan'->>'root', r.id) AND w.status = 'failed') AS failed
     FROM outbound_writes r WHERE r.id = $1 OR r.write->'_plan'->'after' @> $2::jsonb
-    ORDER BY r.sequence DESC LIMIT 1`, [createPlanRoot(key), JSON.stringify([{ kind: "clear_pending_link", key }])])).rows[0];
-  if (!last) return key;
+      OR r.write->'_plan'->'marker'->>'key' = $3
+    ORDER BY r.sequence DESC LIMIT 1`, [createPlanRoot(key), JSON.stringify([{ kind: "clear_pending_link", key }]), key])).rows[0];
+  if (!last) {
+    // Retention of terminal rows must not turn a recorded ambiguous create into a fresh intent.
+    const failed = await db.query("SELECT 1 FROM audit_log WHERE kind = 'mirror_create_failed' AND detail->>'markerKey' = $1 LIMIT 1", [key]);
+    return failed.rows.length ? null : key;
+  }
   if (last.pending && !last.failed) return null;
+  const orphan = await db.query(`SELECT 1 FROM outbound_writes c JOIN sync_links l
+    ON l.status = 'orphaned' AND l.gh_repo_id = (COALESCE(
+      (SELECT r.write->'_plan'->'marker'->'link'->>'ghRepoId' FROM outbound_writes r WHERE r.id = $1),
+      (SELECT a->'link'->>'ghRepoId' FROM outbound_writes w,
+        LATERAL jsonb_array_elements(COALESCE(w.write->'_plan'->'after','[]'::jsonb)) a
+        WHERE w.write->'_plan'->>'root' = $1 AND a->>'kind' = 'sync_link' LIMIT 1)))::bigint
+    AND ((c.side = 'plane' AND l.plane_issue_id = c.result->>'id'
+      AND l.plane_workspace_slug = c.write->>'slug' AND l.plane_project_id = c.write->>'projectId')
+      OR (c.side = 'github' AND l.gh_number = (c.result->>'number')::int))
+    WHERE c.write->'_plan'->>'root' = $1 AND c.write->>'kind' = 'create_issue'
+      AND c.result->>'ok' = 'true' LIMIT 1`, [last.root]);
+  if (!orphan.rows.length) {
+    // A failed create may have committed remotely without returning a response. Reset its existing
+    // rows so the executor uses their saved result or looks up the same external_id before posting.
+    // An unavailable lookup leaves that identity pending; it never authorizes a new generation.
+    if (last.failed) await restoreCreateWorkflow(db, last.root);
+    return null;
+  }
   // A later retained marker step also identifies the generation if retention pruned its root first.
   return `${key}:generation:${last.sequence}`;
 }
