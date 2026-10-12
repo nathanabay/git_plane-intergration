@@ -4,18 +4,18 @@ set -euo pipefail
 # Build the plane-frontend-gitsync image
 # Expected tag: plane-frontend-gitsync:v1.4.2
 
-WORKDIR=$(mktemp -d)
-trap 'rm -rf "$WORKDIR"' EXIT
-
-git clone --depth 1 --branch v1.4.2 https://github.com/makeplane/plane.git "$WORKDIR/plane"
-cd "$WORKDIR/plane"
-
-# Apply the patch from our repository
+# Resolve the patch beside this script BEFORE changing directory: $0 may be a relative path.
 PATCH_FILE="$(realpath "$(dirname "$0")/git-sync.patch")"
 if [ ! -f "$PATCH_FILE" ]; then
     echo "Cannot find patch file at $PATCH_FILE"
     exit 1
 fi
+
+WORKDIR=$(mktemp -d)
+trap 'rm -rf "$WORKDIR"' EXIT
+
+git clone --depth 1 --branch v1.4.2 https://github.com/makeplane/plane.git "$WORKDIR/plane"
+cd "$WORKDIR/plane"
 
 git apply "$PATCH_FILE"
 
