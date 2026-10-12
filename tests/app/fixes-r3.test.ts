@@ -1,6 +1,6 @@
 // Round-3 fixes F5, F7, F8, F18 (implementer SA): wiring through composeRoutes and the live handlers.
 import test from "node:test";
-import { deepStrictEqual, ok, strictEqual } from "node:assert/strict";
+import { deepStrictEqual, ok, rejects, strictEqual } from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
 import { SecretString } from "../../src/auth/identity.ts";
 import { composeRoutes } from "../../src/app/main.ts";
@@ -8,7 +8,8 @@ import { startServer } from "../../src/index.ts";
 import { migrate } from "../../src/db/migrate.ts";
 import { PlaneClient } from "../../src/sync/plane.ts";
 import { createMappingVerifier, installationWorkspaceFromDb } from "../../src/ui/mapping-check.ts";
-import { rememberInstallation } from "../../src/app/mappings.ts";
+import { mappingsForProject, rememberInstallation } from "../../src/app/mappings.ts";
+import { notInstalledWriter, planeInstallation } from "../../src/app/issues.ts";
 import { ghJob, makeHarness, planeJob, prPayload, sha } from "../a8/harness.ts";
 import { ADM, KEY, ORIGIN, startFakePlane } from "../ui/harness.ts";
 
@@ -62,33 +63,33 @@ test("F7: a transient installation-lookup failure fails the delivery (it retries
     strictEqual(await verify({ slug: "ws", repo: { id: 555, fullName: "acme/web" }, onInstallationVerified: (id) => { verifiedId = id; } }), null);
     strictEqual(verifiedId, 1);
     await rememberInstallation(h.db, mappingId, verifiedId!);
-    // Exercise lookup recovery for an already-admitted legacy snapshot. The SQL still checks the
-    // actual verified installation/allow-list; only the hydrated snapshot forgets its cached ID.
-    const originalQuery = h.db.query.bind(h.db);
-    h.db.query = (async (sql: string, params?: any[]) => {
-      const result = await originalQuery(sql, params);
-      if (sql.includes("SELECT rm.*") && sql.includes("AS allowed")) {
-        for (const row of result.rows as any[]) if (row.allowed) row.installation_id = null;
-      }
-      return result;
-    }) as typeof h.db.query;
+    const mapping = (await mappingsForProject(h.db, "p-qll", "ws"))[0]!;
+    strictEqual(mapping.installationId, 1, "full reducer admission keeps its verified installation");
     await h.link("i1", 7);
     const upd = () => planeJob("issue", { workspace_slug: "ws", action: "update", data: { id: "i1", project: "p-qll", name: "x" }, activity: { field: "name", actor: { id: "u-h" } } });
     let lookups = 0;
-    h.ctx.ghClient.installationIdFor = async () => { lookups++; throw Object.assign(new Error("bad gateway"), { status: 502 }); };
-    await rejectsAsync(() => h.feed(upd()));
+    const unavailable = Object.assign(new Error("bad gateway"), { status: 502 });
+    h.ctx.ghClient.installationIdFor = async () => { lookups++; throw unavailable; };
+    // Uncached lookup classification is a helper-boundary case. Clearing reducer snapshots now
+    // invalidates their frozen authority, so do not bypass real mapping admission to force a lookup.
+    await rejects(() => planeInstallation(h.ctx, { ...mapping, installationId: null }), (error) => error === unavailable);
     h.ctx.ghClient.installationIdFor = async () => { lookups++; throw Object.assign(new Error("not found"), { status: 404 }); };
-    strictEqual(await h.feed(upd()), "handled");
-    strictEqual(lookups, 2, "both deliveries reach installation lookup through an authorized mapping");
+    const missingId = await planeInstallation(h.ctx, { ...mapping, installationId: null });
+    strictEqual(missingId, 0, "a permanent lookup miss selects the suppression writer");
+    const suppressed = notInstalledWriter(h.ctx, mapping, upd());
+    strictEqual(suppressed.plan, undefined, "missing installations cannot register create plans");
+    await rejects(() => suppressed.apply({ kind: "comment", installationId: missingId, owner: mapping.owner,
+      repo: mapping.repo, repoId: mapping.ghRepoId, number: 7, body: "must be suppressed" }), /not installed/);
+    strictEqual(lookups, 2, "both classifications actually reach the installation lookup");
     strictEqual(h.gh.writes().length, 0, "no write is made with an unavailable installation");
+    strictEqual((await h.db.query("SELECT 1 FROM outbound_writes")).rows.length, 0);
+    ok((await h.audit("github_not_installed")).length >= 1, "the permanent miss is audited");
+    // The full reducer still handles a valid mapping without losing its installation snapshot.
+    strictEqual(await h.feed(upd()), "handled");
+    strictEqual(lookups, 2, "verified reducer admission uses its saved installation");
+    strictEqual((await mappingsForProject(h.db, "p-qll", "ws"))[0]!.installationId, 1);
   } finally { await h.close(); }
 });
-
-async function rejectsAsync(fn: () => Promise<unknown>) {
-  let threw = false;
-  try { await fn(); } catch { threw = true; }
-  ok(threw, "expected the delivery to fail so that it is retried");
-}
 
 const HEAD = sha("a");
 async function readySetup(rules: string) {

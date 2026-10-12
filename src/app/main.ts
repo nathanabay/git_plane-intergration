@@ -25,7 +25,7 @@ import { createGithubClient } from "./github.ts";
 import type { GithubClient } from "./github.ts";
 import type { InboundJob } from "../queue/index.ts";
 import { createOrderedOutbox } from "./writers.ts";
-import { createOutboundAuthoriser, disabledMappings, mappingsForRepo } from "./mappings.ts";
+import { createOutboundAuthoriser, disabledMappings, freezeMappingAuthority, mappingsForRepo } from "./mappings.ts";
 import { createRouter, inboundHandler } from "./reducers.ts";
 import { handleMirroredIssue, handlePendingMirroredIssue } from "./issues.ts";
 import { findLinkId, handleCreatedPr } from "./pr.ts";
@@ -208,9 +208,12 @@ export async function runService(
 export async function linkbackOnOrphan(ctx: AppContext, link: { gh_repo_id: string | number; gh_number: number; plane_issue_id: string; plane_workspace_slug: string }): Promise<void> {
   const mapping = (await mappingsForRepo(ctx.db, Number(link.gh_repo_id))).find((m) => m.workspaceSlug === link.plane_workspace_slug);
   if (!mapping || !mapping.linkbackEnabled) return;
-  await ctx.github.apply({
-    kind: "comment", installationId: await installationFor(ctx, mapping), owner: mapping.owner, repo: mapping.repo, repoId: mapping.ghRepoId, number: link.gh_number,
+  const installationId = await installationFor(ctx, mapping);
+  const write = {
+    kind: "comment" as const, installationId, owner: mapping.owner, repo: mapping.repo, repoId: mapping.ghRepoId, number: link.gh_number,
+    _authority: freezeMappingAuthority(mapping),
     body: "The linked Plane work item can no longer be found, so this link has been marked orphaned. Nothing was changed or closed here.",
-  });
+  };
+  await ctx.github.apply(write);
   await appendAudit(ctx.db, { kind: "orphan_linkback", source: "github", workspaceSlug: mapping.workspaceSlug, detail: { ghNumber: link.gh_number, planeIssueId: link.plane_issue_id }, outcome: "commented" });
 }
