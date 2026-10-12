@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { resolvePlanValue } from "./plans.ts";
 import { OperationError } from "./tooling.ts";
-import type { OutboxPlanStep, OutboxPlanOptions, PlanMetadata, ReducerContinuation } from "./plans.ts";
+import type { OutboxPlanStep, OutboxPlanOptions, PlanMetadata, ReducerContinuation, WriteAuthority } from "./plans.ts";
 import type { Queue } from "bullmq";
 import type { SecretString } from "../auth/identity.ts";
 import type { Db } from "../db/migrate.ts";
@@ -25,11 +25,12 @@ type ResumeWrite = { kind: "resume_reducer"; continuation: ReducerContinuation }
 type Write = (ResumeWrite | RollupWrite | PlaneWrite | GithubWrite | PlaneMutationWrite | GithubAssigneeWrite) & {
   _plan?: PlanMetadata;
   _smartCommit?: { sha: string; stepId: string };
+  _authority?: WriteAuthority;
 };
 type Result = PlaneWriteResult | { ok: true; id?: number; number?: number };
 type RegistrationReceipt = Result & { registered?: true; outboxId?: string };
 type Enqueue = Pick<Queue, "add" | "getJob">;
-export interface DeliveryContext { deliveryId: string; writeDeliveryId?: string; transportDeliveryId?: string; seq?: number; workspaceSlug?: string; occurrences?: Map<string, number>; operationId?: string }
+export interface DeliveryContext { deliveryId: string; writeDeliveryId?: string; transportDeliveryId?: string; seq?: number; workspaceSlug?: string; occurrences?: Map<string, number>; operationId?: string; authority?: WriteAuthority }
 
 export interface OutboxMeta {
   id: string;
@@ -90,6 +91,8 @@ export class OrderedWriteDeferredError extends Error {
 
 export function writeJobId(side: Side, write: unknown, deliveryId?: string, actorUserId?: string, ordinal: string | number = 0): string {
   const wire = JSON.parse(JSON.stringify(write));
+  // Authority is admission metadata. Retries must find the first intent even if callers' mappings changed.
+  if (wire && typeof wire === "object") delete wire._authority;
   const identity = JSON.stringify([deliveryId ?? randomUUID(), side, actorUserId ?? null, normalizeValue(wire), ordinal]);
   return `write-${createHash("sha256").update(identity).digest("hex")}`;
 }
@@ -179,10 +182,25 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
 
   const registrationWorkspace = async (write: Write, workspaceSlug: string | undefined): Promise<string | undefined> => {
     if (workspaceSlug || !("repoId" in write) || !("installationId" in write)) return workspaceSlug;
-    const matches = (await deps.db.query<{ workspace_slug: string }>(`SELECT rm.workspace_slug FROM repo_mappings rm
+    const matches = (await deps.db.query<{ workspace_slug: string }>(`SELECT DISTINCT rm.workspace_slug FROM repo_mappings rm
       JOIN workspace_installations wi ON wi.installation_id = rm.installation_id AND wi.workspace_slug = rm.workspace_slug
       WHERE rm.gh_repo_id = $1 AND rm.installation_id = $2 LIMIT 2`, [write.repoId, write.installationId])).rows;
     return matches.length === 1 ? matches[0]!.workspace_slug : undefined;
+  };
+
+  const freezeAuthority = (write: Write, authority?: WriteAuthority): void => {
+    const source = write._authority ?? authority;
+    if (!source) return; // Standalone adapters/older callers retain the legacy authorizer checks.
+    if (typeof source.workspaceSlug !== "string" || !source.workspaceSlug || typeof source.mappingId !== "string" || !/^[1-9]\d*$/.test(source.mappingId)
+      || !Number.isSafeInteger(source.repoId) || source.repoId <= 0
+      || !Number.isSafeInteger(source.installationId) || source.installationId <= 0)
+      throw new PlaneApiError(403, {}, "outbound source authority is invalid");
+    if (("slug" in write && write.slug !== source.workspaceSlug)
+      || ("repoId" in write && write.repoId !== source.repoId)
+      || ("installationId" in write && write.installationId !== source.installationId))
+      throw new PlaneApiError(403, {}, "outbound write does not match its source authority");
+    write._authority = { workspaceSlug: source.workspaceSlug, mappingId: source.mappingId,
+      repoId: source.repoId, installationId: source.installationId };
   };
 
   /** An explicit retry preserves completed steps and API checkpoints, restarting only failed work. */
@@ -249,6 +267,8 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
   const enqueue = async (side: Side, write: Write, actorToken?: SecretString): Promise<RegistrationReceipt> => {
     // Persist the same immutable content used by the identity, even if a caller later mutates its object.
     write = JSON.parse(JSON.stringify(write)) as Write;
+    const scope = deps.scope?.();
+    freezeAuthority(write, scope?.authority);
     let actorUserId: string | undefined;
     if (actorToken) {
       const id = deps.actorUserIdForToken ? await deps.actorUserIdForToken(actorToken)
@@ -256,13 +276,12 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
       if (typeof id !== "string" || !id.trim()) throw new PlaneApiError(422, {}, "actor token has no owning Plane user ID");
       actorUserId = id;
     }
-    const scope = deps.scope?.();
     const id = nextWriteJobId(side, write, scope, actorUserId);
     // Persist command ownership without changing the existing intent hash (including older rows).
     const command = /^sc:([0-9a-f]{7,64}):(.+)$/i.exec(scope?.operationId ?? "");
     if (side === "plane" && command) write._smartCommit = { sha: command[1]!, stepId: scope!.operationId! };
     let workspaceSlug = side === "plane" ? (write as PlaneWrite).slug
-      : write.kind === "set_assignees" ? write.workspaceSlug : scope?.workspaceSlug;
+      : write.kind === "set_assignees" ? write.workspaceSlug : write._authority?.workspaceSlug ?? scope?.workspaceSlug;
     if (side === "github") workspaceSlug = await registrationWorkspace(write, workspaceSlug);
     // Reserve ordering before any remote guard/read. The real Plane write path still validates states
     // immediately before recording echo ops and applying the API write, including on every retry.
@@ -300,15 +319,22 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
     // Copy before registration so templates cannot change after IDs have been chosen.
     steps = JSON.parse(JSON.stringify(steps));
     const scope = deps.scope?.();
+    const suppliedAuthority = opts.authority ?? scope?.authority;
+    const authority = suppliedAuthority ? { ...suppliedAuthority } : undefined;
     const actorUserId = opts.actorToken ? (deps.actorUserIdForToken ? await deps.actorUserIdForToken(opts.actorToken) : opts.actorToken.planeUserId) : undefined;
     if (opts.actorToken && !actorUserId) throw new PlaneApiError(422, {}, "actor token has no owning Plane user ID");
     const first = steps[0] as Extract<OutboxPlanStep, { kind: "write" }>;
     const group = opts.groupRoot ? await find(opts.groupRoot) : undefined;
     if (group && group.side !== first.side) throw new Error("pending mirror events must use their create's destination queue");
     const planWorkspace = group?.workspace_slug ?? opts.target?.slug ?? (typeof opts.pendingLink?.planeWorkspaceSlug === "string" ? opts.pendingLink.planeWorkspaceSlug : undefined)
-      ?? (first.side === "plane" ? (first.write as PlaneWrite).slug : scope?.workspaceSlug);
+      ?? authority?.workspaceSlug ?? (first.side === "plane" ? (first.write as PlaneWrite).slug : scope?.workspaceSlug);
     const root = key ? `plan-${createHash("sha256").update(key).digest("hex")}`
-      : nextWriteJobId(first.side, { steps, target: opts.target, bindings: opts.bindings, predecessor: opts.predecessor }, scope, actorUserId ?? undefined);
+      : nextWriteJobId(first.side, { steps: steps.map((step) => {
+        if (step.kind !== "write") return step;
+        const { _authority: _admission, ...write } = step.write as Record<string, unknown>;
+        return { ...step, write };
+      }), target: opts.target ? { slug: opts.target.slug, projectId: opts.target.projectId, issueId: opts.target.issueId } : undefined,
+      bindings: opts.bindings, predecessor: opts.predecessor }, scope, actorUserId ?? undefined);
     const bindings: Record<string, string> = { ...opts.bindings };
     const intents: { id: string; side: Side; write: Write; target: string; workspace: string | null }[] = [];
     for (const step of steps) {
@@ -320,9 +346,11 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
       const predecessor = intents.at(-1)?.id ?? opts.predecessor;
       const metadata: PlanMetadata = { root: opts.groupRoot ?? root, bindings: { ...bindings }, after: [], ...(predecessor ? { predecessor } : {}), ...(step.bind ? { bind: step.bind } : {}) };
       const write = { ...step.write, _plan: metadata } as Write;
+      freezeAuthority(write, authority ?? group?.write._authority);
       const target = group ? group.target_key : opts.target && step.side === "plane" ? targetKey("plane", { ...opts.target, kind: "update_issue", fields: {} })
         : key && opts.pendingLink && step.side === first.side ? JSON.stringify([step.side, "create", key]) : targetKey(step.side, write, id);
-      let workspace = step.side === "plane" ? (write as PlaneWrite).slug : scope?.workspaceSlug ?? planWorkspace ?? undefined;
+      let workspace = step.side === "plane" ? (write as PlaneWrite).slug ?? write._authority?.workspaceSlug
+        : write._authority?.workspaceSlug ?? scope?.workspaceSlug ?? planWorkspace ?? undefined;
       if (step.side === "github") workspace = await registrationWorkspace(write, workspace);
       intents.push({ id, side: step.side, write, target, workspace: workspace ?? planWorkspace ?? null });
       if (step.bind) {
@@ -342,7 +370,8 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
         if (deps.db.withConnection) for (const target of [...new Set([...intents.map((i) => i.target),
           ...(marker ? [JSON.stringify([first.side, "create", marker.key])] : [])])].sort())
           await conn.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`gitsync:outbound-register:${target}`]);
-        if (group && (await conn.query("SELECT 1 FROM outbound_writes WHERE write->'_plan'->>'root' = $1 AND status = 'failed' LIMIT 1", [group.id])).rows.length) {
+        const heldForRepair = Boolean(group && (await conn.query("SELECT 1 FROM outbound_writes WHERE write->'_plan'->>'root' = $1 AND status = 'failed' LIMIT 1", [group.id])).rows.length);
+        if (heldForRepair && !opts.holdOnFailure) {
           await conn.exec("COMMIT");
           return;
         }
@@ -366,7 +395,10 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
             VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`, [intent.id, intent.side, intent.target, scope?.deliveryId ?? null,
             intent.workspace, intent.side === "plane" ? actorUserId ?? null : null, JSON.stringify(intent.write)]);
           // Re-establish the barrier if the previous head completed after this event read its marker.
-          if (marker) await conn.query(`INSERT INTO pending_sync_links (key, outbox_id, link) VALUES ($1,$2,$3::jsonb)
+          if (heldForRepair) await conn.query(`UPDATE outbound_writes SET status = 'failed', error = $2::jsonb,
+            retry_at = NULL, updated_at = now() WHERE id = $1 OR id LIKE $3`,
+          [root, JSON.stringify({ message: "waiting for explicit create-workflow repair" }), `${root}-%`]);
+          else if (marker) await conn.query(`INSERT INTO pending_sync_links (key, outbox_id, link) VALUES ($1,$2,$3::jsonb)
             ON CONFLICT (key) DO NOTHING`, [marker.key, marker.root, JSON.stringify(marker.link)]);
         } else if (isReplay(scope)) await resetFailed(conn, await find(root, conn));
         await conn.exec("COMMIT");
@@ -513,7 +545,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
             if (!value) throw new OrderedWriteDeferredError(1000);
             results[name] = value;
           }
-          const { _plan: _metadata, _smartCommit: _command, ...template } = head.write;
+          const { _plan: _metadata, _smartCommit: _command, _authority: _admission, ...template } = head.write;
           const actualWrite = resolvePlanValue(template, results) as Write;
           let tokenSnapshot: string | undefined;
           if (head.actor_user_id && !head.result) {
@@ -558,7 +590,8 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
           if (head.result?.ok === true) result = head.result;
           else if (actualWrite.kind === "resume_reducer") {
             if (!deps.resumeReducer) throw new PlaneApiError(503, {}, "outbox reducer continuation handler is required");
-            await deps.resumeReducer({ ...actualWrite.continuation, ...(head.workspace_slug ? { workspaceSlug: head.workspace_slug } : {}) });
+            await deps.resumeReducer({ ...actualWrite.continuation, ...(head.workspace_slug ? { workspaceSlug: head.workspace_slug } : {}),
+              ...(head.write._authority ? { authority: { ...head.write._authority } } : {}) });
             result = { ok: true };
           } else if (actualWrite.kind === "upsert_rollup") {
             const w = actualWrite;

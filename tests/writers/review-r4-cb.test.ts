@@ -18,10 +18,15 @@ const steps: OutboxPlanStep[] = [
 ];
 const pendingLink = { planeWorkspaceSlug: "ws", planeProjectId: "p", ghRepoId: 2, ghNumber: 3 };
 
-test("F2: terminal creation failure cancels the group, removes its barrier, and allows edit/re-opt-in", async (t) => {
+test("F2: terminal creation failure clears its barrier and re-opt-in recovers the original workflow once", async (t) => {
   const db = await database(t), planeQ = queue();
+  let healthy = false, creates = 0;
   const outbox = createOrderedOutbox({ db, queues: { plane: planeQ as any, github: queue() as any }, loadActorToken: async () => null,
-    plane: { preflight: async () => {}, apply: async () => { throw new PlaneApiError(403, {}, "forbidden"); } }, github: { apply: async () => ({ ok: true }) } });
+    plane: { preflight: async () => {}, apply: async (write) => {
+      if (!healthy) throw new PlaneApiError(403, {}, "forbidden");
+      if (write.kind === "create_issue") { creates++; return { ok: true, id: "recovered-partner" }; }
+      return { ok: true };
+    } }, github: { apply: async () => ({ ok: true }) } });
   const key = "create:gh:ws:2#3:p";
   strictEqual((await outbox.plane.plan(key, steps, { pendingLink })).inserted, true);
   strictEqual((await outbox.plane.plan(key, steps, { pendingLink })).inserted, false);
@@ -43,14 +48,24 @@ test("F2: terminal creation failure cancels the group, removes its barrier, and 
     mapping: { id: 1, workspaceSlug: "ws", planeProjectId: "p", ghRepoId: 2, installationId: 1, owner: "o", repo: "r", syncDirection: "bidirectional" as const },
     users: { planeUserIdForGithubLogin: async () => null } };
   const issue = { number: 3, title: "Title", state: "open", labels: [{ name: "plane" }] };
-  // A pre-upgrade failed marker is ignored, then replaced by the new generation's marker.
+  // A pre-upgrade failed marker is restored against the original root, never a new generation.
   await db.query("INSERT INTO pending_sync_links (key,outbox_id,link) VALUES ($1,$2,$3::jsonb)", [key, original[0]!.id, JSON.stringify(pendingLink)]);
   const edited = await onGithubIssue({ action: "edited", issue, repository: { id: 2 } }, deps);
   strictEqual(edited.action, "ignored");
   const reopt = await onGithubIssue({ action: "labeled", issue, label: { name: "plane" }, repository: { id: 2 } }, deps);
-  strictEqual(reopt.action, "created");
+  strictEqual(reopt.action, "ignored");
   strictEqual((await db.query("SELECT 1 FROM pending_sync_links")).rows.length, 1);
-  ok((await db.query("SELECT 1 FROM outbound_writes WHERE status = 'pending'")).rows.length > 0);
+  deepStrictEqual((await db.query<{ id: string }>("SELECT id FROM outbound_writes ORDER BY sequence")).rows, original);
+  strictEqual((await db.query<{ outbox_id: string }>("SELECT outbox_id FROM pending_sync_links")).rows[0]!.outbox_id, original[0]!.id);
+  strictEqual((await db.query("SELECT 1 FROM outbound_writes WHERE status = 'pending'")).rows.length, original.length);
+  healthy = true;
+  for (const row of original) await outbox.executePlane(await intentJob(db, row.id));
+  strictEqual(creates, 1);
+  strictEqual((await db.query("SELECT 1 FROM sync_links WHERE status = 'active' AND plane_issue_id = 'recovered-partner'")).rows.length, 1);
+  strictEqual((await db.query("SELECT 1 FROM pending_sync_links")).rows.length, 0);
+  await onGithubIssue({ action: "labeled", issue, label: { name: "plane" }, repository: { id: 2 } }, deps);
+  strictEqual(creates, 1);
+  deepStrictEqual((await db.query<{ id: string }>("SELECT id FROM outbound_writes WHERE write->>'kind' = 'create_issue' ORDER BY sequence")).rows, [original[0]!]);
 });
 
 test("F3: only explicit replay revives a failed intent, then replays do not repeat its applied write", async (t) => {

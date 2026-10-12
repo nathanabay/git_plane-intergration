@@ -8,6 +8,13 @@ export type StringReference = { $concat: (string | ResultReference)[] };
 export const resultRef = (path: string): ResultReference => ({ $result: path });
 export const resultText = (...parts: (string | ResultReference)[]): StringReference => ({ $concat: parts });
 type Template<T> = T extends object ? { [K in keyof T]: Template<T[K]> | ResultReference | StringReference } : T;
+/** The verified source mapping captured once when a repository-originated intent is admitted. */
+export interface WriteAuthority {
+  workspaceSlug: string;
+  mappingId: string;
+  repoId: number;
+  installationId: number;
+}
 export type OutboxPlanStep =
   | { kind: "write"; side: "plane" | "github"; write: object; bind?: string }
   | { kind: "sync_link"; link: Template<Parameters<typeof upsertSyncLink>[1]> }
@@ -16,8 +23,11 @@ export type OutboxPlanStep =
   | { kind: "dev_info"; issueId: string; key: string; linkId: string | ResultReference };
 export interface OutboxPlanOptions {
   actorToken?: SecretString;
+  authority?: WriteAuthority;
   /** A later event joins an existing create workflow's ordering and retention group. */
   groupRoot?: string;
+  /** Save later events against a failed create without restarting its remote work. Explicit repair revives the group. */
+  holdOnFailure?: boolean;
   bindings?: Record<string, string>;
   predecessor?: string;
   pendingMarker?: { key: string; root: string; link: Record<string, unknown> };
@@ -30,6 +40,7 @@ export type PlanWriter = (key: string | undefined, steps: OutboxPlanStep[], opts
 export interface ReducerContinuation {
   kind: "pr_created" | "mirror_created" | "mirror_pending";
   workspaceSlug?: string;
+  authority?: WriteAuthority;
   job: InboundJob;
   mappingId: number;
   projectId: string;

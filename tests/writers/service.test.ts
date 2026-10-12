@@ -39,6 +39,7 @@ test("F2/F6: the running service registers mirror and actor intents without wait
     { id: "released", name: "Released", group: "completed" },
   ];
   let fail = true;
+  let refused = 0;
   const applied: { state: string; token: string }[] = [];
   const api = createServer((req, res) => {
     let body = "";
@@ -48,7 +49,7 @@ test("F2/F6: the running service registers mirror and actor intents without wait
       if (req.method === "GET" && /\/states\/(\?|$)/.test(req.url ?? "")) return send(200, { results: states, next_page_results: false });
       if (req.method === "PATCH") {
         const w = JSON.parse(body);
-        if (w.state === "done" && fail) { fail = false; return send(503, { error: "temporary outage" }); }
+        if (w.state === "done" && fail) { refused++; return send(503, { error: "temporary outage" }); }
         applied.push({ state: w.state, token: String(req.headers["x-api-key"]) });
         return send(200, { id: "i" });
       }
@@ -64,9 +65,10 @@ test("F2/F6: the running service registers mirror and actor intents without wait
   writeFileSync(keyFile, generateKeyPairSync("rsa", { modulusLength: 2048,
     privateKeyEncoding: { type: "pkcs1", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } }).privateKey);
   const key = Buffer.alloc(32, 7);
+  await db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (1, 'ws')");
   const mapping = (await db.query<{ id: string }>(`INSERT INTO repo_mappings
-    (workspace_slug, gh_repo_id, gh_repo_full_name, plane_project_id, sync_direction)
-    VALUES ('ws', 2, 'o/r', 'p', 'bidirectional') RETURNING id`)).rows[0]!.id;
+    (workspace_slug, gh_repo_id, gh_repo_full_name, plane_project_id, sync_direction, installation_id)
+    VALUES ('ws', 2, 'o/r', 'p', 'bidirectional', 1) RETURNING id`)).rows[0]!.id;
   await db.query("INSERT INTO rule_sets (mapping_id, yaml_source, version) VALUES ($1,$2,1)",
     [mapping, "- when: issue.closed\n  then: [{set_state: Released}]\n"]);
   await db.query(`INSERT INTO sync_links (plane_workspace_slug, plane_project_id, plane_issue_id,
@@ -90,6 +92,13 @@ test("F2/F6: the running service registers mirror and actor intents without wait
         "x-hub-signature-256": "sha256=" + createHmac("sha256", "gh-secret").update(body).digest("hex") },
       signal: AbortSignal.timeout(5000) });
     strictEqual(response.status, 200);
+    // Wait for registration while the destination remains unavailable. This also warms the inbound fixture's
+    // database path before measuring the unrelated delivery, without allowing a blocking writer to succeed.
+    ok(await until(async () => (await db.query("SELECT 1 FROM audit_log WHERE kind = 'inbound_delivery' AND delivery_id = 'closed-1' AND outcome = 'handled'")).rows.length > 0),
+      "inbound reduction waited for the unavailable Plane destination");
+    strictEqual(applied.length, 0);
+    strictEqual((await db.query("SELECT 1 FROM outbound_writes WHERE status = 'pending'")).rows.length, 2);
+    ok(await until(async () => refused > 0), "fixture did not exercise an actual Plane outage");
     const began = performance.now();
     const ping = JSON.stringify({ repository: { id: 999 }, check_run: { id: 7 } });
     strictEqual((await fetch(base + "/git-sync/webhooks/github", { method: "POST", body: ping,
@@ -99,6 +108,7 @@ test("F2/F6: the running service registers mirror and actor intents without wait
     ok(await until(async () => (await db.query("SELECT 1 FROM audit_log WHERE kind = 'inbound_delivery' AND delivery_id = 'unrelated-1' AND outcome = 'handled'")).rows.length > 0, 1000),
       "Plane outage stalled the unrelated GitHub delivery");
     ok(performance.now() - began < 1000, "unrelated delivery exceeded one second");
+    fail = false;
     ok(await until(async () => (await db.query("SELECT 1 FROM audit_log WHERE kind = 'rule_match' AND outcome = 'applied'")).rows.length > 0),
       `actor rule never completed; successful writes: ${JSON.stringify(applied)}`);
     ok(await until(async () => applied.length === 2), "outbound FIFO never completed");
@@ -114,5 +124,5 @@ test("F2/F6: the running service registers mirror and actor intents without wait
         ok(await until(async () => await job.getState() === "completed", 5000), "worker did not acknowledge completion");
       }
     } finally { await queues.close(); }
-  } finally { await service.close(); }
+  } finally { fail = false; await service.close(); }
 });

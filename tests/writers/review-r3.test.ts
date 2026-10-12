@@ -33,10 +33,14 @@ async function fixture(t: { after(fn: () => Promise<unknown>): void }) {
 test("F1: durable acknowledgement does not poll or call an unavailable destination", async (t) => {
   const h = await fixture(t);
   const began = performance.now();
-  deepStrictEqual(await h.outbox.plane.apply(update("A")), { ok: true });
+  const receipt = await h.outbox.plane.apply(update("A")) as { ok: boolean; registered?: boolean; outboxId?: string };
+  strictEqual(receipt.ok, true);
+  strictEqual(receipt.registered, true);
+  ok(receipt.outboxId);
   ok(performance.now() - began < 1000, "inbound producer waited for the outbound worker");
   deepStrictEqual(h.applied, []);
   strictEqual((await h.db.query("SELECT 1 FROM outbound_writes WHERE status = 'pending'")).rows.length, 1);
+  strictEqual((await h.db.query<{ id: string }>("SELECT id FROM outbound_writes WHERE status = 'pending'")).rows[0]!.id, receipt.outboxId);
 });
 
 test("F3: A→B→A is three intents and the same delivery retry reproduces all IDs", async (t) => {
