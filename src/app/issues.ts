@@ -6,11 +6,20 @@ import type { GithubWrite } from "../sync/github.ts";
 import type { InboundJob } from "../queue/index.ts";
 import { actorTokenFor, installationFor, mappedLogins, payloadBelongsToMapping, planeIssueUrl, usersFor, withObjectLock } from "./context.ts";
 import type { AppContext } from "./context.ts";
-import { freezeMappingAuthority, mappingsForProject, mappingsForRepo } from "./mappings.ts";
+import { assertInstallationAllowed, freezeMappingAuthority, mappingsForProject, mappingsForRepo } from "./mappings.ts";
 import type { FrozenWriteAuthority, Mapping } from "./mappings.ts";
 import { githubRuleEvent, planeRuleEvent } from "./rule-events.ts";
 import { linkedIssuesFor, runRules } from "./rules.ts";
 import type { ReducerContinuation } from "./writers.ts";
+import { deliveryScope } from "./writers.ts";
+
+/** Enter the mapping's admitted scope before any nested reducer work or dependent registration. */
+function withMappingWriterContext<T>(ctx: AppContext, mapping: Mapping, job: InboundJob,
+  fn: (mapped: AppContext) => Promise<T>, authority: FrozenWriteAuthority = freezeMappingAuthority(mapping)): Promise<T> {
+  const scope = deliveryScope.getStore();
+  return deliveryScope.run({ ...scope, deliveryId: scope?.deliveryId ?? `${job.source}-${job.writeDeliveryId ?? job.deliveryId}`,
+    workspaceSlug: mapping.workspaceSlug, authority }, () => fn(mappingWriterContext(ctx, mapping, authority)));
+}
 
 /** Freeze the verified source mapping on every write admitted by this reducer, on either side. */
 export function mappingWriterContext(ctx: AppContext, mapping: Mapping, authority: FrozenWriteAuthority = freezeMappingAuthority(mapping)): AppContext {
@@ -99,11 +108,10 @@ export async function handleMirroredIssue(ctx: AppContext, request: ReducerConti
   const mapping = (await mappingsForRepo(ctx.db, Number(p?.repository?.id))).find((m) => m.id === request.mappingId);
   const event = githubRuleEvent(request.job.event, p);
   if (!mapping || !event) return;
-  ctx = mappingWriterContext(ctx, mapping, request.authority);
-  await runRules(ctx, mapping, event, [{ slug: mapping.workspaceSlug, projectId: request.projectId, issueId: request.issueId, tier: "closing" }], {
+  await withMappingWriterContext(ctx, mapping, request.job, (ctx) => runRules(ctx, mapping, event, [{ slug: mapping.workspaceSlug, projectId: request.projectId, issueId: request.issueId, tier: "closing" }], {
     deliveryId: request.job.deliveryId,
     actor: () => actorTokenFor(ctx, mapping, p.sender, event.trigger, p),
-  });
+  }), request.authority);
 }
 
 /**
@@ -116,15 +124,16 @@ export async function handlePendingMirroredIssue(ctx: AppContext, request: Reduc
   const p: any = request.job.payload;
   const mapping = (await mappingsForRepo(ctx.db, Number(p?.repository?.id))).find((m) => m.id === request.mappingId);
   if (!mapping) return;
-  ctx = mappingWriterContext(ctx, mapping, request.authority);
-  const deps = mirrorDeps(ctx, mapping, await installationFor(ctx, mapping, p));
-  await withObjectLock(ctx.db, `gh:${mapping.ghRepoId}#${p?.issue?.number}`, () => onGithubIssue(p, deps));
-  const event = githubRuleEvent(request.job.event, p);
-  if (!event) return;
-  await runRules(ctx, mapping, event, [{ slug: mapping.workspaceSlug, projectId: request.projectId, issueId: request.issueId, tier: "closing" }], {
-    deliveryId: request.job.deliveryId,
-    actor: () => actorTokenFor(ctx, mapping, p.sender, event.trigger, p),
-  });
+  await withMappingWriterContext(ctx, mapping, request.job, async (ctx) => {
+    const deps = mirrorDeps(ctx, mapping, await installationFor(ctx, mapping, p));
+    await withObjectLock(ctx.db, `gh:${mapping.ghRepoId}#${p?.issue?.number}`, () => onGithubIssue(p, deps));
+    const event = githubRuleEvent(request.job.event, p);
+    if (!event) return;
+    await runRules(ctx, mapping, event, [{ slug: mapping.workspaceSlug, projectId: request.projectId, issueId: request.issueId, tier: "closing" }], {
+      deliveryId: request.job.deliveryId,
+      actor: () => actorTokenFor(ctx, mapping, p.sender, event.trigger, p),
+    });
+  }, request.authority);
 }
 
 /**
@@ -136,9 +145,10 @@ async function handlePendingPlaneEvent(ctx: AppContext, request: ReducerContinua
   const p: any = request.job.payload;
   const mapping = (await mappingsForProject(ctx.db, request.projectId)).find((m) => m.id === request.mappingId);
   if (!mapping || !(await payloadBelongsToMapping(ctx, mapping, p))) return;
-  ctx = mappingWriterContext(ctx, mapping, request.authority);
-  const deps = mirrorDeps(ctx, mapping, await planeInstallation(ctx, mapping));
-  await withObjectLock(ctx.db, `plane:${request.issueId}`, () => onPlaneIssue({ event: request.job.event, payload: p }, deps));
+  await withMappingWriterContext(ctx, mapping, request.job, async (ctx) => {
+    const deps = mirrorDeps(ctx, mapping, await planeInstallation(ctx, mapping));
+    await withObjectLock(ctx.db, `plane:${request.issueId}`, () => onPlaneIssue({ event: request.job.event, payload: p }, deps));
+  }, request.authority);
 }
 
 const isUniqueViolation = (e: unknown) => (e as { code?: string } | null)?.code === "23505";
@@ -153,23 +163,25 @@ export async function handleGithubIssue(ctx: AppContext, job: InboundJob): Promi
   }
   for (const mapping of mappings) {
     const installationId = await installationFor(ctx, mapping, p);
-    const mapped = mappingWriterContext(ctx, mapping);
-    const deps = mirrorDeps(mapped, mapping, installationId, { job });
-    try {
-      // One GitHub issue at a time, across replicas: the lock is what stops two `labeled` events creating two items.
-      const mirrored = await withObjectLock(ctx.db, `gh:${repoId}#${p?.issue?.number}`, () => onGithubIssue(p, deps));
-      // §7.5 `issue.*` / `comment.*` rules over the items this issue is linked to (F7). A create that went through the plan
-      // finishes asynchronously and its `mirror_created` resume owns these rules for the new item (a `deferred` event, received while the partner was still being created, replays through `mirror_pending`); a fast worker may already have
-      // linked it, so looking the links up here would run them a second time.
-      const event = githubRuleEvent(job.event, p);
-      const resumeOwnsRules = (mirrored.action === "created" && ctx.plane.plan !== undefined) || mirrored.action === "deferred";
-      if (event && !resumeOwnsRules && Number.isSafeInteger(p?.issue?.number)) {
-        await runRules(mapped, mapping, event, await linkedIssuesFor(mapped, mapping, p.issue.pull_request ? "pr" : "issue", p.issue.number), { deliveryId: job.deliveryId, actor: () => actorTokenFor(mapped, mapping, p.sender, event.trigger, p) });
+    await assertInstallationAllowed(ctx.db, installationId, mapping.workspaceSlug);
+    await withMappingWriterContext(ctx, mapping, job, async (mapped) => {
+      const deps = mirrorDeps(mapped, mapping, installationId, { job });
+      try {
+        // One GitHub issue at a time, across replicas: the lock is what stops two `labeled` events creating two items.
+        const mirrored = await withObjectLock(ctx.db, `gh:${repoId}#${p?.issue?.number}`, () => onGithubIssue(p, deps));
+        // §7.5 `issue.*` / `comment.*` rules over the items this issue is linked to (F7). A create that went through the plan
+        // finishes asynchronously and its `mirror_created` resume owns these rules for the new item (a `deferred` event, received while the partner was still being created, replays through `mirror_pending`); a fast worker may already have
+        // linked it, so looking the links up here would run them a second time.
+        const event = githubRuleEvent(job.event, p);
+        const resumeOwnsRules = (mirrored.action === "created" && ctx.plane.plan !== undefined) || mirrored.action === "deferred";
+        if (event && !resumeOwnsRules && Number.isSafeInteger(p?.issue?.number)) {
+          await runRules(mapped, mapping, event, await linkedIssuesFor(mapped, mapping, p.issue.pull_request ? "pr" : "issue", p.issue.number), { deliveryId: job.deliveryId, actor: () => actorTokenFor(mapped, mapping, p.sender, event.trigger, p) });
+        }
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+        await appendAudit(ctx.db, { kind: "mirror_conflict", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId, number: p?.issue?.number }, outcome: "ignored", error: "another delivery already mirrored this issue" });
       }
-    } catch (err) {
-      if (!isUniqueViolation(err)) throw err;
-      await appendAudit(ctx.db, { kind: "mirror_conflict", source: "github", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { repoId, number: p?.issue?.number }, outcome: "ignored", error: "another delivery already mirrored this issue" });
-    }
+    });
   }
 }
 
@@ -228,26 +240,27 @@ export async function handlePlaneIssue(ctx: AppContext, job: InboundJob): Promis
     // needs it will say so. Any other failure (GitHub 5xx, network) is transient and fails the delivery so it retries (F7):
     // registering writes with installation 0 made them fail permanently on the first attempt.
     // `createContinuation` lets the mirror register this event behind a create that is still in flight (`mirror_pending`).
-    const mapped = mappingWriterContext(ctx, mapping);
-    const installationId = await planeInstallation(mapped, mapping);
-    const deps = mirrorDeps(mapped, mapping, installationId, { job });
-    if (installationId === 0) deps.github = notInstalledWriter(ctx, mapping, job);
-    // A comment event's `data.id` is the comment's; the work item it belongs to is `data.issue`.
-    const issueRef = typeof data?.issue === "string" ? data.issue : data?.issue?.id;
-    const planeIssueId = job.event === "issue_comment" ? issueRef : typeof data?.id === "string" ? data.id : issueRef;
-    try {
-      await withObjectLock(ctx.db, `plane:${planeIssueId}`, () => onPlaneIssue({ event: job.event, payload: p }, deps));
-    } catch (err) {
-      if ((err as { name?: string } | null)?.name === "GithubNotInstalled") continue; // audited by the writer
-      if ((err as { name?: string } | null)?.name !== "GithubNotInstalled") { // that one was audited by the writer
-        if (!isUniqueViolation(err)) throw err;
-        await appendAudit(ctx.db, { kind: "mirror_conflict", source: "plane", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { projectId }, outcome: "ignored", error: "another delivery already mirrored this item" });
+    const installationId = await planeInstallation(ctx, mapping);
+    await withMappingWriterContext(ctx, mapping, job, async (mapped) => {
+      const deps = mirrorDeps(mapped, mapping, installationId, { job });
+      if (installationId === 0) deps.github = notInstalledWriter(ctx, mapping, job);
+      // A comment event's `data.id` is the comment's; the work item it belongs to is `data.issue`.
+      const issueRef = typeof data?.issue === "string" ? data.issue : data?.issue?.id;
+      const planeIssueId = job.event === "issue_comment" ? issueRef : typeof data?.id === "string" ? data.id : issueRef;
+      try {
+        await withObjectLock(ctx.db, `plane:${planeIssueId}`, () => onPlaneIssue({ event: job.event, payload: p }, deps));
+      } catch (err) {
+        if ((err as { name?: string } | null)?.name === "GithubNotInstalled") return; // audited by the writer
+        if ((err as { name?: string } | null)?.name !== "GithubNotInstalled") { // that one was audited by the writer
+          if (!isUniqueViolation(err)) throw err;
+          await appendAudit(ctx.db, { kind: "mirror_conflict", source: "plane", deliveryId: job.deliveryId, workspaceSlug: mapping.workspaceSlug, detail: { projectId }, outcome: "ignored", error: "another delivery already mirrored this item" });
+        }
       }
-    }
-    // §7.5 `issue.*` / `comment.*` rules on the Plane item itself (F7).
-    const event = planeRuleEvent(job.event, p, mapping.planeProjectId, mapping.ghRepoFullName);
-    if (event && typeof planeIssueId === "string") {
-      await runRules(mapped, mapping, event, [{ slug: mapping.workspaceSlug, projectId: mapping.planeProjectId, issueId: planeIssueId, tier: "closing" }], { deliveryId: job.deliveryId, actor: async () => undefined, source: "plane" });
-    }
+      // §7.5 `issue.*` / `comment.*` rules on the Plane item itself (F7).
+      const event = planeRuleEvent(job.event, p, mapping.planeProjectId, mapping.ghRepoFullName);
+      if (event && typeof planeIssueId === "string") {
+        await runRules(mapped, mapping, event, [{ slug: mapping.workspaceSlug, projectId: mapping.planeProjectId, issueId: planeIssueId, tier: "closing" }], { deliveryId: job.deliveryId, actor: async () => undefined, source: "plane" });
+      }
+    });
   }
 }

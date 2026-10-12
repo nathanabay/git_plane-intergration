@@ -11,11 +11,11 @@ import type { RollupTarget } from "../sync/dev-info.ts";
 import type { InboundJob } from "../queue/index.ts";
 import { actorTokenFor, installationFor, loadMagicWords, planeIssueUrl, projectOf, withObjectLock } from "./context.ts";
 import type { AppContext } from "./context.ts";
-import { mappingsForRepo } from "./mappings.ts";
+import { assertInstallationAllowed, freezeMappingAuthority, mappingsForRepo } from "./mappings.ts";
 import type { Mapping } from "./mappings.ts";
 import { mappingWriterContext } from "./issues.ts";
 import { linkedIssuesFor, runRules } from "./rules.ts";
-import { resultRef } from "./writers.ts";
+import { deliveryScope, resultRef } from "./writers.ts";
 import type { ReducerContinuation } from "./writers.ts";
 
 export interface LinkedItem { ref: IssueRef; issueId: string; projectId: string; identifier: string }
@@ -123,7 +123,17 @@ async function createRequested(ctx: AppContext, mapping: Mapping, job: InboundJo
  * commit status) cannot fire it twice. A new push is a new head commit and can become ready again.
  */
 export async function fireReadyForMerge(ctx: AppContext, mapping: Mapping, job: InboundJob, octokit: any, pr: any): Promise<boolean> {
-  ctx = mappingWriterContext(ctx, mapping);
+  const scope = deliveryScope.getStore();
+  let authority = scope?.authority?.mappingId === String(mapping.id) ? scope.authority : undefined;
+  if (!authority) {
+    await assertInstallationAllowed(ctx.db, await installationFor(ctx, mapping, job.payload), mapping.workspaceSlug);
+    authority = freezeMappingAuthority(mapping);
+  }
+  return deliveryScope.run({ ...scope, deliveryId: scope?.deliveryId ?? `github-${job.writeDeliveryId ?? job.deliveryId}`,
+    workspaceSlug: mapping.workspaceSlug, authority }, () => readyForMapping(mappingWriterContext(ctx, mapping, authority), mapping, job, octokit, pr));
+}
+
+async function readyForMapping(ctx: AppContext, mapping: Mapping, job: InboundJob, octokit: any, pr: any): Promise<boolean> {
   if (!pr || !Number.isSafeInteger(pr.number) || pr.draft === true || pr.merged === true || String(pr.state ?? "open").toLowerCase() !== "open") return false;
   const headSha: unknown = pr.head?.sha;
   if (typeof headSha !== "string" || !headSha) return false;
@@ -159,7 +169,14 @@ export async function handlePullRequest(ctx: AppContext, job: InboundJob): Promi
     await appendAudit(ctx.db, { kind: "pull_request", source: "github", deliveryId: job.deliveryId, detail: { repoId, number: pr.number }, outcome: "unmapped_repo" });
     return;
   }
-  for (const mapping of mappings) await withObjectLock(ctx.db, `pr:${mapping.workspaceSlug}:${repoId}#${pr.number}`, () => handleForMapping(mappingWriterContext(ctx, mapping), mapping, job));
+  for (const mapping of mappings) {
+    await assertInstallationAllowed(ctx.db, await installationFor(ctx, mapping, p), mapping.workspaceSlug);
+    const scope = deliveryScope.getStore();
+    const authority = freezeMappingAuthority(mapping);
+    await deliveryScope.run({ ...scope, deliveryId: scope?.deliveryId ?? `github-${job.writeDeliveryId ?? job.deliveryId}`,
+      workspaceSlug: mapping.workspaceSlug, authority }, () => withObjectLock(ctx.db, `pr:${mapping.workspaceSlug}:${repoId}#${pr.number}`,
+      () => handleForMapping(mappingWriterContext(ctx, mapping, authority), mapping, job)));
+  }
 }
 
 /** Retain later deliveries on live or failed creates; only explicit repair revives failed remote work. */
@@ -186,7 +203,14 @@ async function deferPendingPr(ctx: AppContext, mapping: Mapping, job: InboundJob
       AND w.write->>'kind' = 'resume_reducer' AND w.write->'continuation'->'job'->>'source' = $4
       AND COALESCE(w.write->'continuation'->'job'->>'writeDeliveryId', w.write->'continuation'->'job'->>'deliveryId') = $5) AS owns_event
     FROM workflows p WHERE p.link->>'ghKind' = 'pr' AND p.link->>'ghRepoId' = $1
-      AND p.link->>'ghNumber' = $2 AND p.link->>'planeWorkspaceSlug' = $3`,
+      AND p.link->>'ghNumber' = $2 AND p.link->>'planeWorkspaceSlug' = $3
+      AND NOT EXISTS (SELECT 1 FROM outbound_writes c JOIN sync_links l
+        ON l.status = 'orphaned' AND l.gh_kind = 'pr' AND l.plane_issue_id = c.result->>'id'
+          AND l.plane_workspace_slug = c.write->>'slug' AND l.plane_project_id = c.write->>'projectId'
+          AND l.gh_repo_id = (p.link->>'ghRepoId')::bigint AND l.gh_number = (p.link->>'ghNumber')::integer
+        WHERE c.write->'_plan'->>'root' = p.outbox_id AND c.side = 'plane'
+          AND c.write->>'kind' = 'create_issue' AND c.result->>'ok' = 'true'
+          AND EXISTS (SELECT 1 FROM outbound_writes f WHERE f.write->'_plan'->>'root' = p.outbox_id AND f.status = 'failed'))`,
     [String(mapping.ghRepoId), String(pr.number), mapping.workspaceSlug, job.source, job.writeDeliveryId ?? job.deliveryId]);
   for (const p of pending.rows) {
     if (!p.created_id || !p.fence_id || !p.identifier || typeof p.link.planeProjectId !== "string") throw new Error("retained PR create has no continuation fence");
@@ -309,7 +333,14 @@ export async function handleCreatedPr(ctx: AppContext, request: ReducerContinuat
     await appendAudit(ctx.db, { kind: "pr_create_request", source: "github", deliveryId: request.job.deliveryId, detail: { mappingId: request.mappingId, issueId: request.issueId }, outcome: "failed", error: "the mapping or pull request for a created work item is gone" });
     return;
   }
-  ctx = mappingWriterContext(ctx, mapping, request.authority);
+  const authority = request.authority ?? freezeMappingAuthority(mapping);
+  const scope = deliveryScope.getStore();
+  await deliveryScope.run({ ...scope, deliveryId: scope?.deliveryId ?? `github-${request.job.writeDeliveryId ?? request.job.deliveryId}`,
+    workspaceSlug: mapping.workspaceSlug, authority }, () => completeCreatedPr(mappingWriterContext(ctx, mapping, authority), mapping, request));
+}
+
+async function completeCreatedPr(ctx: AppContext, mapping: Mapping, request: ReducerContinuation): Promise<void> {
+  const p: any = request.job.payload;
   const item: LinkedItem = { ref: { identifier: `${request.identifier}-NEW`, project: request.identifier, sequence: 0, tier: "closing", source: "body" }, issueId: request.issueId, projectId: request.projectId, identifier: request.identifier };
   // Empty identifier denotes a later event fenced behind the create, rather than a new linkback.
   const pApproval = request.job.event === "pull_request_review" && p.action === "submitted" && String(p.review?.state ?? "").toLowerCase() === "approved";

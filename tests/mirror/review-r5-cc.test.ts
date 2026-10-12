@@ -137,6 +137,13 @@ for (const kind of ["mirror", "pr"] as const) {
     deepStrictEqual((await h.db.query<any>("SELECT id, write, result FROM outbound_writes WHERE id = ANY($1::text[]) ORDER BY sequence", [ids.map((r) => r.id)])).rows, ids, "re-opt-in retains the original workflow rows");
     const added = (await h.db.query<any>("SELECT write FROM outbound_writes WHERE NOT (id = ANY($1::text[]))", [ids.map((r) => r.id)])).rows;
     ok(added.every((r) => r.write.kind === "resume_reducer" && r.write._plan.root === createId), "a fresh event may join the original root, but cannot create a new partner");
+    if (kind === "pr") {
+      // Round-6 F5 retains the edited event but leaves terminal PR creates failed until explicit repair.
+      strictEqual(await next(), undefined, "a PR edit must not implicitly retry an ambiguous terminal create");
+      strictEqual(added.length, 1, "the edit remains durably attached to the original create identity");
+      ok((await h.db.query<any>("SELECT status FROM outbound_writes")).rows.every((r) => r.status === "failed"));
+      await replay(job);
+    }
     await rejects(execute(), OrderedWriteDeferredError);
     strictEqual((await h.db.query<any>("SELECT error FROM outbound_writes WHERE id = $1", [createId])).rows[0]!.error.message, "recovery lookup unavailable");
     strictEqual(h.plane.createdIssueIds.length, 1, "lookup outage never advances to a second POST");
