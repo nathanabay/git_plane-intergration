@@ -17,6 +17,21 @@ export interface Mapping {
   installationId: number | null;
 }
 
+export interface FrozenWriteAuthority {
+  workspaceSlug: string;
+  mappingId: string;
+  repoId: number;
+  installationId: number;
+}
+
+/** Snapshot the verified mapping before registering any intent; queued ownership never follows later edits. */
+export function freezeMappingAuthority(mapping: Pick<Mapping, "id" | "workspaceSlug" | "ghRepoId" | "installationId">): FrozenWriteAuthority {
+  if (!Number.isSafeInteger(mapping.installationId) || Number(mapping.installationId) <= 0)
+    throw new PlaneApiError(403, {}, "A verified installation is required for outbound authority");
+  return Object.freeze({ workspaceSlug: mapping.workspaceSlug, mappingId: String(mapping.id),
+    repoId: mapping.ghRepoId, installationId: mapping.installationId! });
+}
+
 function toMapping(r: any): Mapping {
   const [owner = "", repo = ""] = String(r.gh_repo_full_name).split("/");
   return {
@@ -89,14 +104,32 @@ export function createOutboundAuthoriser(db: Db) {
       if (!rows.length) throw denied();
       for (const row of rows) await assertInstallationAllowed(db, Number(row.installation_id), workspaceSlug);
     };
+    if (Object.hasOwn(w, "_authority")) {
+      const authority: unknown = w._authority;
+      if (!authority || typeof authority !== "object") throw denied();
+      const a = authority as Partial<FrozenWriteAuthority>;
+      if (a.workspaceSlug !== workspaceSlug || typeof a.mappingId !== "string" || !/^[1-9]\d*$/.test(a.mappingId)
+        || !Number.isSafeInteger(a.repoId) || Number(a.repoId) <= 0
+        || !Number.isSafeInteger(a.installationId) || Number(a.installationId) <= 0) throw denied();
+      // Check exactly the frozen source mapping. Neither SHA completion nor another target mapping grants access.
+      await checkMapping("id = $2 AND gh_repo_id = $3 AND installation_id = $4", [a.mappingId, a.repoId, a.installationId]);
+      if (w.kind === "resume_reducer") {
+        if (String(w.continuation?.mappingId) !== a.mappingId
+          || (w.continuation?.workspaceSlug !== undefined && w.continuation.workspaceSlug !== workspaceSlug)) throw denied();
+      } else if (side === "github") {
+        if (w.installationId !== a.installationId || w.repoId !== a.repoId) throw denied();
+      } else if (w.slug !== workspaceSlug) throw denied();
+      return;
+    }
+    // Continuations are local reducer dispatches on either queue, not GitHub API writes.
+    if (w.kind === "resume_reducer") {
+      if (w.continuation?.workspaceSlug !== undefined && w.continuation.workspaceSlug !== workspaceSlug) throw denied();
+      await checkMapping("id = $2", [w.continuation?.mappingId]);
+      return;
+    }
     if (side === "github") {
       await assertInstallationAllowed(db, Number(w.installationId), workspaceSlug);
       await checkMapping("gh_repo_id = $2 AND installation_id = $3", [w.repoId, w.installationId]);
-      return;
-    }
-    if (w.kind === "resume_reducer") {
-      if (w.continuation?.workspaceSlug && w.continuation.workspaceSlug !== workspaceSlug) throw denied();
-      await checkMapping("id = $2", [w.continuation?.mappingId]);
       return;
     }
     if (w.slug !== workspaceSlug) throw denied();
