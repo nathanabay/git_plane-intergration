@@ -2,7 +2,9 @@
 // work item, `github` on a Plane item creates a GitHub issue. Per field, the mapping's conflict
 // policy and direction decide whether a change from one side is applied to the other. Every write
 // goes through A4's write paths, which own echo suppression and the triage ban.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { deliveryScope } from "../app/writers.ts";
+import { freezeMappingAuthority } from "../app/mappings.ts";
 import { resultRef, resultText } from "../operations/plans.ts";
 import { restoreCreateWorkflow } from "../operations/tooling.ts";
 import type { PlanWriter, OutboxPlanStep } from "../operations/plans.ts";
@@ -185,6 +187,14 @@ const lc = (s: string) => s.toLowerCase();
 
 // ---- GitHub → Plane ----------------------------------------------------------------------------------
 export async function onGithubIssue(payload: any, deps: MirrorDeps): Promise<MirrorResult> {
+  // Pending continuations re-enter here too. Preserve delivery/replay identity while replacing
+  // any caller authority with the verified mapping that owns this mirror operation.
+  const scope = deliveryScope.getStore() ?? { deliveryId: randomUUID() };
+  return deliveryScope.run({ ...scope, authority: freezeMappingAuthority(deps.mapping) },
+    () => mirrorGithubIssue(payload, deps));
+}
+
+async function mirrorGithubIssue(payload: any, deps: MirrorDeps): Promise<MirrorResult> {
   const { db, mapping } = deps;
   const issue = payload?.issue;
   if (!issue || !Number.isSafeInteger(issue.number)) return ignored("no issue in payload");
@@ -422,6 +432,12 @@ async function labelNameById(data: any, deps: MirrorDeps, wanted: string[]): Pro
 const refId = (v: any): string | null => (typeof v === "string" ? v : typeof v?.id === "string" ? v.id : null);
 
 export async function onPlaneIssue(job: { event: string; payload: any }, deps: MirrorDeps): Promise<MirrorResult> {
+  const scope = deliveryScope.getStore() ?? { deliveryId: randomUUID() };
+  return deliveryScope.run({ ...scope, authority: freezeMappingAuthority(deps.mapping) },
+    () => mirrorPlaneIssue(job, deps));
+}
+
+async function mirrorPlaneIssue(job: { event: string; payload: any }, deps: MirrorDeps): Promise<MirrorResult> {
   const { db, mapping } = deps;
   if (mapping.syncDirection === "github_to_plane") return ignored("mapping is github_to_plane");
   const body = job.payload;
