@@ -183,8 +183,10 @@ test("F2: mappings are verified against Plane and GitHub; a refusal is 422 and s
   const seen: unknown[] = [];
   let outcome: string | null | Error = null;
   const v = await setup([], undefined, async (check) => {
-    seen.push(check);
+    const { onInstallationVerified, ...identity } = check;
+    seen.push(identity);
     if (outcome instanceof Error) throw outcome;
+    if (outcome === null) onInstallationVerified?.(1);
     return outcome;
   });
   try {
@@ -207,11 +209,11 @@ test("F2: mappings are verified against Plane and GitHub; a refusal is 422 and s
     strictEqual(r.status, 201);
     const mid = ((await r.json()) as { id: number }).id;
 
-    // PATCH re-verifies only what it changes.
+    // PATCH verifies the effective repository even for settings-only changes.
     seen.length = 0;
     outcome = "The repository id does not match that repository on GitHub";
-    strictEqual((await v.call("PATCH", `/workspaces/acme/mappings/${mid}`, { cookie: ADM, body: { autolinks: true } })).status, 200);
-    strictEqual(seen.length, 0, "a settings-only patch does not call out");
+    strictEqual((await v.call("PATCH", `/workspaces/acme/mappings/${mid}`, { cookie: ADM, body: { autolinks: true } })).status, 422);
+    strictEqual(seen.length, 1, "a settings-only patch verifies the effective repository");
     strictEqual((await v.call("PATCH", `/workspaces/acme/mappings/${mid}`, { cookie: ADM, body: { ghRepoId: 8, ghRepoFullName: "acme/x" } })).status, 422);
     strictEqual((await v.call("PATCH", `/workspaces/acme/mappings/${mid}`, { cookie: ADM, body: { planeProjectId: "p-other" } })).status, 422);
     const row = (await v.db.query<any>(`SELECT gh_repo_id, plane_project_id FROM repo_mappings WHERE id = $1`, [mid])).rows[0];
@@ -313,7 +315,7 @@ test("r2 F1: without a mapping verifier, create and update fail closed (503) and
     const id = (await v.db.query<{ id: number }>(`SELECT id FROM repo_mappings`)).rows[0]!.id;
     strictEqual((await v.call("PATCH", `/workspaces/acme/mappings/${id}`, { cookie: ADM, body: { planeProjectId: "p2" } })).status, 503);
     strictEqual((await v.db.query<any>(`SELECT plane_project_id FROM repo_mappings`)).rows[0].plane_project_id, "p1");
-    strictEqual((await v.call("PATCH", `/workspaces/acme/mappings/${id}`, { cookie: ADM, body: { autolinks: true } })).status, 200, "settings-only edits need no verification");
+    strictEqual((await v.call("PATCH", `/workspaces/acme/mappings/${id}`, { cookie: ADM, body: { autolinks: true } })).status, 503, "settings-only edits require verification");
   } finally { await v.close(); }
 });
 

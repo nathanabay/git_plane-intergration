@@ -9,6 +9,8 @@ export type MappingVerifier = (check: {
   slug: string;
   planeProjectId?: string;
   repo?: { id: number; fullName: string };
+  /** Called only after the repository identity and its workspace authority have both been verified. */
+  onInstallationVerified?(installationId: number): void;
 }) => Promise<string | null>;
 
 export interface MappingVerifierDeps {
@@ -38,7 +40,7 @@ export function installationWorkspaceFromDb(db: { query<T = any>(sql: string, pa
 const statusOf = (e: unknown): number | undefined => (e as { status?: number } | null)?.status;
 
 export function createMappingVerifier(deps: MappingVerifierDeps): MappingVerifier {
-  return async ({ slug, planeProjectId, repo }) => {
+  return async ({ slug, planeProjectId, repo, onInstallationVerified }) => {
     if (planeProjectId !== undefined) {
       try {
         await deps.plane.request("GET", `/workspaces/${encodeURIComponent(slug)}/projects/${encodeURIComponent(planeProjectId)}/`);
@@ -52,8 +54,10 @@ export function createMappingVerifier(deps: MappingVerifierDeps): MappingVerifie
       const [owner, name] = repo.fullName.split("/");
       if (!owner || !name) return "The repository must be given as owner/repo";
       let data: any;
+      let installationId: number;
       try {
-        const installationId = await deps.github.installationIdFor(owner, name);
+        installationId = await deps.github.installationIdFor(owner, name);
+        if (!Number.isSafeInteger(installationId) || installationId <= 0) return "The GitHub App is not installed on that repository";
         const allowedFor = deps.installationWorkspace ? await deps.installationWorkspace(installationId) : null;
         if (allowedFor !== slug) return "That GitHub installation is not allowed for this workspace; ask an instance admin to allow-list it";
         const octokit = await deps.github.installationOctokit(installationId);
@@ -64,6 +68,9 @@ export function createMappingVerifier(deps: MappingVerifierDeps): MappingVerifie
       }
       if (Number(data?.id) !== repo.id) return "The repository id does not match that repository on GitHub";
       if (String(data?.full_name ?? "").toLowerCase() !== repo.fullName.toLowerCase()) return "The repository name does not match the repository id on GitHub";
+      // Re-read after GitHub's identity lookup: a concurrent move/revocation cannot certify the old workspace.
+      if (await deps.installationWorkspace?.(installationId) !== slug) return "That GitHub installation is not allowed for this workspace; ask an instance admin to allow-list it";
+      onInstallationVerified?.(installationId);
     }
     return null;
   };

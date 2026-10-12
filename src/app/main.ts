@@ -14,6 +14,8 @@ import { GithubWritePath } from "../sync/github.ts";
 import { PlaneClient, PlaneWritePath } from "../sync/plane.ts";
 import { createGithubUserLookup, createMappingVerifier, installationWorkspaceFromDb, createPlaneMemberCheck } from "../ui/mapping-check.ts";
 import { createConfigRoutes, createUiRoutes, defaultUiDistDir } from "../ui/api.ts";
+import { authenticateInstanceAdmin } from "../ui/plane-auth.ts";
+import { HttpError, sendJson } from "../ui/http.ts";
 import type { Route } from "../index.ts";
 import type { AppContext } from "./context.ts";
 import { createVault, installationFor, issueResolver } from "./context.ts";
@@ -23,7 +25,7 @@ import { createGithubClient } from "./github.ts";
 import type { GithubClient } from "./github.ts";
 import type { InboundJob } from "../queue/index.ts";
 import { createOrderedOutbox } from "./writers.ts";
-import { mappingsForRepo } from "./mappings.ts";
+import { createOutboundAuthoriser, disabledMappings, mappingsForRepo } from "./mappings.ts";
 import { createRouter, inboundHandler } from "./reducers.ts";
 import { handleMirroredIssue, handlePendingMirroredIssue } from "./issues.ts";
 import { findLinkId, handleCreatedPr } from "./pr.ts";
@@ -56,6 +58,7 @@ export function composeRoutes({ config, db, tokenKey, ctx, planeClient, ghClient
       planeInternalUrl: config.PLANE_BASE_URL,
       publicOrigin: config.PUBLIC_ORIGIN,
       tokenKey,
+      credentialStatus: () => credentials.describe(),
       // F1: a mapping is only stored when its project is in the workspace and the App reaches its repository.
       verifyMapping: createMappingVerifier({ plane: planeClient, github: ghClient, installationWorkspace: installationWorkspaceFromDb(db) }),
       // F5: a manual user link is checked against the account GitHub reports for the login (id must match).
@@ -76,6 +79,18 @@ export function composeRoutes({ config, db, tokenKey, ctx, planeClient, ghClient
         },
       },
     }),
+    {
+      method: "GET", path: "/git-sync/api/instance/disabled-mappings",
+      handler: async (req, res) => {
+        try {
+          await authenticateInstanceAdmin({ planeInternalUrl: config.PLANE_BASE_URL }, req);
+          sendJson(res, 200, await disabledMappings(db));
+        } catch (err) {
+          sendJson(res, err instanceof HttpError ? err.status : 500,
+            { error: err instanceof HttpError ? err.message : "Could not read disabled mappings" });
+        }
+      },
+    },
     ...createUiRoutes({ distDir: defaultUiDistDir() }),
   ];
 }
@@ -100,6 +115,7 @@ export async function runService(
   // The two readers run at execution time, so a read-modify-write of labels/assignees sees the current list.
   const ordered = createOrderedOutbox({
     db,
+    authoriseWrite: createOutboundAuthoriser(db),
     plane: planeInline,
     github: githubInline,
     queues: { plane: queues.outboundPlane, github: queues.outboundGithub },

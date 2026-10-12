@@ -5,6 +5,7 @@ import { Async, Field, NotAuthorised, SaveStatus, formatTime, useLoad, useSaver 
 import type { GithubAppInfo, Health, InstanceSettings, MagicWords, WorkspaceInstallation } from "./types.ts";
 import { MAGIC_TIERS } from "../validate.ts";
 import type { MagicTier } from "../validate.ts";
+import type { DisabledMapping } from "../../app/mappings.ts";
 
 const DENIED = "The instance settings need a Plane instance-admin session.";
 
@@ -17,9 +18,32 @@ export function AdminPage() {
       <HealthPanel state={health} />
       <GithubAppForm onSaved={health.reload} />
       <WorkspaceInstallationsPanel />
+      <DisabledMappingsPanel />
       <MagicWordsForm />
       <SettingsForm />
     </main>
+  );
+}
+
+function DisabledMappingsPanel() {
+  const state = useLoad(() => api<DisabledMapping[]>("GET", "/instance/disabled-mappings"), []);
+  return (
+    <section className="panel" aria-labelledby="disabled-mappings-h">
+      <h2 id="disabled-mappings-h">Disabled repository mappings</h2>
+      <p>Unresolved mappings and mappings whose installation is no longer allowed are disabled. Allow-list the installation for its workspace, then have a workspace admin save the mapping to verify it.</p>
+      <button type="button" onClick={state.reload}>Refresh mappings</button>
+      <Async state={state} denied={DENIED}>
+        {(list) => list.length === 0 ? <p>No disabled mappings.</p> : (
+          <table>
+            <thead><tr><th>Workspace</th><th>Repository</th><th>Project</th><th>Installation</th><th>Reason</th></tr></thead>
+            <tbody>{list.map((m) => <tr key={m.id}>
+              <td>{m.workspaceSlug}</td><td>{m.ghRepoFullName}</td><td>{m.planeProjectId}</td>
+              <td>{m.installationId ?? "Unresolved"}</td><td>{m.reason === "unresolved" ? "Save the mapping to verify its installation" : "Installation is not allowed for this workspace"}</td>
+            </tr>)}</tbody>
+          </table>
+        )}
+      </Async>
+    </section>
   );
 }
 

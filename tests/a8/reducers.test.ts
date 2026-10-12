@@ -5,6 +5,8 @@ import { createDb } from "../../src/db/client.ts";
 import { migrate } from "../../src/db/migrate.ts";
 import { withObjectLock } from "../../src/app/context.ts";
 import { linkbackOnOrphan } from "../../src/app/main.ts";
+import { createMappingVerifier, installationWorkspaceFromDb } from "../../src/ui/mapping-check.ts";
+import { rememberInstallation } from "../../src/app/mappings.ts";
 import { startPostgres } from "../../scripts/lib/postgres.mjs";
 import { ghJob, makeHarness, planeJob, sha } from "./harness.ts";
 
@@ -148,10 +150,19 @@ test("with linkback off an orphan is silent", async () => {
 
 test("the installation id from a webhook is remembered on the mapping", async () => {
   const h = await makeHarness();
-  await h.mapping({ installationId: null });
-  await h.feed(ghJob("issues", { action: "opened", issue: { number: 3, title: "x", body: "", labels: [], assignees: [] }, installation: { id: 4242 } }));
-  strictEqual(Number((await h.db.query<any>("SELECT installation_id FROM repo_mappings")).rows[0].installation_id), 4242);
-  await h.close();
+  try {
+    const mappingId = await h.mapping({ installationId: null });
+    await h.db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (1, 'ws'), (4242, 'ws')");
+    h.gh.respond(/^GET \/repos\//, () => ({ id: 555, full_name: "acme/web" }));
+    let verifiedId: number | undefined;
+    const verify = createMappingVerifier({ plane: h.ctx.planeClient, github: h.ctx.ghClient, installationWorkspace: installationWorkspaceFromDb(h.db) });
+    strictEqual(await verify({ slug: "ws", repo: { id: 555, fullName: "acme/web" }, onInstallationVerified: (id) => { verifiedId = id; } }), null);
+    strictEqual(verifiedId, 1);
+    await rememberInstallation(h.db, mappingId, verifiedId!);
+    strictEqual(Number((await h.db.query<any>("SELECT installation_id FROM repo_mappings")).rows[0].installation_id), 1);
+    strictEqual(await h.feed(ghJob("issues", { action: "opened", issue: { number: 3, title: "x", body: "", labels: [], assignees: [] }, installation: { id: 4242 } })), "handled");
+    strictEqual(Number((await h.db.query<any>("SELECT installation_id FROM repo_mappings")).rows[0].installation_id), 4242);
+  } finally { await h.close(); }
 });
 
 test("the object lock serialises work on one key across real Postgres connections", async () => {

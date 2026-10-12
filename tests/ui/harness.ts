@@ -69,7 +69,7 @@ export async function setup(extraRoutes: Route[] = [], operations?: OperationsDe
   await db.exec(`CREATE TABLE IF NOT EXISTS workspace_installations (
     installation_id BIGINT PRIMARY KEY, workspace_slug TEXT NOT NULL, account_login TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   const plane = await startFakePlane();
-  const routes = createConfigRoutes({ db, planeInternalUrl: plane.url, publicOrigin: ORIGIN, tokenKey: KEY, ...(operations ? { operations } : {}), ...(verifyMapping === null ? {} : { verifyMapping: verifyMapping ?? (async () => null) }),
+  const routes = createConfigRoutes({ db, planeInternalUrl: plane.url, publicOrigin: ORIGIN, tokenKey: KEY, ...(operations ? { operations } : {}), ...(verifyMapping === null ? {} : { verifyMapping: verifyMapping ?? (async (check) => { check.onInstallationVerified?.(1); return null; }) }),
     // Permissive defaults: every login exists with id 1 and every Plane user is a member. Tests of the checks pass their own.
     lookupGithubUser: async (login) => ({ login, id: 1 }), isWorkspaceMember: async () => true, ...more });
   const srv = await startServer({ port: 0, host: "127.0.0.1", routes: [...routes, ...extraRoutes] });

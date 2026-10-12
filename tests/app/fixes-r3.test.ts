@@ -7,6 +7,8 @@ import { composeRoutes } from "../../src/app/main.ts";
 import { startServer } from "../../src/index.ts";
 import { migrate } from "../../src/db/migrate.ts";
 import { PlaneClient } from "../../src/sync/plane.ts";
+import { createMappingVerifier, installationWorkspaceFromDb } from "../../src/ui/mapping-check.ts";
+import { rememberInstallation } from "../../src/app/mappings.ts";
 import { ghJob, makeHarness, planeJob, prPayload, sha } from "../a8/harness.ts";
 import { ADM, KEY, ORIGIN, startFakePlane } from "../ui/harness.ts";
 
@@ -52,13 +54,33 @@ test("F5: Smart Commits attribute by the sender's GitHub id, not by a login some
 test("F7: a transient installation-lookup failure fails the delivery (it retries); 'not installed' does not", async () => {
   const h = await makeHarness();
   try {
-    await h.mapping({ installationId: null });
+    const mappingId = await h.mapping({ installationId: null });
+    await h.db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (1, 'ws')");
+    h.gh.respond(/^GET \/repos\//, () => ({ id: 555, full_name: "acme/web" }));
+    let verifiedId: number | undefined;
+    const verify = createMappingVerifier({ plane: h.ctx.planeClient, github: h.ctx.ghClient, installationWorkspace: installationWorkspaceFromDb(h.db) });
+    strictEqual(await verify({ slug: "ws", repo: { id: 555, fullName: "acme/web" }, onInstallationVerified: (id) => { verifiedId = id; } }), null);
+    strictEqual(verifiedId, 1);
+    await rememberInstallation(h.db, mappingId, verifiedId!);
+    // Exercise lookup recovery for an already-admitted legacy snapshot. The SQL still checks the
+    // actual verified installation/allow-list; only the hydrated snapshot forgets its cached ID.
+    const originalQuery = h.db.query.bind(h.db);
+    h.db.query = (async (sql: string, params?: any[]) => {
+      const result = await originalQuery(sql, params);
+      if (sql.includes("SELECT rm.*") && sql.includes("AS allowed")) {
+        for (const row of result.rows as any[]) if (row.allowed) row.installation_id = null;
+      }
+      return result;
+    }) as typeof h.db.query;
     await h.link("i1", 7);
     const upd = () => planeJob("issue", { workspace_slug: "ws", action: "update", data: { id: "i1", project: "p-qll", name: "x" }, activity: { field: "name", actor: { id: "u-h" } } });
-    h.ctx.ghClient.installationIdFor = async () => { throw Object.assign(new Error("bad gateway"), { status: 502 }); };
+    let lookups = 0;
+    h.ctx.ghClient.installationIdFor = async () => { lookups++; throw Object.assign(new Error("bad gateway"), { status: 502 }); };
     await rejectsAsync(() => h.feed(upd()));
-    h.ctx.ghClient.installationIdFor = async () => { throw Object.assign(new Error("not found"), { status: 404 }); };
+    h.ctx.ghClient.installationIdFor = async () => { lookups++; throw Object.assign(new Error("not found"), { status: 404 }); };
     strictEqual(await h.feed(upd()), "handled");
+    strictEqual(lookups, 2, "both deliveries reach installation lookup through an authorized mapping");
+    strictEqual(h.gh.writes().length, 0, "no write is made with an unavailable installation");
   } finally { await h.close(); }
 });
 

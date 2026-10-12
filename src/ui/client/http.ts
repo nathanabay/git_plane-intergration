@@ -14,6 +14,16 @@ export function isNotAuthorised(e: unknown): boolean {
   return e instanceof ApiError && (e.status === 401 || e.status === 403);
 }
 
+export function failedWriteId(entry: { kind: string; outcome: string; detail: unknown }): string | null {
+  if (entry.kind !== "outbound_write_failed" || entry.outcome !== "failed" || !entry.detail || typeof entry.detail !== "object") return null;
+  const id = (entry.detail as { outboxId?: unknown }).outboxId;
+  return typeof id === "string" && /^[A-Za-z0-9_.:@-]{1,200}$/.test(id) ? id : null;
+}
+
+export function retryFailedWrite(slug: string, id: string): Promise<{ id: string; status: string }> {
+  return api("POST", `/workspaces/${encodeURIComponent(slug)}/outbound-writes/${encodeURIComponent(id)}/retry`);
+}
+
 export async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {

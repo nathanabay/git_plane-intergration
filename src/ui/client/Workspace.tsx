@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { api, isNotAuthorised } from "./http.ts";
+import { api, failedWriteId, isNotAuthorised, retryFailedWrite } from "./http.ts";
 import { Async, Field, Link, SaveStatus, formatTime, useLoad, useSaver } from "./common.tsx";
 import type { Loaded } from "./common.tsx";
 import { lookupRepo, lookupUser } from "./github.ts";
@@ -636,6 +636,9 @@ function AuditLogPage({ slug }: { slug: string }) {
   const [cursor, setCursor] = useState<number | null | undefined>(undefined);
   const saver = useSaver();
   const replay = useSaver();
+  const retry = useSaver();
+  const [retried, setRetried] = useState<Set<string>>(new Set());
+  useEffect(() => { setRetried(new Set()); }, [slug]);
   useEffect(() => { setMore([]); setCursor(undefined); }, [slug, first.data]);
   const next = cursor === undefined ? first.data?.nextBefore ?? null : cursor;
   return (
@@ -663,6 +666,13 @@ function AuditLogPage({ slug }: { slug: string }) {
                             if (await replay.run(() => api("POST", `${ws(slug)}/audit/${e.id}/replay`))) first.reload();
                           }}>Replay</button>
                         ) : null}
+                        {failedWriteId(e) ? (
+                          <FailedWriteRetry slug={slug} id={failedWriteId(e)!} busy={retry.busy}
+                            retried={retried.has(failedWriteId(e)!)} run={retry.run} onScheduled={(id) => {
+                              setRetried((ids) => new Set([...ids, id]));
+                              first.reload();
+                            }} />
+                        ) : null}
                       </td>
                     </tr>
                   ))}
@@ -677,12 +687,22 @@ function AuditLogPage({ slug }: { slug: string }) {
               ) : null}
               <SaveStatus saver={saver} />
               <SaveStatus saver={replay} />
+              <SaveStatus saver={retry} />
             </>
           );
         }}
       </Async>
     </section>
   );
+}
+
+export function FailedWriteRetry({ slug, id, busy, retried, run, onScheduled }: {
+  slug: string; id: string; busy: boolean; retried: boolean;
+  run(work: () => Promise<unknown>): Promise<boolean>; onScheduled(id: string): void;
+}) {
+  return <button type="button" disabled={busy || retried} onClick={async () => {
+    if (await run(() => retryFailedWrite(slug, id))) onScheduled(id);
+  }}>{retried ? "Retry scheduled" : "Retry"}</button>;
 }
 
 
