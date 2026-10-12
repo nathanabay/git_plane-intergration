@@ -9,6 +9,7 @@ import { parseReferences } from "../parse/references.ts";
 import { PlaneApiError, TriageWriteRejected } from "../sync/plane.ts";
 import type { PlaneWrite, PlaneWriteResult } from "../sync/plane.ts";
 import { deliveryScope } from "../app/writers.ts";
+import type { WriteAuthority } from "../operations/plans.ts";
 import { escapeHtml, safeUrl } from "./html.ts";
 
 export interface SmartCommand {
@@ -124,6 +125,7 @@ export interface SmartCommitDeps {
   vault: Pick<TokenVault, "load">;
   requireVerified: boolean;
   mapping: { workspaceSlug: string; smartCommitsEnabled: boolean };
+  authority?: WriteAuthority;
   listStates(projectId: string): Promise<WorkflowState[]>;
   resolveIssue(key: string): Promise<{ projectId: string; issueId: string } | null | undefined>;
   getCommitVerified(sha: string): Promise<boolean>;
@@ -280,6 +282,10 @@ export async function processPush(payload: any, deps: SmartCommitDeps): Promise<
   const slug = deps.mapping.workspaceSlug;
   const repoId = Number(payload?.repository?.id);
   if (!Number.isSafeInteger(repoId) || !Array.isArray(payload?.commits) || payload.commits.length === 0) return summary;
+  const authority = deps.authority ?? deliveryScope.getStore()?.authority;
+  if (authority && (authority.workspaceSlug !== slug || authority.repoId !== repoId))
+    throw new PlaneApiError(403, {}, "Smart Commit source does not match its verified mapping");
+  const admission = authority ? { ...authority } : undefined;
 
   const audit = (kind: string, outcome: string, detail: unknown, error?: string, deliveryId?: string) =>
     appendAudit(deps.db, { kind, source: "github", workspaceSlug: slug, detail, outcome, ...(error ? { error } : {}), ...(deliveryId ? { deliveryId } : {}) });
@@ -362,7 +368,8 @@ export async function processPush(payload: any, deps: SmartCommitDeps): Promise<
         // The step id is the write's explicit identity in the outbox (round-3 F1): a retry that skips earlier, already recorded
         // steps cannot shift later steps onto their job ids, and two identical writes from different commands never collide.
         const scope = deliveryScope.getStore();
-        const result = await deliveryScope.run({ ...scope, deliveryId: scope?.deliveryId ?? `smartcommit-${sha}`, operationId: id }, run);
+        const result = await deliveryScope.run({ ...scope, deliveryId: scope?.deliveryId ?? `smartcommit-${sha}`, operationId: id,
+          ...(admission ? { authority: admission, workspaceSlug: admission.workspaceSlug } : {}) }, run);
         const receipt = result as PlaneWriteResult & { registered?: boolean; outboxId?: string };
         if (receipt.registered) registered++;
         await audit("smart_commit_step", receipt.registered ? "registered" : "applied",

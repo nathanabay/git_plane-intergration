@@ -10,10 +10,11 @@ import type { InboundJob } from "../queue/index.ts";
 import { ensureLinkedByEmail } from "./identity.ts";
 import { actorTokenFor, installationFor, issueResolver, loadMagicWords, projectOf, usersByGithubId } from "./context.ts";
 import type { AppContext } from "./context.ts";
-import { mappingsForRepo } from "./mappings.ts";
+import { freezeMappingAuthority, mappingsForRepo } from "./mappings.ts";
 import type { Mapping } from "./mappings.ts";
 import { findLinkId } from "./pr.ts";
 import { runPushRules } from "./rules.ts";
+import { deliveryScope } from "./writers.ts";
 
 const ZERO_SHA = /^0+$/;
 
@@ -26,10 +27,16 @@ export async function handlePush(ctx: AppContext, job: InboundJob): Promise<void
     return;
   }
   for (const mapping of mappings) {
-    await ensureLinkedByEmail(ctx, mapping, p.sender, p); // §9: an unmapped pusher may match a member by email
-    await smartCommits(ctx, mapping, p);
-    await branchPushed(ctx, mapping, job);
-    await runPushRules(ctx, mapping, job);
+    // Every intent this mapping's push registers carries its frozen authority (review-6 F2): the mapping's own
+    // verified installation, never the payload's, so a later edit or revocation cannot be bypassed.
+    const scope = deliveryScope.getStore();
+    await deliveryScope.run({ ...scope, deliveryId: scope?.deliveryId ?? `github-${job.deliveryId}`, workspaceSlug: mapping.workspaceSlug,
+      authority: freezeMappingAuthority(mapping) }, async () => {
+      await ensureLinkedByEmail(ctx, mapping, p.sender, p); // §9: an unmapped pusher may match a member by email
+      await smartCommits(ctx, mapping, p);
+      await branchPushed(ctx, mapping, job);
+      await runPushRules(ctx, mapping, job);
+    });
   }
 }
 
