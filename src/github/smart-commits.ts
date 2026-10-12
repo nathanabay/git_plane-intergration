@@ -116,7 +116,10 @@ export interface PushCommit { id: string; message: string; url?: string }
 
 export interface SmartCommitDeps {
   db: Db;
-  writer: { apply(write: PlaneWrite, opts?: { actorToken?: SecretString }): Promise<PlaneWriteResult> };
+  writer: {
+    apply(write: PlaneWrite, opts?: { actorToken?: SecretString }): Promise<PlaneWriteResult>;
+    reviveSmartCommit?(sha: string, workspaceSlug: string, deliveryId: string): Promise<void>;
+  };
   users: UserMapLookup;
   vault: Pick<TokenVault, "load">;
   requireVerified: boolean;
@@ -336,6 +339,9 @@ export async function processPush(payload: any, deps: SmartCommitDeps): Promise<
   async function runCommit(commit: PushCommit, parsed: SmartCommand[]): Promise<"done" | "skipped" | "retry"> {
     const sha = commit.id;
     const doneId = `sc:${sha}`;
+    const scope = deliveryScope.getStore();
+    if (scope?.writeDeliveryId && scope.transportDeliveryId && scope.writeDeliveryId !== scope.transportDeliveryId)
+      await deps.writer.reviveSmartCommit?.(sha, slug, scope.deliveryId);
     // Finished earlier: another push, branch, fork or a redelivery. The (SHA, workspace) claim is the ledger
     // record of completion (§5, F16); a claim with no workspace is a pre-F16 row that still counts.
     if (await recorded(doneId) || await claimed(sha)) return "skipped";
@@ -346,17 +352,21 @@ export async function processPush(payload: any, deps: SmartCommitDeps): Promise<
     const provenance = `<p><small>via ${url ? `<a href="${escapeHtml(url)}">${short}</a>` : short} by ${escapeHtml(login)}</small></p>`;
     let failed = 0;
     let pending = 0;
+    let registered = 0;
 
     /** Runs one step once: a recorded step is skipped; success and permanent failure are recorded; transient failure is not. */
-    const step = async (stepId: string, what: string, detail: object, run: () => Promise<void>): Promise<void> => {
+    const step = async (stepId: string, what: string, detail: object, run: () => Promise<PlaneWriteResult>): Promise<void> => {
       const id = `sc:${sha}:${stepId}`;
       if (await recorded(id)) return;
       try {
         // The step id is the write's explicit identity in the outbox (round-3 F1): a retry that skips earlier, already recorded
         // steps cannot shift later steps onto their job ids, and two identical writes from different commands never collide.
         const scope = deliveryScope.getStore();
-        await deliveryScope.run({ ...scope, deliveryId: scope?.deliveryId ?? `smartcommit-${sha}`, operationId: id }, run);
-        await audit("smart_commit_step", "applied", { sha, repoId, ...detail }, undefined, id);
+        const result = await deliveryScope.run({ ...scope, deliveryId: scope?.deliveryId ?? `smartcommit-${sha}`, operationId: id }, run);
+        const receipt = result as PlaneWriteResult & { registered?: boolean; outboxId?: string };
+        if (receipt.registered) registered++;
+        await audit("smart_commit_step", receipt.registered ? "registered" : "applied",
+          { sha, repoId, ...detail, ...(receipt.outboxId ? { outboxId: receipt.outboxId } : {}) }, undefined, id);
         summary.applied++;
       } catch (e) {
         if (isPermanent(e)) {
@@ -405,18 +415,18 @@ export async function processPush(payload: any, deps: SmartCommitDeps): Promise<
             continue;
           }
           await step(`${ci}:${key}:t${ti}`, `${key} #${t}`, { key, transition: t },
-            () => deps.writer.apply({ kind: "update_issue", ...base, fields: { state: r.stateId } }, writeOpts).then(() => undefined));
+            () => deps.writer.apply({ kind: "update_issue", ...base, fields: { state: r.stateId } }, writeOpts));
         }
         if (cmd.time) {
           const time = cmd.time;
           // Plane CE has no worklog API, so the time is recorded as a comment.
           await step(`${ci}:${key}:time`, `${key} #time`, { key },
-            () => deps.writer.apply({ kind: "add_comment", ...base, commentHtml: `<p>Time logged: ${escapeHtml(time.raw)} (${time.minutes} minutes)</p>${provenance}` }, writeOpts).then(() => undefined));
+            () => deps.writer.apply({ kind: "add_comment", ...base, commentHtml: `<p>Time logged: ${escapeHtml(time.raw)} (${time.minutes} minutes)</p>${provenance}` }, writeOpts));
         }
         if (cmd.comment) {
           const text = cmd.comment;
           await step(`${ci}:${key}:comment`, `${key} #comment`, { key },
-            () => deps.writer.apply({ kind: "add_comment", ...base, commentHtml: `<p>${escapeHtml(text)}</p>${provenance}` }, writeOpts).then(() => undefined));
+            () => deps.writer.apply({ kind: "add_comment", ...base, commentHtml: `<p>${escapeHtml(text)}</p>${provenance}` }, writeOpts));
         }
       }
     }
@@ -425,10 +435,9 @@ export async function processPush(payload: any, deps: SmartCommitDeps): Promise<
       retries.push(`${short}: ${pending} command${pending === 1 ? "" : "s"} pending`);
       return "retry";
     }
-    // Claimed only now that every command is finished or finally refused, so a crash or a transient failure
-    // never leaves a claimed commit with unapplied commands.
+    // Durable registrations now own execution/recovery; the SHA claim prevents fresh pushes duplicating them.
     await claimCommit(deps.db, sha, repoId, slug);
-    await audit("smart_commit", failed ? "partial" : "applied", { sha, repoId, keys: [...new Set(parsed.flatMap((c) => c.keys))], actor: login }, undefined, doneId);
+    await audit("smart_commit", failed ? "partial" : registered ? "registered" : "applied", { sha, repoId, keys: [...new Set(parsed.flatMap((c) => c.keys))], actor: login }, undefined, doneId);
     return "done";
   }
 
