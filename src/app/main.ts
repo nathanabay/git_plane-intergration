@@ -25,7 +25,8 @@ import { createGithubClient } from "./github.ts";
 import type { GithubClient } from "./github.ts";
 import type { InboundJob } from "../queue/index.ts";
 import { createOrderedOutbox } from "./writers.ts";
-import { createOutboundAuthoriser, disabledMappings, freezeMappingAuthority, mappingsForRepo } from "./mappings.ts";
+import { createOutboundAuthoriser, disabledMappings, freezeMappingAuthority, mappingForOrphanLink, mappingsForRepo } from "./mappings.ts";
+import type { OrphanSourceLink } from "./mappings.ts";
 import { createRouter, inboundHandler } from "./reducers.ts";
 import { handleMirroredIssue, handlePendingMirroredIssue } from "./issues.ts";
 import { findLinkId, handleCreatedPr } from "./pr.ts";
@@ -205,8 +206,8 @@ export async function runService(
 }
 
 /** §1.3: an orphaned link is reported on the GitHub side when the mapping's linkback toggle is on. Nothing is closed. */
-export async function linkbackOnOrphan(ctx: AppContext, link: { gh_repo_id: string | number; gh_number: number; plane_issue_id: string; plane_workspace_slug: string }): Promise<void> {
-  const mapping = (await mappingsForRepo(ctx.db, Number(link.gh_repo_id))).find((m) => m.workspaceSlug === link.plane_workspace_slug);
+export async function linkbackOnOrphan(ctx: AppContext, link: OrphanSourceLink): Promise<void> {
+  const mapping = await mappingForOrphanLink(ctx.db, link);
   if (!mapping || !mapping.linkbackEnabled) return;
   const installationId = await installationFor(ctx, mapping);
   const write = {

@@ -132,7 +132,8 @@ test("the unique index refuses a second label_sync link for the same GitHub issu
 test("an orphaned link is reported on GitHub when linkback is on, and never closes anything", async () => {
   const h = await makeHarness();
   await h.mapping({ linkback: true });
-  await linkbackOnOrphan(h.ctx, { gh_repo_id: 555, gh_number: 9, plane_issue_id: "gone", plane_workspace_slug: "ws" });
+  await linkbackOnOrphan(h.ctx, { gh_repo_id: 555, gh_number: 9, plane_issue_id: "gone", plane_workspace_slug: "ws",
+    plane_project_id: "p-qll", gh_kind: "issue", created_by: "label_sync" });
   const w = h.gh.writes();
   strictEqual(w.length, 1);
   strictEqual(w[0]!.route, "POST /repos/{owner}/{repo}/issues/{issue_number}/comments");
@@ -143,7 +144,8 @@ test("an orphaned link is reported on GitHub when linkback is on, and never clos
 test("with linkback off an orphan is silent", async () => {
   const h = await makeHarness();
   await h.mapping({ linkback: false });
-  await linkbackOnOrphan(h.ctx, { gh_repo_id: 555, gh_number: 9, plane_issue_id: "gone", plane_workspace_slug: "ws" });
+  await linkbackOnOrphan(h.ctx, { gh_repo_id: 555, gh_number: 9, plane_issue_id: "gone", plane_workspace_slug: "ws",
+    plane_project_id: "p-qll", gh_kind: "issue", created_by: "label_sync" });
   strictEqual(h.gh.writes().length, 0);
   await h.close();
 });

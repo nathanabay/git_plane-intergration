@@ -19,7 +19,8 @@ test("F3: maintenance orphan comments freeze their source mapping and refuse exe
       github: { apply: async (write) => { sent.push(write); return { ok: true }; } },
     });
     const ctx = { ...h.ctx, github: ordered.github, plane: ordered.plane };
-    const link = { gh_repo_id: 555, gh_number: 9, plane_issue_id: "gone", plane_workspace_slug: "ws" };
+    const link = { gh_repo_id: 555, gh_number: 9, plane_issue_id: "gone", plane_workspace_slug: "ws",
+      plane_project_id: "p-qll", gh_kind: "issue" as const, created_by: "label_sync" as const };
     strictEqual(deliveryScope.getStore(), undefined, "maintenance has no inbound mapping scope");
     await linkbackOnOrphan(ctx, link);
     const original = await intentJob(h.db);
@@ -35,7 +36,7 @@ test("F3: maintenance orphan comments freeze their source mapping and refuse exe
     deepStrictEqual((await intentJob(h.db, original.id)).data._authority, original.data._authority, "retry never substitutes authority");
 
     // A genuinely new maintenance registration can use the remaining authorized mapping.
-    await linkbackOnOrphan(ctx, { ...link, gh_number: 10 });
+    await linkbackOnOrphan(ctx, { ...link, gh_number: 10, plane_project_id: "p-web", plane_issue_id: "new-orphan" });
     const fresh = await intentJob(h.db);
     deepStrictEqual(fresh.data._authority, { workspaceSlug: "ws", mappingId: String(otherId), repoId: 555, installationId: 1 });
     await ordered.executeGithub(fresh);

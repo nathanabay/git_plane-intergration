@@ -1,6 +1,8 @@
 import type { Db } from "../db/migrate.ts";
 import { appendAudit } from "../db/ledgers.ts";
 import { PlaneApiError } from "../sync/plane.ts";
+import type { SyncLinkRow } from "../db/schema.ts";
+import { resolvePlanValue } from "../operations/plans.ts";
 
 export interface Mapping {
   id: number;
@@ -64,6 +66,62 @@ async function allowedMappings(db: Db, where: string, params: unknown[]): Promis
 
 export async function mappingsForRepo(db: Db, ghRepoId: number): Promise<Mapping[]> {
   return allowedMappings(db, "rm.gh_repo_id = $1", [ghRepoId]);
+}
+
+export type OrphanSourceLink = Pick<SyncLinkRow, "gh_repo_id" | "gh_number" | "plane_issue_id" | "plane_workspace_slug"> &
+  Partial<Pick<SyncLinkRow, "plane_project_id" | "gh_kind" | "created_by">>;
+
+/** Resolve ownership, not a repository-wide default. A PR's target project does not identify its source mapping. */
+export async function mappingForOrphanLink(db: Db, link: OrphanSourceLink): Promise<Mapping | null> {
+  if (!link.plane_project_id) return null;
+  const repoId = Number(link.gh_repo_id);
+  const source = async (mappingId?: string) => {
+    const matches = await allowedMappings(db, `rm.gh_repo_id = $1 AND rm.workspace_slug = $2 AND ${mappingId === undefined ? "rm.plane_project_id = $3" : "rm.id = $3"}`,
+      [repoId, link.plane_workspace_slug, mappingId ?? link.plane_project_id]);
+    return matches.length === 1 ? matches[0]! : null;
+  };
+  if (link.gh_kind === "issue" && link.created_by === "label_sync") return source();
+  if (link.gh_kind !== "pr") return null;
+
+  // A -NEW create stores its source authority alongside the exact sync-link action and saved remote ID.
+  // Retention may remove this evidence; an unrelated current project mapping must never replace it.
+  const candidates = (await db.query<{ write: any; result: any }>(`SELECT write, result FROM outbound_writes
+    WHERE side = 'plane' AND write->>'kind' = 'create_issue' AND write->>'slug' = $1
+      AND write->>'projectId' = $2 AND result->>'id' = $3 ORDER BY sequence`,
+  [link.plane_workspace_slug, link.plane_project_id, link.plane_issue_id])).rows;
+  const owners = new Set<string>();
+  for (const { write, result } of candidates) {
+    const plan = write._plan;
+    if (!plan || !Array.isArray(plan.after)) continue;
+    const results = { current: result, ...(typeof plan.bind === "string" ? { [plan.bind]: result } : {}) };
+    const matchesLink = plan.after.some((step: any) => {
+      if (step.kind !== "sync_link") return false;
+      let saved: any;
+      try { saved = resolvePlanValue(step.link, results); } catch { return false; }
+      return saved.planeWorkspaceSlug === link.plane_workspace_slug && saved.planeProjectId === link.plane_project_id
+        && saved.planeIssueId === link.plane_issue_id && Number(saved.ghRepoId) === repoId
+        && saved.ghNumber === link.gh_number && saved.ghKind === "pr";
+    });
+    if (!matchesLink) continue;
+    if (Object.hasOwn(write, "_authority")) {
+      const authority = write._authority;
+      if (!authority || authority.workspaceSlug !== link.plane_workspace_slug || authority.repoId !== repoId
+        || typeof authority.mappingId !== "string" || !/^[1-9]\d*$/.test(authority.mappingId)) return null;
+      owners.add(authority.mappingId);
+    } else if (typeof plan.root === "string") {
+      // Older workflows already retained the original PR continuation's source mapping, before _authority existed.
+      const resumes = (await db.query<{ write: any }>(`SELECT write FROM outbound_writes
+        WHERE write->'_plan'->>'root' = $1 AND write->>'kind' = 'resume_reducer'
+          AND write->'continuation'->>'kind' = 'pr_created'`, [plan.root])).rows;
+      for (const { write: resume } of resumes) {
+        const c = resume.continuation;
+        if (c.projectId === link.plane_project_id && Number(c.job?.payload?.repository?.id) === repoId
+          && c.job?.payload?.pull_request?.number === link.gh_number && Number.isSafeInteger(c.mappingId) && c.mappingId > 0)
+          owners.add(String(c.mappingId));
+      }
+    }
+  }
+  return owners.size === 1 ? source([...owners][0]!) : null;
 }
 
 /** Mappings of a Plane project, optionally narrowed to one workspace (F2: a project id alone is not an authority). */
