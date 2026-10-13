@@ -6,25 +6,36 @@ import { appendAudit, recordAppliedOps, upsertSyncLink, readRetention, pruneLedg
 import { pruneExpiredOps, reconcileOnce } from "../../src/sync/reconcile.ts";
 import { PlaneApiError } from "../../src/sync/plane.ts";
 
+// A 404 is orphaned at once only when Plane's activities show a delete (A2); 200 is visible; other statuses fail.
+const deletedActivity = [{ verb: "deleted", field: "issue", created_at: "2026-10-01T00:00:00Z" }];
 async function setup(statuses: Record<string, number>) {
   const db = new PGlite(); await db.waitReady; await migrate(db);
   const calls: string[] = [];
-  const plane = { getIssue: async (_s: string, _p: string, id: string) => {
-    calls.push(id);
-    const st = statuses[id] ?? 200;
-    if (st !== 200) throw new PlaneApiError(st, {}, "x");
-    return { id };
-  } } as any;
+  const plane = {
+    getIssue: async (_s: string, _p: string, id: string) => {
+      calls.push(id);
+      const st = statuses[id] ?? 200;
+      if (st !== 200) throw new PlaneApiError(st, {}, "x");
+      return { id };
+    },
+    listIssueIds: async () => {
+      const ids = Object.keys(statuses).filter((id) => statuses[id] === 200);
+      calls.push(...ids);
+      return { ids, complete: true, totalPages: 1 };
+    },
+    getProject: async () => ({ id: "p", archived_at: null }),
+    listIssueActivities: async () => deletedActivity,
+  } as any;
   for (const id of Object.keys(statuses)) await upsertSyncLink(db, { planeWorkspaceSlug: "ws", planeProjectId: "p", planeIssueId: id, ghRepoId: 1, ghNumber: Number(id.slice(1)), ghKind: "issue", tier: "closing", createdBy: "manual" });
   return { db, plane, calls };
 }
 const link = (db: PGlite, id: string) => db.query<any>("SELECT status, last_checked_at, orphaned_at FROM sync_links WHERE plane_issue_id = $1", [id]).then((r) => r.rows[0]);
 
-test("reconcile: 404 orphans with audit and callback; 200 stamps; 500 is counted and leaves the link active", async () => {
+test("reconcile: a deleted item's 404 orphans with audit and callback; 200 stamps; 500 is counted and leaves the link active", async () => {
   const { db, plane } = await setup({ i1: 200, i2: 404, i3: 500 });
   const orphans: unknown[] = [];
   const r = await reconcileOnce({ db, plane, onOrphan: async (l) => { orphans.push(l.plane_issue_id); } });
-  deepStrictEqual(r, { checked: 3, orphaned: 1, errors: 1 });
+  deepStrictEqual(r, { checked: 3, orphaned: 1, archived: 0, errors: 1 });
   strictEqual((await link(db, "i2")).status, "orphaned"); ok((await link(db, "i2")).orphaned_at);
   ok((await link(db, "i1")).last_checked_at); strictEqual((await link(db, "i3")).last_checked_at, null);
   deepStrictEqual(orphans, ["i2"]);
@@ -40,14 +51,19 @@ test("reconcile: pages through every active link with a small batch", async () =
 test("reconcile: an orphaned link is not checked again, and the sweep survives a failing callback", async () => {
   const { db, plane, calls } = await setup({ i1: 404 });
   const r1 = await reconcileOnce({ db, plane, onOrphan: async () => { throw new Error("github down"); } });
-  deepStrictEqual(r1, { checked: 1, orphaned: 1, errors: 1 });
+  deepStrictEqual(r1, { checked: 1, orphaned: 1, archived: 0, errors: 1 });
   calls.length = 0;
-  deepStrictEqual(await reconcileOnce({ db, plane }), { checked: 0, orphaned: 0, errors: 0 });
+  deepStrictEqual(await reconcileOnce({ db, plane }), { checked: 0, orphaned: 0, archived: 0, errors: 0 });
   strictEqual(calls.length, 0);
 });
 test("reconcile: only GETs the Plane issue — no write method is even available to it", async () => {
   const { db, calls } = await setup({ i1: 404 });
-  const plane = { getIssue: async (_s: string, _p: string, id: string) => { calls.push(id); throw new PlaneApiError(404, {}, "x"); } } as any; // no request(), no write path
+  const plane = { // reads only: no request(), no write path
+    getIssue: async (_s: string, _p: string, id: string) => { calls.push(id); throw new PlaneApiError(404, {}, "x"); },
+    getProject: async () => ({ id: "p", archived_at: null }),
+    listIssueActivities: async () => deletedActivity,
+    listIssueIds: async () => ({ ids: [], complete: true }),
+  } as any;
   strictEqual((await reconcileOnce({ db, plane })).orphaned, 1);
 });
 test("pruneExpiredOps removes only ops past the TTL", async () => {
