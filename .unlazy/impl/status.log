@@ -222,3 +222,40 @@
 2026-10-12T07:11:42Z test: building fork images (docker cap raised to 9G for the build)
 2026-10-12T13:55:59Z docs audit: Claude Opus (ao, Plane side) + Codex (ac, GitHub side) using Context7, brief .unlazy/impl/briefs/audit-docs.md
 2026-10-12T14:16:13Z docs audit done: Plane 0/3/7 (A2 archived=deleted confirmed in v1.4.2 source), GitHub 0/15/1 (A1 user lookup without installation auth reproduced live against the App)
+2026-10-12T14:18:24Z audit fix pass dispatched: G1 ac Codex, G2 g2 Codex, G3 ao Claude Opus, G4 g4 Claude Opus, G5 g5 Codex (brief fix-audit.md; typecheck only, tests after)
+2026-10-12T14:30:16Z audit fix: G3 DONE, G4 DONE; G4 driver items routed (G5 spool+secret+main.ts path, G2 isPermanent, G3 pr.ts path, G4 APPLY.md + outdated tests); driver updates spec
+2026-10-12T14:48:28Z audit fix round 2: G2 deployment ordering + SC identities + readiness reader + its stale fixtures; G1 stale github tests; G3 stale mirror/pr fixtures; G4 Plane 429 deferral; G5 still on round 1
+2026-10-12T14:54:18Z audit fix: G4 round-2 diffs routed (errors/workers/outbox -> G1, smart-commits -> G2, its 2 tests -> G4); G3 consolidates review reader on readPrReviews
+2026-10-12T15:22:26Z audit fix test phase: whole suite 11 failures; oracles a4/a5-a7/wiring stale (work-items URLs, 429 deferral, A2 orphaning) - driver; installation/identity x7 -> G5, F14 compare -> G2, orphan replacement x3 -> G4
+2026-10-12T15:29:38Z test phase: G2 TESTS DONE; G4 TESTS DONE (orphan tests now confirm delete, assertions unchanged); G5 allowed a narrow src/app/issues.ts edit (skip+audit confirmed-missing installation before freezing authority, F7), G3 idle
+2026-10-12T15:34:45Z parity plan wave 1 started on idle agents: G4 migration 010, G3 spec amendment + C4/C5 server, G2 C6/C7 converter + N2, G1 C8 hosts + N7 docs (brief parity-wave1.md); G5 still on audit test fix
+2026-10-12T15:52:15Z parity w1: G3 DONE (spec amendment draft, C4, C5), G4 DONE (migration 010 + src/db/parity.ts); follow-ups: G3 state_reason in sync/github.ts + C4-stale mirror tests; G4 r5-ce migration-list test; hosts.ts-dependent wiring (issues.ts, credentials.ts) waits for G1
+2026-10-12T15:53:35Z user APPROVED spec Amendment A1 (§12, parity C0-C8 + N1-N7)
+2026-10-12T15:54:05Z parity wave 2 queued: G3 C1-C3 server, G4 N3 dev panel + fork; G5/G1/G2 get wave 2 after their wave-1 work (brief parity-wave2.md)
+2026-10-12T15:54:49Z parity: G1 wave 1 DONE (C8 hosts.ts, N7 docs); wave 2 dispatched (C8 wiring, githubWebOrigin, N7 setup-check)
+2026-10-12T15:58:14Z parity: G5 wave 1 DONE (N6, N4); wave 2 dispatched (N1, N5, N6 setting, then C1-C3 UI)
+2026-10-12T15:59:47Z parity: G3 connection lost after writing the C1-C3 contract; told to continue; contract relayed to G5
+2026-10-12T16:08:11Z parity: G3 DONE W2 (C1-C3 modules), G4 DONE W2 (N3 panel + fork patch); follow-ups: G3 revoke grant + cron prune + install-request privacy; G4 fork oracle/spec/README; G5 relayed api.ts/main.ts wiring; asUser for G2 later
+2026-10-12T16:11:59Z parity: G3 DONE W2b (revoke, cron prune, requester filter); G4 DONE W2b (fork oracle passes, spec/README fork count); G5 told to use G3's published contract
+2026-10-12T16:12:14Z parity: G3 -> asUser attribution in mirror.ts/rules.ts; G4 -> update stale oracles a4-writepath, a5-a7, wiring (work-items, 429 deferral, A2 orphaning)
+2026-10-12T16:16:28Z parity: G3 DONE W2c (asUser in mirror/rules); assigned read-only security review of G5's C1-C3 wiring
+2026-10-12T16:23:12Z parity: G1 DONE W2; G4 oracles: a4 PASS(15), a5-a7 PASS(13), wiring blocked by UI build (node:crypto in pr-automation.ts from G2 N2) -> G2; G3 review 6 findings -> G5 (1,2,4,5,6) + G3 revoke helper (3)
+2026-10-12T16:24:56Z parity: C6/C7 mirror wiring reassigned to G3 (owns mirror.ts); G2 keeps text.ts stable, does the build fix + N2
+2026-10-12T16:34:13Z remaining pieces: build fix landed (G2, node:crypto removed, UI bundle builds); C4 dropdown reassigned G5->G4 (mapping dialog only); G5 security fixes + C1-C3 screens; G2 N2
+2026-10-12T16:37:00Z C4: G4 DONE C4UI (dropdowns in mapping dialog); validate/api/types follow-ups relayed to G5
+2026-10-12T16:44:10Z N2: G2 granted sync/github.ts + operations/outbox.ts for problem_report dispatch; G3 adds unresolved-reference PR report in pr.ts; told G2 build fix already done
+2026-10-12T16:46:04Z deep security audit started: G4 web side, G1 backend side (brief security-audit.md, report only, Context7)
+2026-10-12T16:48:34Z installed cloudflare/security-audit-skill (c1c8a8c) at ~/.claude/skills/security-audit; both security auditors switched to its full audit mode (web: G4, backend: G1), outputs ~/security-audit-skill/git_plane-intergration/run-1-{web,backend}
+2026-10-12T16:49:08Z user rule: all agents use cloudflare security-audit skill (auditors full mode; implementers G2/G3/G5 guidance mode on their own changes)
+2026-10-12T16:56:10Z user decision: installation claim requires GitHub org owner/admin (not triage on one repo); assigned to G3 with handoff preserved
+2026-10-12T17:01:26Z G3 DONE CLAIM (org owner/admin required, hand-off bound to org); UI fields relayed to G5
+2026-10-12T18:23:29Z security audits done: backend 0 confirmed (5 unconfirmed); web 1H/4M/2L unconfirmed; driver CONFIRMED web S1 (create_issue project path traversal -> cross-workspace Plane write); fix assigned to G4 (encode segments, validate rule project, authoriser workspace check)
+2026-10-12T18:41:51Z all five agents done (parity C0-C8 N1-N7 implemented, claim rule, S1 fixed, security audits); pushing snapshot to seal-wip, then full check
+2026-10-12T18:46:53Z user: do all remaining + deep e2e. Security validation (read-only during the suite run): G4 web S2-S7, G1 backend U1-U5
+2026-10-12T19:02:01Z full run: oracles 9/11 (b3: C3 linked-user 409; wiring: hosts HTTPS-only blocks loopback fake), suite timed out at 15m with 10 fails. Routed: A->G3 (C3 fixtures+b3 oracle), B->G4 (r8-cd provenance), C->G1 (hosts loopback); driver raised run-tests limit to 30m
+2026-10-13T09:49:15Z triage done: wiring 6/6 (G1 loopback), r8-cd/fixes-r2/r4-sa/r5-cd pass (G3,G4); web S2-S7 confirmed+fixed (G4, migration 011); backend U1-U5 still unconfirmed. Starting full re-run (30m suite limit)
+2026-10-13T10:21:14Z second full check: typecheck/stubs pass, 10/11 oracles (b3 fails after S2-S7 -> G4), suite killed mid-run (831 tests, likely a hanging test) -> driver running per-file with timeouts
+2026-10-13T11:04:43Z per-file run: 95 files, 1037 pass, 38 fail, review-r5-ce hangs (killed the suite). Routed per owner (G4 hang+db+audit+parity2-g4, G1 N7, G2 SC/N2/service, G3 mirror, G5 ui x6 files); list in docs/impl/test-failures-parity.md
+2026-10-13T14:18:55Z full run: 70/95 files, only failure audit-g4 A5 (91 sends in one minute: window-boundary off-by-one in plane.ts TokenBucket); G4 preparing fix, apply after run
+2026-10-13T14:29:59Z full run DONE: typecheck+stubs pass, 11/11 oracles pass, 95 files 1100 pass 1 fail (A5 limiter boundary); G4 applying fix
+2026-10-13T14:37:07Z A5 fixed by G4 (audit-g4 25/25); final typecheck, then 16 commits on seal and push

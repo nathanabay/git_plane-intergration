@@ -105,7 +105,11 @@ emits one. This is a hard platform limit with three consequences:
    leaves its GitHub counterpart and its `sync_links` row orphaned.
 2. Mitigation is a **periodic reconciliation sweep** over `sync_links`: re-fetch each linked
    Plane issue, and on a 404 mark the link `orphaned` and optionally comment on the GitHub side.
-   Frequency is a config value; this is the only polling in the system.
+   Frequency is a config value; this is the only polling in the system. A 404 is not proof of
+   deletion: Plane v1.4.2 also hides **archived** items, and items in archived projects, from the
+   detail endpoint. An archived item is marked `archived`, stays linked and gets no linkback; an
+   unexplained 404 orphans only after Plane's activity shows a delete or a second sweep agrees
+   (docs audit, Plane A2).
 3. Deletion is therefore **never** treated as a state transition. An unreachable issue is
    `orphaned`, not "closed" — guessing would silently close live GitHub issues.
 
@@ -185,8 +189,11 @@ Error envelope is uniformly `{"error": "<message>"}`; `400` validation, `403` pe
 3. BullMQ runs on the Valkey already in the compose.
 
 **Request path does three things only:** verify signature, enqueue, return 200. No business
-logic in the handler — both GitHub and Plane retry on slow responses, and a slow handler is a
-loop generator.
+logic in the handler — a slow handler is a loop generator. GitHub retries nothing automatically
+(failed deliveries are redelivered by hand or API), and Plane v1.4.2 does not redeliver a failed
+delivery and disables the webhook after repeated failures. So the Plane ingress answers 2xx once
+the delivery is queued **or spooled to Postgres** for later replay, and a silent Plane webhook is
+surfaced as a health signal (docs audit, Plane A1).
 
 **Queues**, separated so one side's outage cannot stall the other:
 - `inbound:github` — parse and reduce GitHub events
@@ -234,7 +241,9 @@ from human edits. Content-hash dedupe is what keeps per-user attribution possibl
 most machinery in the design and it is deliberate.
 
 **Separate idempotency keys, not to be conflated:**
-- Webhook redelivery → `X-Plane-Delivery` / `X-GitHub-Delivery`, stored and rejected on repeat.
+- Webhook redelivery → `X-GitHub-Delivery`, stored and rejected on repeat. Plane issues a new
+  `X-Plane-Delivery` on every attempt, so Plane events are also de-duplicated on a short-lived
+  content key (docs audit, Plane A4).
 - Commit-message commands → **keyed on commit SHA**, processed exactly once. This fixes two
   documented Jira bugs: fork pushes re-delivering the same commit, and history rewrites
   (rebase, amend) producing "new" commits that re-fire commands.
@@ -374,6 +383,10 @@ comments.
 **Conflict policy** — stated explicitly rather than Plane's blunt "GitHub overwrites": each
 field is configured `last_write_wins` or `source_of_truth:<side>`. Default
 `source_of_truth:github` for title/description, `last_write_wins` for state and assignees.
+Neither platform guarantees delivery order (docs audit, Plane A3 and GitHub A10), so "last write"
+is judged by the source's own `updated_at`, not by arrival: for full-value fields (title,
+description, state, assignees) the mirror applies the partner's current value when it is newer than
+the delivered snapshot, and drops an older snapshot. Label and comment events stay incremental.
 
 Assignee and mention mapping uses the user map (§9); unmapped users leave the field empty and
 mentions degrade to a profile link, as Plane Pro does.
@@ -395,7 +408,7 @@ markdown links ending in "Preview" are surfaced as named shortcuts on the work i
 Plane's schema** — we do not own it. The achievable version is a reserved title prefix
 (`[CI] Build #42`, `[Deploy] production`) that our UI renders with an icon, degrading to readable
 plain text in Plane's native UI. Anything richer requires a Plane fork, which §8 deliberately
-limits to seven files.
+limits to eight files (seven before Amendment A1's Development panel, §12.8).
 
 **Autolinks are optional and off by default.** Turning `WEB-344` into a clickable link in GitHub
 uses `POST /repos/{owner}/{repo}/autolinks`, which requires repository **`Administration: Write`**
@@ -461,11 +474,13 @@ Split across the two Plane frontends, per the approved decision:
 **Mechanism:** each fork adds a nav entry and a route component that renders an `<iframe>`
 pointing at our proxied UI. Both frontends use an *explicit* React Router route config
 (`app/routes.ts` imports `index`/`layout`/`route` from `@react-router/dev/routes`), so each app
-also needs its `routes.ts` edited: **seven files of fork surface total** — three in admin (nav
-entry, route component, route registration) and four in web, because the workspace settings
+also needs its `routes.ts` edited: **eight files of fork surface total** — three in admin (nav
+entry, route component, route registration) and five in web: four for the settings page, because the workspace settings
 layout renders "not authorized" for any path missing from `WORKSPACE_SETTINGS_ACCESS` in
 `packages/constants/src/settings/workspace.ts`, so the web fork also lists `/settings/git-sync`
-there, admin-only (found by running the fork against a real v1.4.2 install). At v1.4.2 the workspace-settings nav entries
+there, admin-only (found by running the fork against a real v1.4.2 install), plus
+`apps/web/core/components/issues/issue-detail/sidebar.tsx`, where `IssueDetailsSidebar` embeds the
+work-item Development panel iframe (Amendment A1, §12.8 N3). At v1.4.2 the workspace-settings nav entries
 are defined in `packages/constants/src/settings/workspace.ts` and the admin nav in
 `apps/admin/app/(all)/(dashboard)/sidebar-menu.tsx`; the exact files are recorded with the fork
 patches. All real UI is one React app
@@ -538,7 +553,7 @@ the queue for ordering, retries and GitHub's own secondary rate limits; honour
 
 | Risk | Mitigation |
 |---|---|
-| Fork maintenance across Plane releases | 6 files, iframe-only; pin `APP_RELEASE`; rebuild fork images on upgrade. `apps/web` moves faster than `apps/admin` — expect the nav array to be the recurring conflict. |
+| Fork maintenance across Plane releases | 8 files, iframe-only; pin `APP_RELEASE`; rebuild fork images on upgrade. `apps/web` moves faster than `apps/admin` — expect the nav array to be the recurring conflict. |
 | AGPL-3.0 obligations | Internal use of a fork is fine; publishing source becomes required if offered to third parties. |
 | No upstream plugin seam | Accepted and designed around; revisit if Plane ever ships an extension API. |
 | Plane Commercial may later make this redundant | A license buys ~80% of this, maintained by someone else. Flagged to the user; decision made to own it. The rule engine, dry-run, audit replay and deployment data are not in the Commercial product. |
@@ -553,3 +568,180 @@ the queue for ordering, retries and GitHub's own secondary rate limits; honour
 - ~~Confirm Plane's state group vocabulary~~ — **RESOLVED from the live DB: six groups
   including `triage`; see §7.1.**
 - Decide whether to raise `API_KEY_RATE_LIMIT`, and to what.
+
+---
+
+## 12. Amendment A1 — parity with Plane's GitHub integration (APPROVED by the user, 2026-10-12)
+
+**Status:** proposal, 2026-10-12. Nothing above is changed by this section; where it extends or
+overrides an earlier section it says so. UI wave 2 (C1–C3, N1, N4–N6) builds on it only after the
+user approves it. Plan: `docs/plan/parity-plan.md`. Research: `reports/GitHub integration UX audit.md`.
+
+API facts were fetched through Context7: GitHub docs `/websites/github_en`, GitHub REST
+`/websites/github_en_rest`, Plane developer docs `/websites/developers_plane_so`. Where Plane's
+current docs describe a newer API than v1.4.2, the v1.4.2 source was read
+(`raw.githubusercontent.com/makeplane/plane/v1.4.2/…`) and is named.
+
+### 12.1 App settings and edition (C0, C8) — extends §3 and §8
+
+- The GitHub App gains a **Client ID** and **Client secret** (needed for user access tokens) and an
+  **app slug** (for the install URL). The secret is stored encrypted like the private key and is
+  never sent to the browser. An optional env bootstrap mirrors the existing App credentials.
+- Two registered URLs: `callback_urls[] = <PUBLIC_ORIGIN>/git-sync/oauth/github/callback` and
+  `setup_url = <PUBLIC_ORIGIN>/git-sync/install/github/callback` with `setup_on_update = true`.
+  GitHub: `callback_urls` are "used if your app needs to generate a user access token";
+  `setup_url` is where people go "after someone installs the GitHub App"; `setup_on_update`
+  redirects there "after repositories are added or removed"; `request_oauth_on_install` makes
+  `setup_url` unavailable, so it stays **off** and install and user authorization remain separate
+  steps (`/websites/github_en`, "Registering a GitHub App using URL parameters").
+- **Edition** (replaces §8's "optional GHE base URL"): GitHub.com (`api.github.com` /
+  `github.com`), GitHub Enterprise Cloud with data residency (`api.<sub>.ghe.com` /
+  `<sub>.ghe.com`, per `/websites/github_en` "About versions of GitHub Docs › GHE.com"), or
+  GitHub Enterprise Server (`<base>/api/v3` / `<base>`). Every web URL the service builds (install,
+  OAuth, issue links, references) uses the edition's web origin; nothing hardcodes github.com.
+- One App per Plane install remains (§3). A per-workspace App is a recorded later option.
+
+### 12.2 Connect flow (C1) — new; extends §8 workspace settings
+
+- **Connect GitHub** sends a workspace admin to
+  `https://<web origin>/apps/<app_slug>/installations/new?state=<signed nonce>`. The nonce binds
+  workspace slug, Plane user, purpose and expiry; it is stored server-side and single use.
+- The setup callback verifies and consumes the state, then **never trusts `installation_id` from
+  the URL**: it confirms the id is among the admin's own installations
+  (`GET /user/installations` with their user access token, §12.3), fetches the account with the App
+  JWT (`GET /app/installations/{id}`), and allow-lists it for the workspace. The existing rule that
+  an installation belongs to one workspace makes a second workspace's attempt fail clearly.
+- `setup_action=update` re-runs mapping verification.
+- **Owner handoff:** an admin who cannot install the App on the org gets an installation request
+  instead. The Connect screen lists pending requests (`GET /app/installation-requests`, App JWT,
+  `/websites/github_en_rest`) and offers a copyable install link carrying the same signed state,
+  so the owner's approval lands back on this workspace. No undocumented `setup_action` value is
+  relied on.
+- The page shows the connected account's name and avatar and a **Disconnect** button (removes the
+  allow-list row; mappings become disabled, as today).
+
+### 12.3 Personal GitHub account linking (C2) — replaces §9's "phase 2" GitHub half
+
+- Any workspace member (not only admins) may link **their own** account from a member-level
+  settings entry; admins keep manual linking for others.
+- Authorization: `https://<web origin>/login/oauth/authorize` with `client_id`, `redirect_uri`,
+  `state` and PKCE `code_challenge` (`S256`). The callback exchanges the code at
+  `POST /login/oauth/access_token` with `client_id`, `client_secret`, `code`, `redirect_uri` and
+  `code_verifier`; the response carries `access_token`, `expires_in`, `refresh_token` and
+  `refresh_token_expires_in` (`/websites/github_en`, "Generating a user access token for a GitHub
+  App"). Tokens and both expiries are stored encrypted in `user_tokens` (kind `github_oauth`).
+- `GET /user` identifies the account; `user_map` is written by **GitHub account id** (logins can be
+  renamed), and the user's unlink tombstone is cleared.
+- **Refresh** ahead of expiry with `grant_type=refresh_token`, which returns a new access token
+  and a new refresh token (same source), under a per-user lock with a single flight. A failed
+  refresh marks the link **Needs re-authorization** (shown with a **Reconnect** button on the
+  user's row and the admin's list) and writes fall back to the service identity; no write is
+  dropped.
+- **Attribution:** GitHub writes on behalf of a linked user use their user token when the App's
+  installation covers the repository; otherwise the installation token with in-text attribution,
+  as today. **Disconnect** deletes the tokens and the `user_map` row and writes the tombstone.
+- A banner invites members who have not linked their account.
+
+### 12.4 User-scoped repository picker (C3) — extends §8 mappings
+
+- The mapping dialog lists repositories with the admin's user token:
+  `GET /user/installations/{installation_id}/repositories` ("repositories that the authenticated
+  user has explicit permission … to access for an installation", `per_page` max 100,
+  `/websites/github_en_rest`). Every page is followed.
+- The server re-checks on save that the chosen repository is in that list for this user, then runs
+  the existing mapping verifier. Without a linked account the picker says linking is required;
+  instance admins keep manual id entry.
+
+### 12.5 Per-mapping open and closed states (C4) — amends §7.3 "state (open/closed → mapped states)"
+
+- A mapping may choose an **open state** and a **closed state** from the project's states (triage
+  states excluded: Plane v1.4.2's `State` default manager excludes `triage`,
+  `plane/db/models/state.py`).
+- GitHub → Plane: a closed issue moves the item to the chosen closed state, a reopened one to the
+  chosen open state. When none is chosen, or the chosen state no longer exists or is a triage
+  state, the mirror uses the project's default *completed* (closed) or *unstarted* (open) state,
+  and a chosen-but-missing state is written to the audit log as `mirror_state_fallback`. A GitHub
+  issue that is created closed lands in the closed state; one created open lands in the chosen open
+  state if there is one, otherwise in Plane's own default.
+- Plane → GitHub: a state in the **completed** group closes the issue with
+  `state_reason: completed`; the **cancelled** group closes it with `state_reason: not_planned`;
+  any other group reopens it (`state_reason: reopened`). GitHub's `state_reason` accepts
+  `completed`, `not_planned`, `duplicate`, `reopened` or `null` and "is ignored unless state is
+  changed" (`/websites/github_en_rest`, "Update an issue").
+- The PR-lifecycle table and the rule editor use the same state picker (N4).
+
+### 12.6 Cross-links on mirrored pairs (C5) — amends §7.3 "A cross-link comment confirms the connection"
+
+- When a mirror pair is created, and only while the mapping's **linkback** toggle is on:
+  - one **Plane link** on the work item to the GitHub issue (title `GitHub issue owner/repo#N`).
+    GitHub → Plane uses the delivered `html_url`; Plane → GitHub builds it from the edition's web
+    origin (§12.1). Plane v1.4.2 rejects a second link with the same URL on the same item
+    ("URL already exists for this Issue", `plane/api/serializers/issue.py`), and its links endpoint
+    takes `url` (required) and `title` (optional), as the current docs also show
+    (`/websites/developers_plane_so`, "Create link"); and
+  - one **GitHub comment** on the issue linking the Plane work item.
+- Both are steps of the pair's create plan in the durable outbox, keyed by the create generation,
+  so a replayed or re-delivered event never adds them twice. Linkback off posts neither; the
+  mirror itself, and the Plane-side "Mirrored from/to" comment, are unaffected.
+
+### 12.7 Mentions and issue references (C6, C7) — extends §7.3 mention mapping
+
+- GitHub → Plane: `@login` of a mapped user becomes
+  `<mention-component entity_identifier="<plane user id>" entity_name="user_mention"></mention-component>`,
+  the element Plane v1.4.2 parses for notifications (`plane/bgtasks/notification_task.py`); an
+  unmapped login becomes a link to the GitHub profile. Plane → GitHub: a mention of a mapped user
+  becomes `@login`, otherwise their display name.
+- GitHub → Plane: `#123`, `owner/repo#123` and full issue URLs become links to
+  `<web origin>/owner/repo/issues/123`, labelled `owner/repo#123`.
+- Code spans and code blocks are never rewritten. The converted text is what the echo ledger
+  hashes (§5), so a round trip cannot loop. Tables, image alt text, bare URLs and soft wraps
+  survive the conversion (regression cases from makeplane/plane#9077).
+
+### 12.8 Visibility, reporting and setup (N1–N7) — extends §7.6 and §8
+
+- **N1 Sync health:** each mapping shows last GitHub and Plane delivery, last successful write,
+  errors in the last 24 h (linked to a filtered audit view), a **Disabled** badge with its reason
+  and **rate-limited until**. A workspace banner appears when the Plane webhook is silent or the
+  App credentials fail to decrypt. Silent-webhook audit rows carry their workspace; the database
+  check is real. Instance admins get an audit tab for rows with no workspace.
+- **N2 Report failures where the user acted:** an unresolved key on a PR gets one bot comment on
+  the PR, edited in place; a failed Smart Commit gets one commit comment saying why; a failed
+  automation against a known item gets one Plane comment. Each is a durable outbox intent with a
+  stable key, behind a per-mapping **Report problems** toggle (default off).
+- **N3 Branch helpers:** a per-mapping branch-name template that must contain the key, a
+  suggested-branch link on link or create, and a Development panel in the work-item sidebar
+  (PR roll-up, checks, previews, **Copy branch name**, **Create branch** through
+  `POST /repos/{owner}/{repo}/git/refs`). The panel adds one web fork file
+  (`apps/web/core/components/issues/issue-detail/sidebar.tsx`), so the fork is **eight files**:
+  admin 3, web 5. `verify-fork-patch` enforces these limits and checks the panel iframe.
+- **N4 Pickers:** names instead of UUIDs for projects, members and workspaces; one state picker;
+  human labels in the audit log with the raw payload behind **Show raw**; no spec-section
+  references in UI text.
+- **N5 First run:** after **Add mapping**, an offer to link existing open PRs and issues (the
+  existing backfill, resumable), and a setup checklist on an empty mapping page.
+- **N6 Settings bugs:** UI-created mappings start from the instance Smart Commits default; saves
+  preserve `autolinks`; rule versions get a list with **Restore**; dry-run accepts every trigger
+  the engine accepts; **Require signed commits for Smart Commits** becomes an instance setting
+  with `REQUIRE_VERIFIED_COMMITS` as its bootstrap default.
+- **N7 Setup verification:** `deploy/APPLY.md` and `apps/README.md` list the exact App permissions
+  (including **Commit statuses: Read**) and webhook events; the admin page checks them live
+  (`GET /app` with the App JWT), along with credential decryption, the last signed deliveries and
+  Plane's rate limit.
+
+### 12.9 Data (migration 010)
+
+`github_app_config` gains `client_id`, `client_secret_v1` (encrypted), `app_slug`, `edition`,
+`ghe_subdomain`; a new `oauth_states` table holds single-use signed state (nonce, purpose,
+workspace, Plane user, encrypted PKCE verifier, `expires_at`, `consumed_at`); `user_tokens`
+kind `github_oauth` stores the refresh token and both expiries and a `needs_reauth` flag;
+`repo_mappings` gains `open_state_id`, `closed_state_id`, `report_problems` (default false) and
+`branch_template`; the instance settings gain `require_verified_commits`.
+
+### 12.10 Risks added by this amendment
+
+| Risk | Mitigation |
+|---|---|
+| Client secret leakage | Encrypted at rest like the private key; never returned to the browser or logged. |
+| Refresh races invalidating tokens | Per-user lock and single-flight refresh. |
+| Spoofed install or OAuth callbacks | Signed, single-use, expiring state on both; installation ids confirmed through `/user/installations`. |
+| Cross-link noise | Both cross-links gated by linkback; failure reports gated by their own toggle, default off. |
