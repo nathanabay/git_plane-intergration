@@ -2,6 +2,8 @@
 // Wave 5 end-to-end oracle: boots the real service process (src/index.ts) against throwaway
 // Postgres 15.7 and Valkey, a fake Plane API and a fake GitHub API, then drives signed webhooks
 // through ingress → queues → reducers → A4 write path, and checks the resulting API calls.
+// The fake Plane answers item paths as `work-items/` (A10, what the client sends) and the deprecated `issues/`;
+// the fake GitHub's /repos/.../issues/ routes are GitHub's own API and are not affected.
 import { resolve, join } from "node:path";
 import { createServer } from "node:http";
 import { createHmac, generateKeyPairSync } from "node:crypto";
@@ -34,10 +36,10 @@ const planeApi = createServer((req, res) => {
   let body = ""; req.on("data", (d) => (body += d)); req.on("end", () => {
     plane.calls.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null, key: req.headers["x-api-key"] });
     const send = (s, o) => { res.writeHead(s, { "content-type": "application/json" }); res.end(JSON.stringify(o)); };
-    if (req.method === "GET" && /\/api\/v1\/workspaces\/qelal\/issues\/QLL-1\/$/.test(req.url)) return send(200, { id: "iss-1", project: "p-qll", project_id: "p-qll", sequence_id: 1, name: "Login bug" });
-    if (req.method === "GET" && /\/issues\/QLL-\d+\/$/.test(req.url)) return send(404, { error: "Not found" });
+    if (req.method === "GET" && /\/api\/v1\/workspaces\/qelal\/(?:issues|work-items)\/QLL-1\/$/.test(req.url)) return send(200, { id: "iss-1", project: "p-qll", project_id: "p-qll", sequence_id: 1, name: "Login bug" });
+    if (req.method === "GET" && /\/(?:issues|work-items)\/QLL-\d+\/$/.test(req.url)) return send(404, { error: "Not found" });
     if (req.method === "GET" && /\/states\/(\?|$)/.test(req.url)) return send(200, { results: STATES, next_cursor: null, next_page_results: false });
-    if (req.method === "GET" && /\/issues\/iss-1\/$/.test(req.url)) return send(200, { id: "iss-1", project: "p-qll" });
+    if (req.method === "GET" && /\/(?:issues|work-items)\/iss-1\/$/.test(req.url)) return send(200, { id: "iss-1", project: "p-qll" });
     if (req.method === "PATCH") return send(200, { id: "x" });
     if (req.method === "POST" && /\/links\/$/.test(req.url)) return send(201, { id: `link-${plane.calls.length}` });
     if (req.method === "POST") return send(201, { id: `new-${plane.calls.length}` });
@@ -104,8 +106,8 @@ try {
     const r = await ghHook("pull_request", { action: "opened", installation: { id: 1 }, repository: repo, sender: { login: "octo", id: 1, type: "User" },
       pull_request: { number: 12, title: "Fix login", body: "Fixes QLL-1", draft: false, merged: false, state: "open", html_url: "https://github.com/acme/web/pull/12", base: { ref: "main" }, head: { ref: "octo/login" }, labels: [], user: { login: "octo" } } }, "e2e-pr-1");
     strictEqual(r.status, 200);
-    ok(await until(() => plane.calls.some((c) => c.method === "PATCH" && /\/issues\/iss-1\/$/.test(c.url) && c.body?.state === "s-prog")), `no state write; Plane saw ${JSON.stringify(plane.calls.map((c) => c.method + " " + c.url))}; service: ${out.slice(-600)}`);
-    ok(await until(() => plane.calls.some((c) => c.method === "POST" && /\/issues\/iss-1\/links\/$/.test(c.url) && /pull\/12/.test(c.body?.url ?? ""))), "no PR link on the work item");
+    ok(await until(() => plane.calls.some((c) => c.method === "PATCH" && /\/(?:issues|work-items)\/iss-1\/$/.test(c.url) && c.body?.state === "s-prog")), `no state write; Plane saw ${JSON.stringify(plane.calls.map((c) => c.method + " " + c.url))}; service: ${out.slice(-600)}`);
+    ok(await until(() => plane.calls.some((c) => c.method === "POST" && /\/(?:issues|work-items)\/iss-1\/links\/$/.test(c.url) && /pull\/12/.test(c.body?.url ?? ""))), "no PR link on the work item");
     ok(await until(async () => (await sql.query(`SELECT tier FROM sync_links WHERE plane_issue_id = 'iss-1' AND gh_number = 12`)).rows[0]?.tier === "closing"), "sync link with tier closing not recorded");
     ok(plane.calls.filter((c) => c.method !== "GET").every((c) => c.key === "plane_api_SERVICE"), "writes did not use the service PAT");
   });
@@ -124,7 +126,7 @@ try {
     plane.calls.length = 0;
     await ghHook("push", { ref: "refs/heads/main", installation: { id: 1 }, repository: repo, sender: { login: "stranger", id: 99, type: "User" }, pusher: { name: "boss", email: "boss@corp" },
       commits: [{ id: "f".repeat(40), message: "QLL-1 #comment e2e hello", author: { name: "Boss", email: "boss@corp", username: "boss" } }], head_commit: { id: "f".repeat(40) } }, "e2e-push-1");
-    ok(await until(() => plane.calls.some((c) => c.method === "POST" && /\/issues\/iss-1\/comments\/$/.test(c.url) && /e2e hello/.test(JSON.stringify(c.body)))), `no Smart Commit comment; Plane saw ${JSON.stringify(plane.calls.map((c) => c.method + " " + c.url))}`);
+    ok(await until(() => plane.calls.some((c) => c.method === "POST" && /\/(?:issues|work-items)\/iss-1\/comments\/$/.test(c.url) && /e2e hello/.test(JSON.stringify(c.body)))), `no Smart Commit comment; Plane saw ${JSON.stringify(plane.calls.map((c) => c.method + " " + c.url))}`);
     ok(plane.calls.filter((c) => c.method === "POST").every((c) => c.key === "plane_api_SERVICE"));
     ok(await until(async () => (await sql.query(`SELECT count(*)::int AS n FROM audit_log WHERE kind ILIKE '%identity_fallback%'`)).rows[0].n >= 1), "fallback not audited");
   });

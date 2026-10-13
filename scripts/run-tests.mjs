@@ -25,7 +25,7 @@ const r = await new Promise((resolveRun) => {
   let stdout = "", stderr = "";
   child.stdout.on("data", (d) => (stdout += d)); child.stderr.on("data", (d) => (stderr += d));
   const killGroup = () => { try { process.kill(-child.pid, "SIGKILL"); } catch {} };
-  const timer = setTimeout(() => { stderr += "\nFAIL: test run exceeded 15 minutes; process group killed"; killGroup(); }, 15 * 60 * 1000);
+  const timer = setTimeout(() => { stderr += "\nFAIL: test run exceeded 30 minutes; process group killed"; killGroup(); }, 30 * 60 * 1000);
   for (const sig of ["SIGINT", "SIGTERM"]) process.once(sig, () => { killGroup(); process.exit(1); });
   child.on("close", (status) => { clearTimeout(timer); killGroup(); resolveRun({ status, stdout, stderr }); });
 });

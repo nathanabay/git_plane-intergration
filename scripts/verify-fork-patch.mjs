@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Oracle for tasks B1 and B2 (spec §8). Applies each fork patch to a pristine makeplane/plane
-// v1.4.2 checkout, enforces the seven-file fork surface (admin 3, web 4), and checks the mirrored files are exactly
+// v1.4.2 checkout, enforces the eight-file fork surface (admin 3, web 5), and checks the mirrored files are exactly
 // the patched result. usage: node scripts/verify-fork-patch.mjs admin|web|all
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdtempSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -27,7 +27,8 @@ if (git(["status", "--porcelain"], cache).stdout.trim()) { console.error(`FAIL: 
 const APPS = {
   admin: { maxFiles: 3, patch: "apps/admin/git-sync.patch", prefixes: ["apps/admin/"], routes: ["apps/admin/app/routes.ts"], ui: /\/git-sync\/ui\/admin\b/,
     routePath: "git-sync", ancestor: null },
-  web: { maxFiles: 4, patch: "apps/web/git-sync.patch", prefixes: ["apps/web/", "packages/constants/"], routes: ["apps/web/app/routes.ts", "apps/web/app/routes/extended.ts"], ui: /\/git-sync\/ui\/workspaces\//,
+  web: { maxFiles: 5, patch: "apps/web/git-sync.patch",
+    prefixes: ["apps/web/app/", "apps/web/core/components/settings/workspace/sidebar/", "apps/web/core/components/issues/issue-detail/sidebar.tsx", "packages/constants/src/settings/"], routes: ["apps/web/app/routes.ts", "apps/web/app/routes/extended.ts"], ui: /\/git-sync\/ui\/workspaces\//,
     routePath: ":workspaceSlug/settings/git-sync", ancestor: "./(all)/[workspaceSlug]/(settings)/settings/(workspace)/layout.tsx" },
 };
 // Evaluates the patched React Router route config with a stub of @react-router/dev/routes and
@@ -133,6 +134,32 @@ for (const app of which === "all" ? ["admin", "web"] : [which]) {
     const access = existsSync(join(tmp, "packages/constants/src/settings/workspace.ts")) ? readFileSync(join(tmp, "packages/constants/src/settings/workspace.ts"), "utf8") : "";
     if (!/"\/settings\/git-sync":\s*\[EUserWorkspaceRoles\.ADMIN\]/.test(access)) fail("web: WORKSPACE_SETTINGS_ACCESS does not authorize /settings/git-sync for workspace admins");
   }
+  // N3 (spec §12.8): the work-item sidebar embeds the Development panel. Its iframe must sit in
+  // IssueDetailsSidebar and point at /git-sync/ui/workspaces/<slug>/projects/<project>/work-items/<item>/development,
+  // built from the sidebar's own props in that order (the path DevPanel.tsx parses).
+  if (app === "web") {
+    const sidebarFile = "apps/web/core/components/issues/issue-detail/sidebar.tsx";
+    const sidebar = files.includes(sidebarFile) && existsSync(join(tmp, sidebarFile)) ? readFileSync(join(tmp, sidebarFile), "utf8") : "";
+    if (!sidebar) fail("web: patch does not add the Development panel to the work-item sidebar (" + sidebarFile + ")");
+    else {
+      const body = sidebar.slice(sidebar.indexOf("export const IssueDetailsSidebar"));
+      const frame = /<iframe\b[^>]*?\bsrc=\{`([^`]*)`\}[^>]*?\/>/s.exec(body);
+      if (!frame) fail("web: IssueDetailsSidebar renders no <iframe> with a template-literal src");
+      else {
+        const exprs = [...frame[1].matchAll(/\$\{([^}]*)\}/g)].map((m) => m[1]);
+        const sample = frame[1].replace(/\$\{[^}]*\}/g, "x");
+        if (!/^\/git-sync\/ui\/workspaces\/x\/projects\/x\/work-items\/x\/development$/.test(sample))
+          fail(`web: Development panel iframe src ${frame[1]} is not the panel route`);
+        const order = ["workspaceSlug", "projectId", "issueId"];
+        if (exprs.length !== 3 || exprs.some((e, i) => !new RegExp(`\\b${order[i]}\\b`).test(e)))
+          fail("web: Development panel iframe src must use workspaceSlug, projectId and issueId in that order");
+        if (!/allow="clipboard-write"/.test(frame[0])) fail("web: Development panel iframe lacks allow=\"clipboard-write\" (Copy branch name)");
+      }
+    }
+    const client = existsSync(join(root, "src/ui/client/DevPanel.tsx")) ? readFileSync(join(root, "src/ui/client/DevPanel.tsx"), "utf8") : "";
+    if (!/export function parseDevPanelPath/.test(client) || !/"work-items"/.test(client) || !/"development"/.test(client))
+      fail("web: the service UI has no Development panel route (src/ui/client/DevPanel.tsx parseDevPanelPath)");
+  }
   rmSync(tmp, { recursive: true, force: true });
   if (!iframe) fail(`${app}: no patched file renders an <iframe>`);
   if (!ui) fail(`${app}: no patched file points at the service UI path ${a.ui}`);
@@ -141,7 +168,7 @@ for (const app of which === "all" ? ["admin", "web"] : [which]) {
   if (/\bas any\b|@ts-ignore|@ts-expect-error/.test(patch)) fail(`${app}: patch suppresses type errors (as any / @ts-ignore / @ts-expect-error)`);
   await checkRouteTree(app, a, patchPath);
 }
-if (which === "all" && total > 7) fail(`fork surface is ${total} files across both apps; the limit is seven`);
+if (which === "all" && total > 8) fail(`fork surface is ${total} files across both apps; the limit is eight`);
 
 if (fails.length) { for (const f of fails) console.error("FAIL: " + f); process.exit(1); }
 console.log(`fork patch verification passed (${which})`);

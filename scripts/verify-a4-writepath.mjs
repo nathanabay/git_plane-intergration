@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Oracle for task A4 (spec §5, §3, §7.1, §9, §1.3). The single write path: field-granular op
 // hashes recorded before the write and forgotten on failure, echoes consumed once on ingress,
-// Plane's 400/409 semantics, the triage ban, rate-limit backoff, and the queue workers.
+// Plane's 400/409 semantics, the triage ban, the 429 deferral contract (contract 2), and the queue workers.
+// Plane item paths: the client uses `work-items/` (A10; v1.4.2 serves the same views under the deprecated
+// `issues/`), so the fake answers both. GitHub's /repos/.../issues/ routes are a different API and unchanged.
 import { resolve, join } from "node:path";
 import { createServer } from "node:http";
 import { strictEqual, deepStrictEqual, ok, rejects, notStrictEqual } from "node:assert/strict";
@@ -48,11 +50,11 @@ const api = createServer((req, res) => {
       if (!req.url.includes("cursor=page2")) return send(200, { results: STATES.slice(0, 2), next_cursor: "page2", next_page_results: true });
       return send(200, { results: STATES.slice(2), next_cursor: null, next_page_results: false });
     }
-    if (req.method === "PATCH" && /\/issues\/[^/]+\/$/.test(req.url)) {
+    if (req.method === "PATCH" && /\/(?:issues|work-items)\/[^/]+\/$/.test(req.url)) {
       if (fake.hashesToProbe) fake.opsAtWrite = await opsCount(fake.hashesToProbe);
       return send(200, { id: req.url.split("/").at(-2), ...entry.body });
     }
-    if (req.method === "POST" && /\/issues\/$/.test(req.url)) return send(201, { id: "i-new", ...entry.body });
+    if (req.method === "POST" && /\/(?:issues|work-items)\/$/.test(req.url)) return send(201, { id: "i-new", ...entry.body });
     if (req.method === "POST" && /\/comments\/$/.test(req.url)) return send(201, { id: "c-new" });
     if (req.method === "POST" && /\/links\/$/.test(req.url)) return send(201, { id: "l-new" });
     if (req.method === "PATCH" && /\/links\/[^/]+\/$/.test(req.url)) return send(200, { id: req.url.split("/").at(-2) });
@@ -63,7 +65,10 @@ const api = createServer((req, res) => {
 await new Promise((r) => api.listen(0, "127.0.0.1", r));
 const baseUrl = `http://127.0.0.1:${api.address().port}`;
 const sleeps = [];
-const client = new plane.PlaneClient({ baseUrl, token: new SecretString("plane_api_SERVICE"), sleep: async (ms) => { sleeps.push(ms); } });
+// The request budget is A5's subject (verify-a5-a7); here it is off (0/min) so `sleeps` only records retry
+// backoff. A budget of 0 also ignores 429 pauses, so the 429 check passes a real (large) budget.
+const newClient = (rateLimitPerMinute = 0) => new plane.PlaneClient({ baseUrl, token: new SecretString("plane_api_SERVICE"), rateLimitPerMinute, sleep: async (ms) => { sleeps.push(ms); } });
+const client = newClient();
 const writer = new plane.PlaneWritePath({ client, db });
 const W = { slug: "qelal", projectId: "p1" };
 const reset = () => { fake.requests = []; fake.script = []; fake.opsAtWrite = null; fake.hashesToProbe = null; sleeps.length = 0; };
@@ -88,7 +93,7 @@ await check("update_issue records one op per field BEFORE the PATCH and sends ex
   strictEqual(r.ok, true);
   strictEqual(fake.opsAtWrite, 2, "ops were not recorded before the write");
   const patch = fake.requests.find((q) => q.method === "PATCH");
-  ok(patch && patch.url === "/api/v1/workspaces/qelal/projects/p1/issues/i1/", `PATCH url ${patch?.url}`);
+  ok(patch && /^\/api\/v1\/workspaces\/qelal\/projects\/p1\/(?:issues|work-items)\/i1\/$/.test(patch.url), `PATCH url ${patch?.url}`);
   deepStrictEqual(patch.body, fields);
   strictEqual(patch.key, "plane_api_SERVICE");
 });
@@ -126,7 +131,7 @@ await check("a duplicate-URL 400 on links is success; any other 400 is an error 
   reset();
   const r = await writer.apply({ kind: "update_link", ...W, issueId: "i1", linkId: "l9", url: "https://ci/1", title: "[CI] Build #1" });
   strictEqual(r.ok, true);
-  strictEqual(fake.requests.at(-1).method, "PATCH"); ok(fake.requests.at(-1).url.endsWith("/issues/i1/links/l9/"));
+  strictEqual(fake.requests.at(-1).method, "PATCH"); ok(/\/(?:issues|work-items)\/i1\/links\/l9\/$/.test(fake.requests.at(-1).url), fake.requests.at(-1).url);
 });
 
 await check("a duplicate-label 409 returns the existing label id (§3 free upsert)", async () => {
@@ -137,23 +142,43 @@ await check("a duplicate-label 409 returns the existing label id (§3 free upser
   strictEqual(fake.requests.filter((q) => q.method === "POST").length, 1, "list-then-create race");
 });
 
-await check("429 honours Retry-After, then X-RateLimit-Reset; 5xx backs off; other 4xx are not retried (§9)", async () => {
-  reset();
-  fake.script.push({ status: 429, body: { error: "throttled" }, headers: { "retry-after": "3" } });
-  await writer.apply({ kind: "update_issue", ...W, issueId: "i4", fields: { name: "a" } });
-  ok(sleeps[0] >= 3000 && sleeps[0] < 4000, `slept ${sleeps[0]}ms for Retry-After: 3`);
-  reset();
+await check("429 is deferred, never slept: PlaneRateLimitError at the Retry-After / X-RateLimit-Reset deadline, the budget pauses; 5xx backs off; other 4xx are not retried (§9, contract 2)", async () => {
+  // Fresh clients: a 429 pauses the client's budget until the deadline, which would defer later checks' writes.
+  const deferred = async (headers, name) => {
+    reset();
+    const w = new plane.PlaneWritePath({ client: newClient(6000), db });
+    const h = opHash("plane", "i4", "name", name);
+    fake.script.push({ status: 429, body: { error: "throttled" }, headers });
+    const before = Date.now();
+    let err;
+    await rejects(w.apply({ kind: "update_issue", ...W, issueId: "i4", fields: { name } }), (e) => { err = e; return true; });
+    ok(err instanceof plane.PlaneRateLimitError, `expected PlaneRateLimitError, got ${err?.name}: ${err?.message}`);
+    strictEqual(err.status, 429, "still a PlaneApiError with status 429");
+    strictEqual(err.requestMade, true);
+    strictEqual(sleeps.length, 0, `slept inline: ${sleeps}`);
+    strictEqual(fake.requests.filter((q) => q.method === "PATCH").length, 1, "a 429 was retried inline");
+    strictEqual(await opsCount([h]), 0, "the failed write's op was not forgotten");
+    // The paused budget defers the next request on this key without sending it.
+    const sent = fake.requests.length;
+    await rejects(w.apply({ kind: "update_issue", ...W, issueId: "i4", fields: { name: name + "-next" } }),
+      (e) => e instanceof plane.PlaneRateLimitError && e.requestMade === false && e.retryAt >= err.retryAt - 1);
+    strictEqual(fake.requests.length, sent, "a request was sent while the budget was paused");
+    strictEqual(sleeps.length, 0);
+    return { err, before };
+  };
+  const a = await deferred({ "retry-after": "3" }, "a");
+  ok(a.err.retryAt >= a.before + 3000 && a.err.retryAt <= Date.now() + 4000, `retryAt ${a.err.retryAt - a.before}ms after the request for Retry-After: 3`);
   const reset5 = Math.floor(Date.now() / 1000) + 5;
-  fake.script.push({ status: 429, body: { error: "throttled" }, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset5) } });
-  await writer.apply({ kind: "update_issue", ...W, issueId: "i4", fields: { name: "b" } });
-  ok(sleeps[0] >= 3000 && sleeps[0] <= 6500, `slept ${sleeps[0]}ms until X-RateLimit-Reset`);
+  const b = await deferred({ "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset5) }, "b");
+  ok(b.err.retryAt >= reset5 * 1000 && b.err.retryAt <= reset5 * 1000 + 1000, `retryAt ${b.err.retryAt} vs X-RateLimit-Reset ${reset5 * 1000}`);
   reset();
+  const c5 = new plane.PlaneWritePath({ client: newClient(), db });
   fake.script.push({ status: 502, body: { error: "bad gateway" } }, { status: 503, body: { error: "down" } });
-  await writer.apply({ kind: "update_issue", ...W, issueId: "i4", fields: { name: "c" } });
+  await c5.apply({ kind: "update_issue", ...W, issueId: "i4", fields: { name: "c" } });
   strictEqual(sleeps.length, 2); ok(sleeps[1] > sleeps[0], `backoff not increasing: ${sleeps}`);
   reset();
   fake.script.push({ status: 404, body: { error: "Not found" } });
-  await rejects(writer.apply({ kind: "update_issue", ...W, issueId: "i5", fields: { name: "d" } }));
+  await rejects(c5.apply({ kind: "update_issue", ...W, issueId: "i5", fields: { name: "d" } }));
   strictEqual(sleeps.length, 0); strictEqual(fake.requests.filter((q) => q.method === "PATCH").length, 1);
 });
 

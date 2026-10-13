@@ -44,7 +44,9 @@ const papi = createServer((req, res) => {
   if (!user) return send(401, { error: "Authentication credentials were not provided." });
   if (req.url === "/api/users/me/") return send(200, { ...user, display_name: user.id });
   const m = /^\/api\/workspaces\/([^/]+)\/workspace-members\/me\/$/.exec(req.url);
-  if (m) { const role = plane.roles[user.id]?.[m[1]]; return role ? send(200, { id: "wm", role, member: user.id }) : send(403, { error: "You don't have the required permissions." }); }
+  // Security S2: the membership names its workspace's id (Plane's `workspace-members/me/` serializer is
+  // `fields="__all__"`), and the service binds each slug to that id on first use.
+  if (m) { const role = plane.roles[user.id]?.[m[1]]; return role ? send(200, { id: "wm", role, member: user.id, workspace: `ws-id-${m[1]}` }) : send(403, { error: "You don't have the required permissions." }); }
   send(404, { error: "Not found" });
 });
 await new Promise((r) => papi.listen(0, "127.0.0.1", r));
@@ -63,7 +65,16 @@ const verifyMapping = async (check) => {
 const lookupGithubUser = async (login) => ({ memgh: { login: "memgh", id: 777 } })[login.toLowerCase()] ?? null;
 // Review round 3 F5: user links also fail closed without a workspace-membership check.
 const isWorkspaceMember = async (slug, userId) => slug === "qelal" && ["u-mem", "u-other"].includes(userId);
-const routeDeps = { db, planeInternalUrl: `http://127.0.0.1:${papi.address().port}`, publicOrigin: ORIGIN, tokenKey: KEY };
+// Parity C3: a mapping save first re-checks the repository against the saving admin's own GitHub listing. The admin
+// is linked (a stored personal token) and their listing through installation 1 names every repository the checks
+// below use, so each one still reaches the verifier or the check it is about. The App's own requests are unused here.
+const { GITHUB_OAUTH_CONFIG, githubListingFetch, linkGithubUser } = await import(join(root, "tests/ui/linked-github.ts"));
+await linkGithubUser(db, KEY, "u-adm");
+await db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (1, 'qelal')");
+const githubListing = { 1: [{ id: 555, full_name: "acme/web" }, { id: 556, full_name: "acme/other" }, { id: 999, full_name: "acme/secret" }] };
+const routeDeps = { db, planeInternalUrl: `http://127.0.0.1:${papi.address().port}`, publicOrigin: ORIGIN, tokenKey: KEY,
+  githubOAuthConfig: GITHUB_OAUTH_CONFIG, fetch: githubListingFetch(githubListing, fetch),
+  appRequest: async (route) => { throw new Error(`unexpected App request ${route}`); } };
 const srv = await startServer({ port: 0, host: "127.0.0.1", routes: createConfigRoutes({ ...routeDeps, verifyMapping, lookupGithubUser, isWorkspaceMember }) });
 const base = `http://127.0.0.1:${srv.port}/git-sync/api`;
 const call = (method, path, { cookie, body, origin = ORIGIN, type = "application/json" } = {}) =>
