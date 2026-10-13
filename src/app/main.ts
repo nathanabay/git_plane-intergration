@@ -1,24 +1,28 @@
 // Composition of the running service. Ingress comes up first and keeps working while the database is down;
 // migrations are retried, and only then do the workers and the maintenance schedule start.
 import { createWebhookRoutes } from "../api/handler.ts";
+import { GithubUserTokens, createUserClientFactory, loadGithubHosts, loadGithubOAuthApp } from "../auth/github-user.ts";
 import { SecretString, loadTokenKey } from "../auth/identity.ts";
 import { loadConfig } from "../config/env.ts";
 import type { Config } from "../config/env.ts";
 import { createDb } from "../db/client.ts";
 import { migrate } from "../db/migrate.ts";
-import { appendAudit } from "../db/ledgers.ts";
+import { appendAudit, spoolInbound } from "../db/ledgers.ts";
 import { createQueues } from "../queue/index.ts";
 import { startMaintenance } from "../queue/cron.ts";
 import { startWorkers } from "../queue/workers.ts";
 import { GithubWritePath } from "../sync/github.ts";
-import { PlaneClient, PlaneWritePath } from "../sync/plane.ts";
+import { PlaneClient, PlaneWritePath, planeItemsPath } from "../sync/plane.ts";
 import { createGithubUserLookup, createMappingVerifier, installationWorkspaceFromDb, createPlaneMemberCheck } from "../ui/mapping-check.ts";
 import { createConfigRoutes, createUiRoutes, defaultUiDistDir } from "../ui/api.ts";
+import { createSetupCheckHandler } from "../ui/setup-check.ts";
+import { createDevPanelRoutes } from "../ui/dev-panel.ts";
+import { upsertRollupLink } from "../sync/dev-info.ts";
 import { authenticateInstanceAdmin } from "../ui/plane-auth.ts";
 import { HttpError, sendJson } from "../ui/http.ts";
 import type { Route } from "../index.ts";
 import type { AppContext } from "./context.ts";
-import { createVault, installationFor, issueResolver } from "./context.ts";
+import { createVault, installationFor, issueResolver, refreshInstallationMappings } from "./context.ts";
 import { createCredentialSource } from "./credentials.ts";
 import type { CredentialSource } from "./credentials.ts";
 import { createGithubClient } from "./github.ts";
@@ -29,7 +33,7 @@ import { createOutboundAuthoriser, disabledMappings, freezeMappingAuthority, map
 import type { OrphanSourceLink } from "./mappings.ts";
 import { createRouter, inboundHandler } from "./reducers.ts";
 import { handleMirroredIssue, handlePendingMirroredIssue } from "./issues.ts";
-import { findLinkId, handleCreatedPr } from "./pr.ts";
+import { handleCreatedPr } from "./pr.ts";
 
 export interface RunningService { close(): Promise<void> }
 
@@ -48,43 +52,80 @@ export interface RouteParts {
 
 /** Every HTTP route of the running service. Split from `runService` so a test can drive the real wiring (F1). */
 export function composeRoutes({ config, db, tokenKey, ctx, planeClient, ghClient, credentials, enqueue, retryFailed }: RouteParts): Route[] {
+  const devDeps: import("../ui/dev-panel.ts").DevPanelDeps = { db, planeInternalUrl: config.PLANE_BASE_URL, planeSessionCookieName: config.PLANE_SESSION_COOKIE_NAME,
+      publicOrigin: config.PUBLIC_ORIGIN, githubWebOrigin: config.GITHUB_WEB_ORIGIN ?? "https://github.com",
+      githubFor: async (mapping) => ghClient.installationOctokit(await installationFor(ctx, mapping)),
+      linkBranch: async (target, mapping, link) => {
+        await installationFor(ctx, mapping);
+        await upsertRollupLink({ db, writer: ctx.plane, findLinkId: async (t, url) => {
+          const links = await planeClient.listAll<{ id: string; url: string }>(planeItemsPath(t.slug, t.projectId, t.issueId) + "links/");
+          return links.find((entry) => entry.url === url)?.id ?? null;
+        } }, { ...target, _authority: freezeMappingAuthority(mapping) }, link.key, { title: link.title, url: link.url });
+      },
+  };
   return [
     ...createWebhookRoutes({
-      planeSecret: config.PLANE_WEBHOOK_SECRET,
+      planeSecret: [config.PLANE_WEBHOOK_SECRET, config.PLANE_WEBHOOK_SECRET_PREVIOUS].filter((secret): secret is string => Boolean(secret)),
       githubSecret: () => credentials.webhookSecret(),
       enqueue,
+      spool: (job) => spoolInbound(db, job),
     }),
     ...createConfigRoutes({
       db,
       planeInternalUrl: config.PLANE_BASE_URL,
+      planeSessionCookieName: config.PLANE_SESSION_COOKIE_NAME,
+      planeDirectory: planeClient,
+      requireVerifiedCommitsDefault: config.REQUIRE_VERIFIED_COMMITS,
       publicOrigin: config.PUBLIC_ORIGIN,
       tokenKey,
+      githubOAuthConfig: config,
+      appRequest: async (route, params) => { if (!ghClient.appRequest) throw new HttpError(503, "App authentication is unavailable"); return ghClient.appRequest(route, params); },
       credentialStatus: () => credentials.describe(),
+      setupCheck: createSetupCheckHandler({ db, credentials, github: ghClient, plane: planeClient, config }),
       // F1: a mapping is only stored when its project is in the workspace and the App reaches its repository.
       verifyMapping: createMappingVerifier({ plane: planeClient, github: ghClient, installationWorkspace: installationWorkspaceFromDb(db) }),
       // F5: a manual user link is checked against the account GitHub reports for the login (id must match).
       lookupGithubUser: createGithubUserLookup(async (route, params) => {
-        if (!ghClient.appRequest) throw new Error("the GitHub client cannot make App-level requests");
-        return ghClient.appRequest(route, params);
+        if (!ghClient.publicRequest) throw new Error("the GitHub client cannot read public profiles");
+        return ghClient.publicRequest(route, params);
       }),
+      lookupGithubRepo: async (slug, name) => {
+        const [owner, repo] = name.split("/");
+        const id = await ghClient.installationIdFor(owner!, repo!);
+        if (await installationWorkspaceFromDb(db)(id) !== slug) throw new HttpError(403, "That GitHub installation is not allowed for this workspace");
+        const octokit = await ghClient.installationOctokit(id);
+        const { data } = await octokit.request("GET /repos/{owner}/{repo}", { owner, repo });
+        if (await installationWorkspaceFromDb(db)(id) !== slug) throw new HttpError(403, "That GitHub installation is not allowed for this workspace");
+        if (!Number.isSafeInteger(data?.id) || data.id <= 0 || typeof data?.full_name !== "string"
+          || data.full_name.toLowerCase() !== name.toLowerCase()) throw new HttpError(502, "GitHub returned an unexpected repository");
+        return { id: data.id, fullName: data.full_name };
+      },
+      refreshInstallation: (id) => refreshInstallationMappings(ctx, id),
       // F5: the Plane user being linked must be a member of the workspace in the path.
       isWorkspaceMember: createPlaneMemberCheck(planeClient),
       operations: {
         enqueue,
         ...(retryFailed ? { retryFailed } : {}),
         resolveIssue: (slug, key) => issueResolver(ctx, slug)(key),
+        // Audit S5: the route passes the mapping's own allow-listed installation; never another workspace's.
         githubFor: async (repo) => {
-          const mapping = (await mappingsForRepo(db, repo.ghRepoId))[0];
-          const installationId = mapping ? await installationFor(ctx, mapping) : await ghClient.installationIdFor(repo.owner, repo.repo);
-          return ghClient.installationOctokit(installationId);
+          if (await ghClient.installationIdFor(repo.owner, repo.repo) !== repo.installationId)
+            throw new HttpError(409, "The repository is no longer served by this mapping's GitHub installation");
+          return ghClient.installationOctokit(repo.installationId);
         },
       },
     }),
+    ...createDevPanelRoutes(devDeps).map((route, index): Route => ({ ...route, handler: async (req, res, params) => {
+      try {
+        const hosts = await loadGithubHosts(db, config);
+        await createDevPanelRoutes({ ...devDeps, githubWebOrigin: hosts.webOrigin })[index]!.handler(req, res, params);
+      } catch { sendJson(res, 500, { error: "Development settings could not be loaded" }); }
+    } })),
     {
       method: "GET", path: "/git-sync/api/instance/disabled-mappings",
       handler: async (req, res) => {
         try {
-          await authenticateInstanceAdmin({ planeInternalUrl: config.PLANE_BASE_URL }, req);
+          await authenticateInstanceAdmin({ planeInternalUrl: config.PLANE_BASE_URL, planeSessionCookieName: config.PLANE_SESSION_COOKIE_NAME }, req);
           sendJson(res, 200, await disabledMappings(db));
         } catch (err) {
           sendJson(res, err instanceof HttpError ? err.status : 500,
@@ -107,10 +148,12 @@ export async function runService(
   const tokenKey = loadTokenKey(env);
   // F6: App credentials saved in the admin UI win over the environment, and are re-read as they change.
   const credentials = createCredentialSource(db, tokenKey, config);
-  const ghClient = createGithubClient(credentials);
+  const ghClient = createGithubClient(credentials, db);
   // The workers apply writes through the inline paths; reducers only enqueue them (F9, src/app/writers.ts).
   const planeInline = new PlaneWritePath({ client: planeClient, db });
-  const githubInline = new GithubWritePath({ app: { installationOctokit: (id) => ghClient.installationOctokit(id) }, db });
+  const githubTokens = new GithubUserTokens({ db, tokenKey, app: () => loadGithubOAuthApp(db, tokenKey, config) });
+  const githubInline = new GithubWritePath({ app: { installationOctokit: (id) => ghClient.installationOctokit(id) }, db,
+    userClient: createUserClientFactory(githubTokens, () => loadGithubHosts(db, config), db), onUserTokenRejected: (id) => githubTokens.markRejected(id) });
   const vault = createVault(db, tokenKey);
   // F6 (round 2): every reducer write goes through one durable, per-target ordered outbox; the workers execute it.
   // The two readers run at execution time, so a read-modify-write of labels/assignees sees the current list.
@@ -120,11 +163,15 @@ export async function runService(
     plane: planeInline,
     github: githubInline,
     queues: { plane: queues.outboundPlane, github: queues.outboundGithub },
-    findPlaneLinkId: (target, url) => findLinkId(ctx, target, url), // a rollup whose create is still queued is found by its url at execution
+    findPlaneLinkId: async (target, url) => {
+      // A rollup whose create is still queued is found by its URL at execution.
+      const links = await planeClient.listAll<{ id: string; url: string }>(planeItemsPath(target.slug, target.projectId, target.issueId) + "links/");
+      return links.find((link) => link.url === url)?.id ?? null;
+    },
     resumeReducer: (request) => (request.kind === "mirror_created" ? handleMirroredIssue(ctx, request) : request.kind === "mirror_pending" ? handlePendingMirroredIssue(ctx, request) : handleCreatedPr(ctx, request)), // creates continue here once their work item exists
     loadActorToken: async (planeUserId) => (await vault.load(planeUserId, "plane_pat")) ?? null,
     readPlaneIssueFields: async (t) => {
-      const issue = await planeClient.request<any>("GET", `/workspaces/${encodeURIComponent(t.slug)}/projects/${encodeURIComponent(t.projectId)}/issues/${encodeURIComponent(t.issueId)}/`);
+      const issue = await planeClient.request<any>("GET", planeItemsPath(encodeURIComponent(t.slug), encodeURIComponent(t.projectId), encodeURIComponent(t.issueId)));
       const ids = (v: unknown): string[] => (Array.isArray(v) ? v : []).map((x) => (typeof x === "string" ? x : (x as { id?: unknown } | null)?.id)).filter((x): x is string => typeof x === "string");
       return { labels: ids(issue?.labels ?? issue?.label_ids), assignees: ids(issue?.assignees ?? issue?.assignee_ids) };
     },
@@ -186,7 +233,8 @@ export async function runService(
         onGithubEvent: inboundHandler(ctx, router, "github"),
       },
     });
-    maintenance = startMaintenance({ connectionUrl: config.REDIS_URL, prefix: config.QUEUE_PREFIX, db, plane: planeClient, onOrphan: (link) => linkbackOnOrphan(ctx, link) });
+    maintenance = startMaintenance({ connectionUrl: config.REDIS_URL, prefix: config.QUEUE_PREFIX, db, plane: planeClient,
+      enqueue: (job) => queues.enqueueInbound(job), onOrphan: (link) => linkbackOnOrphan(ctx, link) });
   };
   const background = startBackground();
   background.catch((err) => console.error("background startup failed:", err instanceof Error ? err.message : err));

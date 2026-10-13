@@ -184,7 +184,7 @@ test("an approving review turns an open PR's rollup into APPROVAL", async () => 
 test("`QLL-NEW` creates a work item in that project, links it and starts it", async () => {
   const h = await setup();
   await h.feed(pr("opened", { body: "QLL-NEW" }));
-  const created = h.plane.writes().find((c) => c.method === "POST" && /\/projects\/p-qll\/issues\/$/.test(c.path));
+  const created = h.plane.writes().find((c) => c.method === "POST" && /\/projects\/p-qll\/work-items\/$/.test(c.path));
   deepStrictEqual(created!.body, { name: "Fix login", state: "s-prog" });
   strictEqual((await h.db.query("SELECT 1 FROM sync_links WHERE plane_issue_id = $1", [h.plane.createdIssueIds[0]])).rows.length, 1);
   await h.feed(pr("edited", { body: "QLL-NEW" }));

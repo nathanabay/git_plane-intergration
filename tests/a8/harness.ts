@@ -75,25 +75,25 @@ export async function makeHarness(over: { requireVerified?: boolean; serviceUser
     planeCalls.push({ method, path, body, key: init.headers["X-API-Key"] ?? null });
     const json = (status: number, obj: unknown) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
     let m: RegExpExecArray | null;
-    if (method === "GET" && (m = /\/issues\/([A-Z]+-\d+)\/$/.exec(path))) {
+    if (method === "GET" && (m = /\/work-items\/([A-Z]+-\d+)\/$/.exec(path))) {
       const i = issues.get(m[1]!);
       return i ? json(200, { ...i, labels: i.labels ?? [], assignees: i.assignees ?? [] }) : json(404, { error: "Not found" });
     }
-    if (method === "GET" && /\/issues\/$/.test(path) && u.searchParams.has("external_id")) {
+    if (method === "GET" && /\/work-items\/$/.test(path) && u.searchParams.has("external_id")) {
       const found = createdByIntent.get(`${u.searchParams.get("external_source")}:${u.searchParams.get("external_id")}`);
       return found ? json(200, found) : json(404, { error: "Not found" });
     }
-    if (method === "GET" && /\/issues\/[^/]+\/comments\/$/.test(path)) return json(200, { results: commentsByPath.get(path) ?? [], next_cursor: null, next_page_results: false });
+    if (method === "GET" && /\/work-items\/[^/]+\/comments\/$/.test(path)) return json(200, { results: commentsByPath.get(path) ?? [], next_cursor: null, next_page_results: false });
     if (method === "GET" && /\/states\/$/.test(path)) return json(200, { results: STATES, next_cursor: null, next_page_results: false });
     if (method === "GET" && /\/labels\/$/.test(path)) return json(200, { results: labels, next_cursor: null, next_page_results: false });
     if (method === "GET" && /\/projects\/$/.test(path)) return json(200, { results: [{ id: "p-qll", identifier: "QLL" }, { id: "p-web", identifier: "WEB" }], next_cursor: null, next_page_results: false });
     if (method === "GET" && /\/links\/$/.test(path)) return json(200, []);
-    if (method === "GET" && (m = /\/issues\/([^/]+)\/$/.exec(path))) {
+    if (method === "GET" && (m = /\/work-items\/([^/]+)\/$/.exec(path))) {
       const i = [...issues.values()].find((x) => x.id === m![1]);
       return i ? json(200, { ...i, labels: i.labels ?? [], assignees: i.assignees ?? [] }) : json(404, { error: "Not found" });
     }
     if (method === "PATCH") return json(200, { id: "x" });
-    if (method === "POST" && /\/issues\/$/.test(path)) {
+    if (method === "POST" && /\/work-items\/$/.test(path)) {
       const id = `new-${++created}`; createdIssueIds.push(id);
       const ext = body?.external_id ? { external_source: String(body.external_source ?? ""), external_id: String(body.external_id) } : {};
       if (body?.external_id) createdByIntent.set(`${ext.external_source}:${ext.external_id}`, { id, external_source: ext.external_source!, external_id: ext.external_id! });

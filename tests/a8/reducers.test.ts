@@ -36,11 +36,14 @@ test("check runs roll up to every item the PR links: pass, then fail", async () 
   const h = await makeHarness();
   await h.mapping();
   await h.link("iss-1", 12, { kind: "pr", tier: "closing" });
+  h.gh.respond(/pulls\/\{pull_number\}$/, () => ({ number: 12, state: "open", head: { sha: sha("a") }, base: { repo: { id: 555 } } }));
+  h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => []);
+  h.gh.respond(/check-suites$/, () => ({ check_suites: [], total_count: 0 }));
   const event = (id?: string) => ghJob("check_run", { action: "completed", check_run: { head_sha: sha("a"), conclusion: "success", pull_requests: [{ number: 12 }] } }, id);
-  h.gh.respond(/check-runs$/, () => ({ check_runs: [{ conclusion: "success" }, { conclusion: "success" }] }));
+  h.gh.respond(/check-runs$/, () => ({ total_count: 2, check_runs: [{ conclusion: "success" }, { conclusion: "success" }] }));
   await h.feed(event());
   strictEqual(links(h)[0].title, "[CI] Build · pass");
-  h.gh.respond(/check-runs$/, () => ({ check_runs: [{ conclusion: "success" }, { conclusion: "failure" }] }));
+  h.gh.respond(/check-runs$/, () => ({ total_count: 2, check_runs: [{ conclusion: "success" }, { conclusion: "failure" }] }));
   await h.feed(event());
   const patch = h.plane.writes().find((c) => c.method === "PATCH" && /\/links\//.test(c.path));
   strictEqual(patch!.body.title, "[CI] Build · fail");
@@ -52,7 +55,7 @@ test("a successful deployment adds a deploy link and a named preview shortcut", 
   await h.mapping();
   await h.link("iss-1", 12, { kind: "pr", tier: "closing" });
   h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => [{ number: 12 }]);
-  await h.feed(ghJob("deployment_status", { action: "created", deployment: { sha: sha("b"), environment: "preview" }, deployment_status: { state: "success", environment: "preview", environment_url: "https://web-abc.vercel.app" } }));
+  await h.feed(ghJob("deployment_status", { action: "created", deployment: { id: 501, created_at: "2026-10-12T10:00:00Z", sha: sha("b"), environment: "preview" }, deployment_status: { id: 601, created_at: "2026-10-12T10:01:00Z", state: "success", environment: "preview", environment_url: "https://web-abc.vercel.app" } }));
   deepStrictEqual(links(h).map((l) => l.title), ["[Deploy] preview · success", "[Preview] Vercel"]);
   deepStrictEqual(links(h).map((l) => l.url), ["https://web-abc.vercel.app", "https://web-abc.vercel.app"].map((u) => u));
   await h.close();
@@ -150,7 +153,7 @@ test("with linkback off an orphan is silent", async () => {
   await h.close();
 });
 
-test("the installation id from a webhook is remembered on the mapping", async () => {
+test("the current installation behind a replacement webhook is remembered on the mapping", async () => {
   const h = await makeHarness();
   try {
     const mappingId = await h.mapping({ installationId: null });
@@ -162,6 +165,8 @@ test("the installation id from a webhook is remembered on the mapping", async ()
     strictEqual(verifiedId, 1);
     await rememberInstallation(h.db, mappingId, verifiedId!);
     strictEqual(Number((await h.db.query<any>("SELECT installation_id FROM repo_mappings")).rows[0].installation_id), 1);
+    // G14 verifies current access with GitHub instead of trusting a possibly delayed webhook ID.
+    h.ctx.ghClient.installationIdFor = async () => 4242;
     strictEqual(await h.feed(ghJob("issues", { action: "opened", issue: { number: 3, title: "x", body: "", labels: [], assignees: [] }, installation: { id: 4242 } })), "handled");
     strictEqual(Number((await h.db.query<any>("SELECT installation_id FROM repo_mappings")).rows[0].installation_id), 4242);
   } finally { await h.close(); }

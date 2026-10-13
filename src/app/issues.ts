@@ -1,10 +1,12 @@
 // Two-way issue mirroring (spec §7.3) as the running service uses it.
 import { appendAudit } from "../db/ledgers.ts";
+import { classifyGithubError, githubErrorStatus } from "../github/errors.ts";
+import { PlaneApiError, planeWorkspacePath } from "../sync/plane.ts";
 import { onGithubIssue, onPlaneIssue } from "../sync/mirror.ts";
 import type { MirrorDeps, MirrorMapping } from "../sync/mirror.ts";
 import type { GithubWrite } from "../sync/github.ts";
 import type { InboundJob } from "../queue/index.ts";
-import { actorTokenFor, installationFor, mappedLogins, payloadBelongsToMapping, planeIssueUrl, usersFor, withObjectLock } from "./context.ts";
+import { actorTokenFor, githubHostsFor, installationFor, mappedLogins, payloadBelongsToMapping, planeIssueUrl, usersFor, withObjectLock } from "./context.ts";
 import type { AppContext } from "./context.ts";
 import { assertInstallationAllowed, freezeMappingAuthority, mappingsForProject, mappingsForRepo } from "./mappings.ts";
 import type { FrozenWriteAuthority, Mapping } from "./mappings.ts";
@@ -81,7 +83,7 @@ export function assigneeSyncWriter(ctx: AppContext, workspaceSlug: string): Mirr
   };
 }
 
-function mirrorDeps(ctx: AppContext, mapping: Mapping, installationId: number, createContinuation?: { job: InboundJob }): MirrorDeps {
+async function mirrorDeps(ctx: AppContext, mapping: Mapping, installationId: number, createContinuation?: { job: InboundJob }): Promise<MirrorDeps> {
   const m: MirrorMapping = { id: mapping.id, workspaceSlug: mapping.workspaceSlug, planeProjectId: mapping.planeProjectId, ghRepoId: mapping.ghRepoId, syncDirection: mapping.syncDirection, installationId, owner: mapping.owner, repo: mapping.repo };
   return {
     db: ctx.db,
@@ -90,9 +92,30 @@ function mirrorDeps(ctx: AppContext, mapping: Mapping, installationId: number, c
     mapping: m,
     users: usersFor(ctx.db, mapping.workspaceSlug),
     listStates: (projectId) => ctx.planeClient.listStates(mapping.workspaceSlug, projectId),
-    labelNames: async (slug, projectId) => (await ctx.planeClient.listAll<any>(`/workspaces/${slug}/projects/${projectId}/labels/`))
+    labelNames: async (slug, projectId) => (await ctx.planeClient.listAll<any>(planeWorkspacePath(slug, "projects", projectId, "labels")))
       .filter((l) => typeof l?.id === "string" && typeof l?.name === "string").map((l) => ({ id: l.id as string, name: l.name as string })),
     planeIssueUrl: planeIssueUrl(ctx.config.PUBLIC_ORIGIN),
+    githubWebOrigin: (await githubHostsFor(ctx)).webOrigin,
+    // Deliveries arrive out of order on both sides (G10, P3): the mirror reads each partner's current state and
+    // applies it when it is newer than the delivered snapshot. A failed read fails the delivery so it retries.
+    currentGithubIssue: async (number) => {
+      try {
+        const octokit = await ctx.ghClient.installationOctokit(installationId);
+        return (await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}", { owner: mapping.owner, repo: mapping.repo, issue_number: number })).data ?? null;
+      } catch (err) {
+        // Gone (404, or 410 for a deleted issue): the delivery is all there is.
+        if (classifyGithubError(err).kind === "not_found" || githubErrorStatus(err) === 410) return null;
+        throw err;
+      }
+    },
+    currentPlaneIssue: async (issueId) => {
+      try {
+        return await ctx.planeClient.getIssue(mapping.workspaceSlug, mapping.planeProjectId, issueId);
+      } catch (err) {
+        if (err instanceof PlaneApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
     // A mirror create finishes asynchronously: the issue.* rules for the new item run from a durable resume once its link exists.
     ...(createContinuation ? { createContinuation } : {}),
   };
@@ -125,7 +148,7 @@ export async function handlePendingMirroredIssue(ctx: AppContext, request: Reduc
   const mapping = (await mappingsForRepo(ctx.db, Number(p?.repository?.id))).find((m) => m.id === request.mappingId);
   if (!mapping) return;
   await withMappingWriterContext(ctx, mapping, request.job, async (ctx) => {
-    const deps = mirrorDeps(ctx, mapping, await installationFor(ctx, mapping, p));
+    const deps = await mirrorDeps(ctx, mapping, await installationFor(ctx, mapping, p));
     await withObjectLock(ctx.db, `gh:${mapping.ghRepoId}#${p?.issue?.number}`, () => onGithubIssue(p, deps));
     const event = githubRuleEvent(request.job.event, p);
     if (!event) return;
@@ -145,8 +168,16 @@ async function handlePendingPlaneEvent(ctx: AppContext, request: ReducerContinua
   const p: any = request.job.payload;
   const mapping = (await mappingsForProject(ctx.db, request.projectId)).find((m) => m.id === request.mappingId);
   if (!mapping || !(await payloadBelongsToMapping(ctx, mapping, p))) return;
+  const installationId = await planeInstallation(ctx, mapping);
+  if (installationId === 0 && mapping.installationId === null) {
+    await appendAudit(ctx.db, { kind: "github_not_installed", source: "plane", deliveryId: request.job.deliveryId,
+      workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId }, outcome: "ignored",
+      error: "the GitHub App is not installed on this repository" });
+    return;
+  }
   await withMappingWriterContext(ctx, mapping, request.job, async (ctx) => {
-    const deps = mirrorDeps(ctx, mapping, await planeInstallation(ctx, mapping));
+    const deps = await mirrorDeps(ctx, mapping, installationId);
+    if (installationId === 0) deps.github = notInstalledWriter(ctx, mapping, request.job);
     await withObjectLock(ctx.db, `plane:${request.issueId}`, () => onPlaneIssue({ event: request.job.event, payload: p }, deps));
   }, request.authority);
 }
@@ -165,7 +196,7 @@ export async function handleGithubIssue(ctx: AppContext, job: InboundJob): Promi
     const installationId = await installationFor(ctx, mapping, p);
     await assertInstallationAllowed(ctx.db, installationId, mapping.workspaceSlug);
     await withMappingWriterContext(ctx, mapping, job, async (mapped) => {
-      const deps = mirrorDeps(mapped, mapping, installationId, { job });
+      const deps = await mirrorDeps(mapped, mapping, installationId, { job });
       try {
         // One GitHub issue at a time, across replicas: the lock is what stops two `labeled` events creating two items.
         const mirrored = await withObjectLock(ctx.db, `gh:${repoId}#${p?.issue?.number}`, () => onGithubIssue(p, deps));
@@ -185,25 +216,17 @@ export async function handleGithubIssue(ctx: AppContext, job: InboundJob): Promi
   }
 }
 
-/** True for a 403 that is GitHub throttling us (secondary rate limit / exhausted quota), which is transient. */
-function isRateLimited(err: unknown): boolean {
-  const e = err as { response?: { headers?: Record<string, unknown> }; headers?: Record<string, unknown> } | null;
-  const headers = e?.response?.headers ?? e?.headers ?? {};
-  const get = (name: string) => headers[name] ?? headers[name.toLowerCase()];
-  return get("retry-after") !== undefined || String(get("x-ratelimit-remaining")) === "0";
-}
-
 /**
- * Plane events mirror nothing for an unmapped App, so "not installed" is installation 0: a 404, or a 403 that is not rate
- * limiting. A throttled 403 (retry-after / x-ratelimit-remaining: 0) and every other failure is transient and fails the
- * delivery so it retries (F7, R4 F8).
+ * Plane events mirror nothing for an unmapped App, so "not installed" is installation 0: a 404, or a 403 that is a
+ * permission refusal. Rate limiting (primary or secondary, with or without headers, as the shared classifier
+ * recognizes it) and every other failure is transient and fails the delivery so it retries (F7, R4 F8, audit G2).
  */
 export async function planeInstallation(ctx: AppContext, mapping: Mapping): Promise<number> {
   try {
     return await installationFor(ctx, mapping);
   } catch (err) {
-    const status = (err as { status?: number } | null)?.status;
-    if (status === 404 || (status === 403 && !isRateLimited(err))) return 0;
+    const kind = classifyGithubError(err).kind;
+    if (kind === "not_found" || kind === "permission") return 0;
     throw err;
   }
 }
@@ -241,8 +264,15 @@ export async function handlePlaneIssue(ctx: AppContext, job: InboundJob): Promis
     // registering writes with installation 0 made them fail permanently on the first attempt.
     // `createContinuation` lets the mirror register this event behind a create that is still in flight (`mirror_pending`).
     const installationId = await planeInstallation(ctx, mapping);
+    if (installationId === 0 && mapping.installationId === null) {
+      // G14 invalidated this mapping: do not freeze missing authority or admit any new writes.
+      await appendAudit(ctx.db, { kind: "github_not_installed", source: "plane", deliveryId: job.deliveryId,
+        workspaceSlug: mapping.workspaceSlug, detail: { repoId: mapping.ghRepoId }, outcome: "ignored",
+        error: "the GitHub App is not installed on this repository" });
+      continue;
+    }
     await withMappingWriterContext(ctx, mapping, job, async (mapped) => {
-      const deps = mirrorDeps(mapped, mapping, installationId, { job });
+      const deps = await mirrorDeps(mapped, mapping, installationId, { job });
       if (installationId === 0) deps.github = notInstalledWriter(ctx, mapping, job);
       // A comment event's `data.id` is the comment's; the work item it belongs to is `data.issue`.
       const issueRef = typeof data?.issue === "string" ? data.issue : data?.issue?.id;

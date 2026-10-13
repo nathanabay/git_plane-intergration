@@ -13,10 +13,12 @@ async function setup(state: { suites: any[]; reviews: any[] }) {
   await h.mapping({ rules: RULE, smartCommits: false });
   await h.link("iss-1", 12, { kind: "pr" });
   const pr = { number: 12, title: "Fix QLL-1", draft: false, state: "open", merged: false, head: { ref: "octo/login", sha: HEAD }, base: { ref: "main" }, labels: [], user: { login: "octo" } };
-  h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => [pr]);
-  h.gh.respond(/pulls\/\{pull_number\}\/reviews$/, () => state.reviews);
-  h.gh.respond(/commits\/\{ref\}\/check-suites$/, () => ({ check_suites: state.suites }));
-  h.gh.respond(/commits\/\{ref\}\/check-runs$/, () => ({ check_runs: [] }));
+  h.gh.respond(/pulls\/\{pull_number\}$/, () => pr);
+  h.gh.respond(/commits\/\{ref\}\/status$/, () => ({ state: "success", total_count: 1 }));
+  h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, (p) => p.page === 1 ? [pr] : []);
+  h.gh.respond(/pulls\/\{pull_number\}\/reviews$/, (p) => state.reviews.slice((p.page - 1) * 100, p.page * 100));
+  h.gh.respond(/commits\/\{ref\}\/check-suites$/, (p) => ({ check_suites: state.suites.slice((p.page - 1) * 100, p.page * 100), total_count: state.suites.length }));
+  h.gh.respond(/commits\/\{ref\}\/check-runs$/, () => ({ check_runs: [], total_count: 0 }));
   return h;
 }
 

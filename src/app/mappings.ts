@@ -1,6 +1,6 @@
 import type { Db } from "../db/migrate.ts";
 import { appendAudit } from "../db/ledgers.ts";
-import { PlaneApiError } from "../sync/plane.ts";
+import { PlaneApiError, planeSegment } from "../sync/plane.ts";
 import type { SyncLinkRow } from "../db/schema.ts";
 import { resolvePlanValue } from "../operations/plans.ts";
 
@@ -150,6 +150,9 @@ export async function assertInstallationAllowed(db: Db, installationId: number, 
     throw new PlaneApiError(403, {}, "GitHub installation is not allowed for this workspace");
 }
 
+/** Plane writes whose URL names a project (`/workspaces/{slug}/projects/{projectId}/...`). */
+const PROJECT_ADDRESSED = new Set(["create_issue", "update_issue", "add_comment", "add_link", "update_link", "upsert_label"]);
+
 /** Production outbox authority, using stored workflow context before resolving its result references. */
 export function createOutboundAuthoriser(db: Db) {
   return async (side: "plane" | "github", write: unknown, workspaceSlug: string | undefined): Promise<void> => {
@@ -161,6 +164,24 @@ export function createOutboundAuthoriser(db: Db) {
         `SELECT installation_id FROM repo_mappings WHERE workspace_slug = $1 AND ${where}`, [workspaceSlug, ...params]);
       if (!rows.length) throw denied();
       for (const row of rows) await assertInstallationAllowed(db, Number(row.installation_id), workspaceSlug);
+    };
+    /**
+     * Audit S1: a project-addressed Plane write may only name a project of its own workspace. That is a project
+     * mapped there, or one a link there already points into. A durable create plan may also name the
+     * project its own sync-link step records for this workspace (`{ID}-NEW`, resolved from this workspace's
+     * project list). Smart Commit targets are resolved from this workspace's identifiers by the service.
+     */
+    const checkPlaneProject = async () => {
+      if (side !== "plane" || !PROJECT_ADDRESSED.has(w.kind)) return;
+      const projectId: unknown = w.projectId;
+      try { planeSegment(projectId); } catch { throw denied(); }
+      if (typeof w._smartCommit?.sha === "string") return;
+      const plan = w._plan;
+      const links = [plan?.marker?.link, ...(Array.isArray(plan?.after) ? plan.after.filter((s: any) => s?.kind === "sync_link").map((s: any) => s.link) : [])];
+      if (links.some((l: any) => l && l.planeWorkspaceSlug === workspaceSlug && l.planeProjectId === projectId)) return;
+      const { rows } = await db.query(`SELECT 1 WHERE EXISTS (SELECT 1 FROM repo_mappings WHERE workspace_slug = $1 AND plane_project_id = $2)
+        OR EXISTS (SELECT 1 FROM sync_links WHERE plane_workspace_slug = $1 AND plane_project_id = $2)`, [workspaceSlug, projectId]);
+      if (!rows.length) throw denied();
     };
     if (Object.hasOwn(w, "_authority")) {
       const authority: unknown = w._authority;
@@ -177,6 +198,7 @@ export function createOutboundAuthoriser(db: Db) {
       } else if (side === "github") {
         if (w.installationId !== a.installationId || w.repoId !== a.repoId) throw denied();
       } else if (w.slug !== workspaceSlug) throw denied();
+      await checkPlaneProject();
       return;
     }
     // Continuations are local reducer dispatches on either queue, not GitHub API writes.
@@ -191,6 +213,7 @@ export function createOutboundAuthoriser(db: Db) {
       return;
     }
     if (w.slug !== workspaceSlug) throw denied();
+    await checkPlaneProject();
     // Smart Commit targets may be in another workspace project; its durable claim owns the source repository.
     if (typeof w._smartCommit?.sha === "string") {
       const { rows } = await db.query<{ repo_id: number | string }>(

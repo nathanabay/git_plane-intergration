@@ -54,7 +54,7 @@ test("F7 live issue rule targets active links in this mapping only, without requ
   await h.link("gone", 7);
   await h.db.query("UPDATE sync_links SET status = 'orphaned' WHERE plane_issue_id = 'gone'");
   await h.feed(ghJob("issues", { action: "opened", issue: { number: 7, title: "T", labels: [] } }));
-  deepStrictEqual(comments(h).map((c) => c.path), ["/workspaces/ws/projects/p-qll/issues/iss-1/comments/"]);
+  deepStrictEqual(comments(h).map((c) => c.path), ["/workspaces/ws/projects/p-qll/work-items/iss-1/comments/"]);
 });
 
 for (const event of ["check_suite"]) {
@@ -62,7 +62,12 @@ for (const event of ["check_suite"]) {
     const h = await makeHarness(); t.after(() => h.close());
     await h.mapping({ rules: commentRule("check_suite.success") });
     await h.link("iss-1", 12, { kind: "pr" });
-    h.gh.respond(/check-runs$/, () => ({ check_runs: [{ conclusion: "success" }] }));
+    h.gh.respond(/pulls\/\{pull_number\}$/, () => ({ number: 12, state: "open", head: { sha: sha("a"), ref: "topic" }, base: { repo: REPO } }));
+    h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => []);
+    h.gh.respond(/check-suites$/, () => ({ check_suites: [], total_count: 0 }));
+    h.gh.respond(/reviews$/, () => []);
+    h.gh.respond(/commits\/\{ref\}\/status$/, () => ({ state: "pending", total_count: 0 }));
+    h.gh.respond(/check-runs$/, () => ({ total_count: 1, check_runs: [{ conclusion: "success" }] }));
     await h.feed(ghJob(event, { action: "completed", [event]: { head_sha: sha("a"), head_branch: "topic", conclusion: "success", pull_requests: [{ number: 12 }, { number: 12 }] } }));
     strictEqual(comments(h).length, 1);
     deepStrictEqual((await h.audit("rule_match")).map((r) => r.detail.trigger), ["check_suite.success"]);
@@ -74,7 +79,7 @@ test("F7 live deployment success resolves linked PR targets", async (t) => {
   await h.mapping({ rules: commentRule("deployment_status.success") });
   await h.link("iss-1", 12, { kind: "pr" });
   h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => [{ number: 12, head: { ref: "topic", repo: REPO } }]);
-  await h.feed(ghJob("deployment_status", { deployment: { sha: sha("b"), ref: "main" }, deployment_status: { state: "success", environment: "production" } }));
+  await h.feed(ghJob("deployment_status", { deployment: { id: 501, created_at: "2026-10-12T10:00:00Z", sha: sha("b"), ref: "main" }, deployment_status: { id: 601, created_at: "2026-10-12T10:01:00Z", state: "success", environment: "production" } }));
   strictEqual(comments(h).length, 1);
   deepStrictEqual((await h.audit("rule_match")).map((r) => r.detail.trigger), ["deployment_status.success"]);
 });

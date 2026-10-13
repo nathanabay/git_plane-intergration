@@ -8,10 +8,24 @@ import { createOrderedOutbox, deliveryScope } from "../../src/app/writers.ts";
 import { processInbound } from "../../src/queue/workers.ts";
 import { replayDelivery } from "../../src/operations/tooling.ts";
 import { reconcileOnce } from "../../src/sync/reconcile.ts";
+import type { ReconcilePlane } from "../../src/sync/reconcile.ts";
 import { PlaneApiError } from "../../src/sync/plane.ts";
+import type { PlaneClient } from "../../src/sync/plane.ts";
 import type { InboundJob } from "../../src/queue/index.ts";
 import { ghJob, makeHarness, prPayload, sha } from "../a8/harness.ts";
 import { intentJob, queue } from "../writers/outbox-fixture.ts";
+
+/**
+ * A2 (docs audit): a single 404 no longer orphans a link; Plane must show the item was deleted (or a second
+ * sweep must agree). "Actual orphaning" here means the Plane item was deleted: the real client answers the
+ * 404 and the project read, and its activities record the delete.
+ */
+const deletedInPlane = (client: PlaneClient): ReconcilePlane => ({
+  getIssue: client.getIssue.bind(client),
+  getProject: client.getProject.bind(client),
+  listIssueIds: client.listIssueIds.bind(client),
+  listIssueActivities: async () => [{ verb: "deleted", field: "issue", created_at: new Date().toISOString() }],
+});
 
 async function fixture() {
   const h = await makeHarness();
@@ -79,6 +93,8 @@ test("F1: push refreshes 1 to 4242 before unmapped-sender lookup and keeps repai
   const h = await fixture();
   try {
     await h.db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (4242, 'ws')");
+    // G14 revalidates current installation access, including on replay and nested identity reads.
+    h.ctx.ghClient.installationIdFor = async () => 4242;
     const profileScopes: unknown[] = [];
     h.gh.respond(/^GET \/users\//, () => { profileScopes.push(deliveryScope.getStore()?.authority); return { id: 6001, email: null }; });
     const job = ghJob("push", { installation: { id: 4242 }, sender: { id: 6001, login: "r7-push", type: "User" },
@@ -106,6 +122,8 @@ test("F1: PR refreshes 1 to 4242 before create admission and resumed rules/rollu
   const h = await fixture();
   try {
     await h.db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (4242, 'ws')");
+    // G14: the repository installation API must report the same replacement as the delivery.
+    h.ctx.ghClient.installationIdFor = async () => 4242;
     h.gh.respond(/^GET \/users\//, () => ({ id: 6002, email: null }));
     const job = ghJob("pull_request", prPayload("opened", { installation: { id: 4242 }, sender: { id: 6002, login: "r7-pr", type: "User" } }, { body: "QLL-NEW" }), "r7-pr");
     await h.feed(job);
@@ -132,6 +150,8 @@ test("F1: PR refreshes 1 to 4242 before create admission and resumed rules/rollu
 test("F1: unlisted replacement installation is rejected by both actual reducers before any registration", async () => {
   const h = await fixture();
   try {
+    // Keep the denial assertion: the current replacement is real, but it has no workspace approval.
+    h.ctx.ghClient.installationIdFor = async () => 4242;
     for (const job of [ghJob("push", { installation: { id: 4242 }, ref: "refs/heads/main", commits: [{ id: sha("b"), message: "QLL-1 #comment forbidden" }] }),
       ghJob("pull_request", prPayload("opened", { installation: { id: 4242 } }, { body: "QLL-NEW" }))]) await rejects(h.feed(job), /not allowed/);
     strictEqual((await h.db.query("SELECT 1 FROM outbound_writes")).rows.length, 0);
@@ -148,7 +168,7 @@ test("F2: successful create, failed original tail and actual orphaning permit ex
     await rejects(h.execute(), /original PR tail failed/);
     const old = (await h.db.query<any>("SELECT id, write, status, result FROM outbound_writes ORDER BY sequence")).rows;
     deepStrictEqual(old.map((r) => r.status), ["applied", "failed"]);
-    strictEqual((await reconcileOnce({ db: h.db, plane: h.ctx.planeClient })).orphaned, 1);
+    strictEqual((await reconcileOnce({ db: h.db, plane: deletedInPlane(h.ctx.planeClient) })).orphaned, 1);
     // The old successful request remains once-only even when directly reduced with a new transport ID.
     await h.feed({ ...original, deliveryId: "r7-old-replay", writeDeliveryId: original.deliveryId });
     strictEqual((await h.db.query("SELECT 1 FROM outbound_writes")).rows.length, 2);

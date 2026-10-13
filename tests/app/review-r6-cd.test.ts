@@ -157,11 +157,13 @@ test("F4: moved-installation check/deploy rollups keep old links but target only
     const newId = await h.mapping({ slug: "new", projectId: "p-new", installationId: 1 });
     await h.link("new-target", 12, { kind: "pr", slug: "new", project: "p-new" });
     const head = sha("b");
-    h.gh.respond(/\/check-runs$/, () => ({ check_runs: [{ status: "completed", conclusion: "success" }] }));
+    h.gh.respond(/pulls\/\{pull_number\}$/, () => ({ number: 12, state: "open", head: { sha: head }, base: { repo: { id: 555 } } }));
+    h.gh.respond(/check-suites$/, () => ({ check_suites: [], total_count: 0 }));
+    h.gh.respond(/\/check-runs$/, () => ({ total_count: 1, check_runs: [{ status: "completed", conclusion: "success" }] }));
     h.gh.respond(/\/commits\/\{commit_sha\}\/pulls$/, () => [{ number: 12 }]);
     await handleChecks(h.ctx, ghJob("check_run", { action: "completed", check_run: { head_sha: head, pull_requests: [{ number: 12 }] } }));
-    await handleChecks(h.ctx, ghJob("deployment_status", { deployment: { sha: head, environment: "preview" },
-      deployment_status: { state: "success", environment: "preview", environment_url: "https://app.vercel.app" } }));
+    await handleChecks(h.ctx, ghJob("deployment_status", { deployment: { id: 501, created_at: "2026-10-12T10:00:00Z", sha: head, environment: "preview" },
+      deployment_status: { id: 601, created_at: "2026-10-12T10:01:00Z", state: "success", environment: "preview", environment_url: "https://app.vercel.app" } }));
     const intents = (await h.db.query<{ write: any }>("SELECT write FROM outbound_writes WHERE write->>'kind' = 'upsert_rollup' ORDER BY sequence")).rows;
     strictEqual(intents.length, 3, "build, deployment, preview");
     for (const { write } of intents) {

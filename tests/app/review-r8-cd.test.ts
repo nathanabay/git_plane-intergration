@@ -62,10 +62,17 @@ async function fixture(qllLinkback: boolean, webLinkback: boolean) {
   };
   const orphan = async () => {
     ctx.planeClient.getIssue = async () => { throw new PlaneApiError(404, {}, "deleted in Plane"); };
+    // A2 (reconcile): a 404 alone no longer orphans, because Plane also answers 404 for archived items. Prove the deletion
+    // the way production does: the project is live and the item's newest activity is `deleted`.
+    ctx.planeClient.getProject = async (_slug: string, id: string) => ({ id, archived_at: null }) as any;
+    ctx.planeClient.listIssueActivities = async () => [{ verb: "deleted", field: "issue", created_at: new Date().toISOString() }] as any;
     return reconcileOnce({ db: h.db, plane: ctx.planeClient, onOrphan: (link) => linkbackOnOrphan(ctx, link) });
   };
+  // Mirror creation now also posts its own "Linked to Plane work item" comment when linkback is on (Plane-to-GitHub
+  // mirror linkback, src/sync/mirror.ts createGithubIssue), so only the orphan notice counts as an orphan comment.
+  const orphanComments = () => h.gh.writes().filter((w) => w.route.includes("comments") && String(w.params?.body ?? "").includes("marked orphaned"));
   const notifications = () => h.db.query<{ write: any }>("SELECT write FROM outbound_writes WHERE write->>'kind' = 'comment' AND write->>'body' LIKE '%marked orphaned%' ORDER BY sequence");
-  return { ...h, ctx, qllId, webId, ordered, drain, createMirror, createPr, orphan, notifications };
+  return { ...h, ctx, qllId, webId, ordered, drain, createMirror, createPr, orphan, notifications, orphanComments };
 }
 
 for (const [qllEnabled, webEnabled] of [[false, true], [true, false]] as const) {
@@ -74,12 +81,12 @@ for (const [qllEnabled, webEnabled] of [[false, true], [true, false]] as const) 
     try {
       const link = await h.createMirror();
       strictEqual((await mappingForOrphanLink(h.db, link))!.id, h.webId);
-      deepStrictEqual(await h.orphan(), { checked: 1, orphaned: 1, errors: 0 });
+      deepStrictEqual(await h.orphan(), { checked: 1, orphaned: 1, archived: 0, errors: 0 });
       const rows = (await h.notifications()).rows;
       strictEqual(rows.length, webEnabled ? 1 : 0);
       if (webEnabled) deepStrictEqual(rows[0]!.write._authority, { workspaceSlug: "ws", mappingId: String(h.webId), repoId: 555, installationId: 1 });
       await h.drain();
-      strictEqual(h.gh.writes().filter((w) => w.route.includes("comments")).length, webEnabled ? 1 : 0);
+      strictEqual(h.orphanComments().length, webEnabled ? 1 : 0);
       ok(!h.gh.writes().some((w) => w.route.startsWith("PATCH")), "orphan notification never closes GitHub");
     } finally { await h.close(); }
   });
@@ -91,10 +98,10 @@ test("F1: deleting the owning WEB mirror mapping suppresses notification while Q
     const link = await h.createMirror();
     await h.db.query("DELETE FROM repo_mappings WHERE id = $1", [h.webId]);
     strictEqual(await mappingForOrphanLink(h.db, link), null);
-    deepStrictEqual(await h.orphan(), { checked: 1, orphaned: 1, errors: 0 });
+    deepStrictEqual(await h.orphan(), { checked: 1, orphaned: 1, archived: 0, errors: 0 });
     strictEqual((await h.notifications()).rows.length, 0);
     strictEqual((await h.db.query("SELECT 1 FROM repo_mappings WHERE id = $1", [h.qllId])).rows.length, 1);
-    strictEqual(h.gh.writes().filter((w) => w.route.includes("comments")).length, 0);
+    strictEqual(h.orphanComments().length, 0);
   } finally { await h.close(); }
 });
 
@@ -104,7 +111,7 @@ for (const [qllEnabled, webEnabled] of [[true, false], [false, true]] as const) 
     try {
       const link = await h.createPr();
       strictEqual((await mappingForOrphanLink(h.db, link))!.id, h.qllId);
-      deepStrictEqual(await h.orphan(), { checked: 1, orphaned: 1, errors: 0 });
+      deepStrictEqual(await h.orphan(), { checked: 1, orphaned: 1, archived: 0, errors: 0 });
       const rows = (await h.notifications()).rows;
       strictEqual(rows.length, qllEnabled ? 1 : 0);
       if (qllEnabled) strictEqual(rows[0]!.write._authority.mappingId, String(h.qllId));
@@ -119,7 +126,7 @@ test("F1: PR provenance cannot be replaced by the surviving target-project mappi
     const link = await h.createPr();
     await h.db.query("DELETE FROM repo_mappings WHERE id = $1", [h.qllId]);
     strictEqual(await mappingForOrphanLink(h.db, link), null);
-    deepStrictEqual(await h.orphan(), { checked: 1, orphaned: 1, errors: 0 });
+    deepStrictEqual(await h.orphan(), { checked: 1, orphaned: 1, archived: 0, errors: 0 });
     strictEqual((await h.notifications()).rows.length, 0);
     await h.db.query("DELETE FROM outbound_writes WHERE write->>'kind' = 'create_issue'");
     strictEqual(await mappingForOrphanLink(h.db, link), null, "an authorized target mapping is not provenance");

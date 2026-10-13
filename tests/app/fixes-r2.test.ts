@@ -18,23 +18,53 @@ import { migrate } from "../../src/db/migrate.ts";
 import { PlaneClient } from "../../src/sync/plane.ts";
 import { makeHarness, ghJob, sha } from "../a8/harness.ts";
 import { ADM, KEY, ORIGIN, startFakePlane } from "../ui/harness.ts";
+import { GITHUB_OAUTH_CONFIG, linkGithubUser, withGithubListing } from "../ui/linked-github.ts";
 
 test("F1: the service's own routes refuse a project that is not in the workspace (422), and never skip the check", async () => {
   const db = new PGlite(); await db.waitReady; await migrate(db);
+  // Parity C3: a save first re-checks the repository against the admin's own GitHub listing, so the admin is linked
+  // and can see acme/web; the project check below is still what refuses the save.
+  await linkGithubUser(db, KEY, "u-adm");
+  await db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (123, 'acme')");
   const plane = await startFakePlane(); // session endpoints for the viewer; the service client below answers 404: it cannot see the project
   const planeClient = new PlaneClient({ baseUrl: plane.url, token: new SecretString("svc"), fetch: (async () => new Response("{}", { status: 404 })) as typeof fetch, sleep: async () => {}, maxRetries: 0 });
   const ghClient = { installationOctokit: async () => ({ request: async () => ({ data: {} }) }), installationIdFor: async () => { throw Object.assign(new Error("nf"), { status: 404 }); } };
   const credentials = { load: async () => { throw new Error("unused"); }, webhookSecret: async () => "s", describe: async () => ({ source: "environment" as const, decryptOk: true }) };
-  const config: any = { PLANE_WEBHOOK_SECRET: "p", PLANE_BASE_URL: plane.url, PUBLIC_ORIGIN: ORIGIN };
+  const config: any = { PLANE_WEBHOOK_SECRET: "p", PLANE_BASE_URL: plane.url, PUBLIC_ORIGIN: ORIGIN, ...GITHUB_OAUTH_CONFIG };
   const routes = composeRoutes({ config, db, tokenKey: KEY, ctx: { db } as any, planeClient, ghClient, credentials, enqueue: async () => {} });
   const srv = await startServer({ port: 0, host: "127.0.0.1", routes });
   try {
-    const res = await fetch(`http://127.0.0.1:${srv.port}/git-sync/api/workspaces/acme/mappings`, {
+    const res = await withGithubListing({ 123: [{ id: 555, full_name: "acme/web" }] }, () => fetch(`http://127.0.0.1:${srv.port}/git-sync/api/workspaces/acme/mappings`, {
       method: "POST",
       headers: { cookie: ADM, origin: ORIGIN, "content-type": "application/json" },
       body: JSON.stringify({ ghRepoId: 555, ghRepoFullName: "acme/web", planeProjectId: "p-foreign", syncDirection: "bidirectional", smartCommitsEnabled: true, linkbackComments: true }),
-    });
+    }));
     strictEqual(res.status, 422);
+    strictEqual((await db.query("SELECT 1 FROM repo_mappings")).rows.length, 0);
+  } finally { await srv.close(); await plane.close(); await db.close(); }
+});
+
+test("C3: an admin without a linked GitHub account cannot save a mapping (409 asking them to connect it), and nothing is written", async () => {
+  const db = new PGlite(); await db.waitReady; await migrate(db);
+  await db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (123, 'acme')");
+  const plane = await startFakePlane();
+  const planeClient = new PlaneClient({ baseUrl: plane.url, token: new SecretString("svc"), fetch: (async () => new Response("{}", { status: 200 })) as typeof fetch, sleep: async () => {}, maxRetries: 0 });
+  let verified = 0;
+  const ghClient = { installationOctokit: async () => ({ request: async () => { verified++; return { data: { id: 555, full_name: "acme/web" } }; } }), installationIdFor: async () => 123 };
+  const credentials = { load: async () => { throw new Error("unused"); }, webhookSecret: async () => "s", describe: async () => ({ source: "environment" as const, decryptOk: true }) };
+  const config: any = { PLANE_WEBHOOK_SECRET: "p", PLANE_BASE_URL: plane.url, PUBLIC_ORIGIN: ORIGIN, ...GITHUB_OAUTH_CONFIG };
+  const routes = composeRoutes({ config, db, tokenKey: KEY, ctx: { db } as any, planeClient, ghClient, credentials, enqueue: async () => {} });
+  const srv = await startServer({ port: 0, host: "127.0.0.1", routes });
+  try {
+    // The listing would allow the repository: only the missing link refuses the save.
+    const res = await withGithubListing({ 123: [{ id: 555, full_name: "acme/web" }] }, () => fetch(`http://127.0.0.1:${srv.port}/git-sync/api/workspaces/acme/mappings`, {
+      method: "POST",
+      headers: { cookie: ADM, origin: ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify({ ghRepoId: 555, ghRepoFullName: "acme/web", planeProjectId: "p1", syncDirection: "bidirectional" }),
+    }));
+    strictEqual(res.status, 409);
+    strictEqual((await res.json()).error, "Connect your personal GitHub account to choose repositories");
+    strictEqual(verified, 0); // refused before the App is asked about the repository
     strictEqual((await db.query("SELECT 1 FROM repo_mappings")).rows.length, 0);
   } finally { await srv.close(); await plane.close(); await db.close(); }
 });
@@ -63,12 +93,22 @@ test("F14: a push as large as GitHub's payload limit is completed from the compa
     const hex = (i: number) => i.toString(16).padStart(40, "0");
     const listed = Array.from({ length: PUSH_PAYLOAD_COMMIT_LIMIT }, (_, i) => ({ id: hex(i + 1), message: `chore ${i}` }));
     const full = Array.from({ length: PUSH_PAYLOAD_COMMIT_LIMIT + 5 }, (_, i) => ({ sha: hex(i + 1), commit: { message: `chore ${i}` }, html_url: `https://github.com/acme/web/commit/${i}` }));
-    h.gh.respond(/GET \/repos\/\{owner\}\/\{repo\}\/compare\/\{basehead\}$/, () => ({ commits: full }));
+    // A8: the installation adapter requests paginated compare results, at most 100 commits per page.
+    full[full.length - 1]!.commit.message = "QLL-1 #comment recovered beyond the webhook payload";
+    h.gh.respond(/GET \/repos\/\{owner\}\/\{repo\}\/compare\/\{basehead\}$/, (params) => ({
+      total_commits: full.length,
+      commits: full.slice((params.page - 1) * params.per_page, params.page * params.per_page),
+    }));
     await h.feed(ghJob("push", { ref: "refs/heads/feature", created: false, before: sha("1"), after: sha("2"), commits: listed }));
     const compare = h.gh.calls.filter((c) => c.route.includes("/compare/"));
-    ok(compare.length >= 1);
+    deepStrictEqual(compare.map((c) => c.params.page), Array.from({ length: Math.ceil(full.length / 100) }, (_, i) => i + 1));
+    ok(compare.every((c) => c.params.per_page === 100));
     strictEqual(compare[0]!.params.basehead, `${sha("1")}...${sha("2")}`);
     deepStrictEqual((await h.audit("smart_commit_truncated")).length, 0);
+    const comments = h.plane.writes().filter((call) => /\/comments\/$/.test(call.path));
+    strictEqual(comments.length, 1);
+    ok(comments[0]!.body.comment_html.includes("recovered beyond the webhook payload"));
+    strictEqual((await h.db.query("SELECT 1 FROM processed_commits WHERE sha = $1", [full.at(-1)!.sha])).rows.length, 1);
   } finally { await h.close(); }
 });
 

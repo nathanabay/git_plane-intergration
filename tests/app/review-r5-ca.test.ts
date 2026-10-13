@@ -6,12 +6,26 @@ import { linkedIssuesFor } from "../../src/app/rules.ts";
 import { mappingsForRepo } from "../../src/app/mappings.ts";
 import { createOrderedOutbox, deliveryScope, OrderedWriteDeferredError } from "../../src/app/writers.ts";
 import { reconcileOnce } from "../../src/sync/reconcile.ts";
+import type { ReconcilePlane } from "../../src/sync/reconcile.ts";
 import { PlaneApiError } from "../../src/sync/plane.ts";
+import type { PlaneClient } from "../../src/sync/plane.ts";
 import { appendAudit } from "../../src/db/ledgers.ts";
 import { replayDelivery } from "../../src/operations/tooling.ts";
 import { ghJob, makeHarness, prPayload, sha } from "../a8/harness.ts";
 import type { InboundJob } from "../../src/queue/index.ts";
 import { queue } from "../writers/outbox-fixture.ts";
+
+/**
+ * A2 (docs audit): a single 404 no longer orphans a link; Plane must show the item was deleted (or a second
+ * sweep must agree). "Actual orphaning" here means the Plane item was deleted: the real client answers the
+ * 404 and the project read, and its activities record the delete.
+ */
+const deletedInPlane = (client: PlaneClient): ReconcilePlane => ({
+  getIssue: client.getIssue.bind(client),
+  getProject: client.getProject.bind(client),
+  listIssueIds: client.listIssueIds.bind(client),
+  listIssueActivities: async () => [{ verb: "deleted", field: "issue", created_at: new Date().toISOString() }],
+});
 
 async function harness(rules?: string) {
   const h = await makeHarness();
@@ -82,7 +96,7 @@ test("F4: actual orphaning permits one replacement and duplicate/replayed reques
     await h.feed(ghJob("pull_request", prPayload("edited", {}, { body: "QLL-NEW" })));
     await h.drain();
     strictEqual(h.plane.createdIssueIds.length, 1, "active partner is the once-only guard");
-    deepStrictEqual(await reconcileOnce({ db: h.db, plane: h.ctx.planeClient }), { checked: 1, orphaned: 1, errors: 0 });
+    deepStrictEqual(await reconcileOnce({ db: h.db, plane: deletedInPlane(h.ctx.planeClient) }), { checked: 1, orphaned: 1, archived: 0, errors: 0 });
     await h.feed({ ...ghJob("pull_request", prPayload("opened", {}, { body: "QLL-NEW" }), "replay-original-after-orphan"), writeDeliveryId: "create-original" });
     await h.drain();
     strictEqual(h.plane.createdIssueIds.length, 1, "replaying a completed old request cannot create a replacement");
@@ -106,13 +120,13 @@ test("F4: a pruned completed workflow still gives a confirmed orphan a distinct 
     await h.feed(ghJob("pull_request", prPayload("opened", {}, { body: "WEB-NEW" })));
     await h.drain();
     const oldIntent = h.plane.writes().find((c) => c.body?.external_id)?.body.external_id;
-    await reconcileOnce({ db: h.db, plane: h.ctx.planeClient });
+    await reconcileOnce({ db: h.db, plane: deletedInPlane(h.ctx.planeClient) });
     await h.db.query("DELETE FROM outbound_writes");
     h.planeQ.jobs.clear(); h.githubQ.jobs.clear();
     await h.feed(ghJob("pull_request", prPayload("edited", {}, { body: "WEB-NEW" })));
     await h.drain();
     strictEqual(h.plane.createdIssueIds.length, 2);
-    const creates = h.plane.writes().filter((c) => c.method === "POST" && /\/issues\/$/.test(c.path));
+    const creates = h.plane.writes().filter((c) => c.method === "POST" && /\/work-items\/$/.test(c.path));
     ok(creates[1]!.body.external_id !== oldIntent);
   } finally { await h.close(); }
 });
@@ -140,10 +154,11 @@ test("F5: real cross-project -NEW follows approval, check readiness and merge in
   try {
     const head = { sha: sha("a"), ref: "feature" };
     const pr = { body: "WEB-NEW", title: "Ship", head };
+    h.gh.respond(/pulls\/\{pull_number\}$/, () => (prPayload("opened", {}, pr) as any).pull_request);
     h.gh.respond(/\/reviews$/, () => [{ state: "APPROVED", user: { id: 9, login: "reviewer" } }]);
-    h.gh.respond(/\/check-suites$/, () => ({ check_suites: [{ status: "completed", conclusion: "success" }] }));
+    h.gh.respond(/\/check-suites$/, () => ({ total_count: 1, check_suites: [{ status: "completed", conclusion: "success" }] }));
     h.gh.respond(/\/status$/, () => ({ state: "success", total_count: 1 }));
-    h.gh.respond(/\/check-runs$/, () => ({ check_runs: [{ status: "completed", conclusion: "success" }] }));
+    h.gh.respond(/\/check-runs$/, () => ({ total_count: 1, check_runs: [{ status: "completed", conclusion: "success" }] }));
     h.gh.respond(/\/commits\/\{commit_sha\}\/pulls$/, () => [(prPayload("opened", {}, pr) as any).pull_request]);
     await h.feed(ghJob("pull_request", prPayload("opened", {}, pr)));
     await h.drain();
@@ -165,8 +180,8 @@ test("F5: real cross-project -NEW follows approval, check readiness and merge in
     const writes = h.plane.writes();
     for (const text of ["approved-other-project", "ready-other-project", "checked-other-project"]) ok(writes.some((c) => c.body?.comment_html?.includes(text)), text);
     ok(!writes.some((c) => c.body?.comment_html?.includes("wrong-project")));
-    ok(writes.some((c) => c.path.includes(`/p-web/issues/${id}/`) && c.body?.state === "s-done"));
-    ok(writes.some((c) => c.path.includes(`/p-web/issues/${id}/links/`) && c.body?.title?.includes("MERGED")));
+    ok(writes.some((c) => c.path.includes(`/p-web/work-items/${id}/`) && c.body?.state === "s-done"));
+    ok(writes.some((c) => c.path.includes(`/p-web/work-items/${id}/links/`) && c.body?.title?.includes("MERGED")));
     ok(writes.every((c) => !c.path.includes("foreign")));
   } finally { await h.close(); }
 });

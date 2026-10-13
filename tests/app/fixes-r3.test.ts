@@ -9,7 +9,7 @@ import { migrate } from "../../src/db/migrate.ts";
 import { PlaneClient } from "../../src/sync/plane.ts";
 import { createMappingVerifier, installationWorkspaceFromDb } from "../../src/ui/mapping-check.ts";
 import { mappingsForProject, rememberInstallation } from "../../src/app/mappings.ts";
-import { notInstalledWriter, planeInstallation } from "../../src/app/issues.ts";
+import { handlePendingMirroredIssue, notInstalledWriter, planeInstallation } from "../../src/app/issues.ts";
 import { ghJob, makeHarness, planeJob, prPayload, sha } from "../a8/harness.ts";
 import { ADM, KEY, ORIGIN, startFakePlane } from "../ui/harness.ts";
 
@@ -22,7 +22,9 @@ test("F5: the service's own routes verify a manual user link against GitHub's ac
   const ghClient = {
     installationOctokit: async () => ({ request: async () => ({ data: {} }) }),
     installationIdFor: async () => 1,
-    appRequest: async () => ({ data: { id: 7, login: "Octo" } }),
+    // G1 uses an unauthenticated public-profile client; JWT is reserved for App endpoints.
+    publicRequest: async () => ({ data: { id: 7, login: "Octo" } }),
+    appRequest: async () => { throw new Error("Public user profiles must not use App JWT"); },
   };
   const credentials = { load: async () => { throw new Error("unused"); }, webhookSecret: async () => "s", describe: async () => ({ source: "environment" as const, decryptOk: true }) };
   const config: any = { PLANE_WEBHOOK_SECRET: "p", PLANE_BASE_URL: plane.url, PUBLIC_ORIGIN: ORIGIN };
@@ -73,6 +75,9 @@ test("F7: a transient installation-lookup failure fails the delivery (it retries
     // Uncached lookup classification is a helper-boundary case. Clearing reducer snapshots now
     // invalidates their frozen authority, so do not bypass real mapping admission to force a lookup.
     await rejects(() => planeInstallation(h.ctx, { ...mapping, installationId: null }), (error) => error === unavailable);
+    // G14 also revalidates a fully admitted mapping: transient failures must retry the actual delivery.
+    await rejects(() => h.feed(upd()), (error) => error === unavailable);
+    strictEqual((await mappingsForProject(h.db, "p-qll", "ws"))[0]!.installationId, 1);
     h.ctx.ghClient.installationIdFor = async () => { lookups++; throw Object.assign(new Error("not found"), { status: 404 }); };
     const missingId = await planeInstallation(h.ctx, { ...mapping, installationId: null });
     strictEqual(missingId, 0, "a permanent lookup miss selects the suppression writer");
@@ -80,14 +85,40 @@ test("F7: a transient installation-lookup failure fails the delivery (it retries
     strictEqual(suppressed.plan, undefined, "missing installations cannot register create plans");
     await rejects(() => suppressed.apply({ kind: "comment", installationId: missingId, owner: mapping.owner,
       repo: mapping.repo, repoId: mapping.ghRepoId, number: 7, body: "must be suppressed" }), /not installed/);
-    strictEqual(lookups, 2, "both classifications actually reach the installation lookup");
+    strictEqual(lookups, 3, "the helper classifications and transient reducer delivery all reach the lookup");
     strictEqual(h.gh.writes().length, 0, "no write is made with an unavailable installation");
     strictEqual((await h.db.query("SELECT 1 FROM outbound_writes")).rows.length, 0);
     ok((await h.audit("github_not_installed")).length >= 1, "the permanent miss is audited");
-    // The full reducer still handles a valid mapping without losing its installation snapshot.
+    // A confirmed missing installation disables the admitted mapping without freezing null authority.
     strictEqual(await h.feed(upd()), "handled");
-    strictEqual(lookups, 2, "verified reducer admission uses its saved installation");
+    strictEqual(lookups, 4, "a saved installation never bypasses G14's current-access lookup");
+    strictEqual((await h.db.query<any>("SELECT installation_id FROM repo_mappings WHERE id = $1", [mappingId])).rows[0].installation_id, null);
+    deepStrictEqual(await mappingsForProject(h.db, "p-qll", "ws"), []);
+    strictEqual(h.gh.writes().length, 0);
+    strictEqual((await h.db.query("SELECT 1 FROM outbound_writes")).rows.length, 0);
+    ok((await h.audit("github_not_installed")).length >= 2, "both helper suppression and actual delivery are audited");
+    strictEqual(await h.feed(upd()), "handled");
+    strictEqual(lookups, 4, "disabled mappings cannot admit later delivery work");
+    // Once access is restored and explicitly verified, full reducer admission revalidates it again.
+    h.ctx.ghClient.installationIdFor = async () => { lookups++; return 1; };
+    strictEqual(await verify({ slug: "ws", repo: { id: 555, fullName: "acme/web" }, onInstallationVerified: (id) => { verifiedId = id; } }), null);
+    await rememberInstallation(h.db, mappingId, verifiedId!);
+    strictEqual(await h.feed(upd()), "handled");
+    strictEqual(lookups, 6, "restored access is checked at verification and at reducer admission");
     strictEqual((await mappingsForProject(h.db, "p-qll", "ws"))[0]!.installationId, 1);
+    // A pending Plane event can lose access during its resume even after outbox admission.
+    const beforeResume = { githubWrites: h.gh.writes().length, planeWrites: h.plane.writes().length };
+    h.ctx.ghClient.installationIdFor = async () => { lookups++; throw Object.assign(new Error("not found during resume"), { status: 404 }); };
+    await handlePendingMirroredIssue(h.ctx, {
+      kind: "mirror_pending", job: upd(), mappingId, projectId: "p-qll", issueId: "i1", identifier: "pending event",
+      authority: { mappingId: String(mappingId), workspaceSlug: "ws", repoId: 555, installationId: 1 },
+    });
+    strictEqual(lookups, 7);
+    deepStrictEqual(await mappingsForProject(h.db, "p-qll", "ws"), []);
+    strictEqual(h.gh.writes().length, beforeResume.githubWrites);
+    strictEqual(h.plane.writes().length, beforeResume.planeWrites);
+    strictEqual((await h.db.query("SELECT 1 FROM outbound_writes")).rows.length, 0);
+    ok((await h.audit("github_not_installed")).length >= 3, "resume suppresses and audits lost access too");
   } finally { await h.close(); }
 });
 
@@ -97,10 +128,12 @@ async function readySetup(rules: string) {
   await h.mapping({ rules, smartCommits: false });
   await h.link("iss-1", 12, { kind: "pr" });
   const pr = { number: 12, title: "Fix QLL-1", draft: false, state: "open", merged: false, head: { ref: "octo/login", sha: HEAD }, base: { ref: "main" }, labels: [], user: { login: "octo" } };
-  h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => [pr]);
+  h.gh.respond(/pulls\/\{pull_number\}$/, () => pr);
+  h.gh.respond(/commits\/\{ref\}\/status$/, () => ({ state: "success", total_count: 1 }));
+  h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, (p) => p.page === 1 ? [pr] : []);
   h.gh.respond(/pulls\/\{pull_number\}\/reviews$/, () => [{ state: "APPROVED", user: { login: "rev", id: 9 } }]);
-  h.gh.respond(/commits\/\{ref\}\/check-suites$/, () => ({ check_suites: [{ status: "completed", conclusion: "success" }] }));
-  h.gh.respond(/commits\/\{ref\}\/check-runs$/, () => ({ check_runs: [] }));
+  h.gh.respond(/commits\/\{ref\}\/check-suites$/, () => ({ total_count: 1, check_suites: [{ status: "completed", conclusion: "success" }] }));
+  h.gh.respond(/commits\/\{ref\}\/check-runs$/, () => ({ check_runs: [], total_count: 0 }));
   return h;
 }
 
@@ -116,7 +149,8 @@ test("F18: readiness costs no GitHub reads for a PR with no linked item, and a c
   const h = await readySetup("- when: pull_request.ready_for_merge\n  then: [{ comment: ready }]\n");
   try {
     await h.db.query("UPDATE sync_links SET status = 'orphaned'"); // no active link
-    const readReads = () => h.gh.calls.filter((c) => /reviews$|check-suites$/.test(c.route)).length;
+    // Suites are now also build input; review reads distinguish readiness evaluation in the fixture.
+    const readReads = () => h.gh.calls.filter((c) => /reviews$/.test(c.route)).length;
     await h.feed(ghJob("check_suite", { action: "completed", check_suite: { head_sha: HEAD, conclusion: "success", pull_requests: [{ number: 12 }] } }));
     strictEqual(readReads(), 0);
     await h.db.query("UPDATE sync_links SET status = 'active'");

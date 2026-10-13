@@ -16,6 +16,7 @@ import { createMappingVerifier, installationWorkspaceFromDb } from "../../src/ui
 import { PlaneClient } from "../../src/sync/plane.ts";
 import { startServer } from "../../src/index.ts";
 import { ADM, INST, KEY, ORIGIN, startFakePlane } from "../ui/harness.ts";
+import { GITHUB_OAUTH_CONFIG, linkGithubUser, withGithubListing } from "../ui/linked-github.ts";
 
 test("round 5 CD installation authority and composed health", async (t) => {
   const db = new PGlite(); await db.waitReady; await migrate(db);
@@ -24,7 +25,7 @@ test("round 5 CD installation authority and composed health", async (t) => {
   const keyPath = join(dir, "app.pem"); await writeFile(keyPath, "bootstrap-key");
   const config: any = { PLANE_WEBHOOK_SECRET: "p", PLANE_BASE_URL: fake.url, PUBLIC_ORIGIN: ORIGIN,
     GITHUB_APP_ID: "1", GITHUB_PRIVATE_KEY_PATH: keyPath, GITHUB_WEBHOOK_SECRET: "bootstrap",
-    GITHUB_CREDENTIAL_MARKER_PATH: join(dir, "retired") };
+    GITHUB_CREDENTIAL_MARKER_PATH: join(dir, "retired"), ...GITHUB_OAUTH_CONFIG };
   const credentials = createCredentialSource(db, KEY, config, 0, join(dir, "retired"));
   const planeClient = new PlaneClient({ baseUrl: fake.url, token: new SecretString("svc"),
     fetch: (async () => new Response("{}", { status: 200 })) as typeof fetch, maxRetries: 0 });
@@ -70,8 +71,11 @@ test("round 5 CD installation authority and composed health", async (t) => {
       deepStrictEqual(verified, [123]);
       await rememberInstallation(db, mappingId, 123);
       const mapping = (await mappingsForRepo(db, 555))[0]!;
+      // G14 resolves current installation access; make the API agree with this replacement delivery.
+      installation = 456;
       await rejects(() => installationFor(ctx, mapping, { installation: { id: 456 } }), /not allowed/);
       strictEqual(mapping.installationId, 123);
+      installation = 123;
     });
 
     await t.test("F3: the composed admin inventory exposes unresolved and revoked mappings only to instance admins", async () => {
@@ -104,7 +108,9 @@ test("round 5 CD installation authority and composed health", async (t) => {
     await t.test("F3: composed mapping writes persist verified installations and reverify settings-only saves", async () => {
       const input = { ghRepoId: 555, ghRepoFullName: "acme/web", planeProjectId: "p2" };
       installation = 123;
-      const created = await call("POST", "/workspaces/acme/mappings", ADM, input);
+      // Parity C3: a create re-checks the admin's own GitHub listing first; the admin is linked and sees acme/web.
+      await linkGithubUser(db, KEY, "u-adm");
+      const created = await withGithubListing({ 123: [{ id: 555, full_name: "acme/web" }] }, () => call("POST", "/workspaces/acme/mappings", ADM, input));
       strictEqual(created.status, 201);
       const id = (await created.json()).id;
       const saved = await db.query<{ installation_id: string | number }>("SELECT installation_id FROM repo_mappings WHERE id = $1", [id]);
@@ -133,7 +139,9 @@ test("round 5 CD installation authority and composed health", async (t) => {
       await deliveryScope.run({ deliveryId: "github-revoked", workspaceSlug: "acme" }, () => outbox.plane.apply({ kind: "add_comment", slug: "acme", projectId: "p1", issueId: "i1", commentHtml: "private GitHub content" }));
       const planeJob = await intentJob(db);
       await deliveryScope.run({ deliveryId: "github-cross-project", workspaceSlug: "acme" }, () => outbox.plane.plan!("cross-project-authority", [
-        { kind: "write", side: "plane", write: { kind: "create_issue", slug: "acme", projectId: "other-project", fields: { name: "from authorized repo" } } },
+        // A cross-project create names its target in its own sync-link step ({ID}-NEW); audit S1 refuses an unnamed, unmapped project.
+        { kind: "write", side: "plane", bind: "created", write: { kind: "create_issue", slug: "acme", projectId: "other-project", fields: { name: "from authorized repo" } } },
+        { kind: "sync_link", link: { planeWorkspaceSlug: "acme", planeProjectId: "other-project", planeIssueId: { $result: "created.id" }, ghRepoId: 555, ghNumber: 9, ghKind: "pr", tier: "closing", createdBy: "magic_word" } },
         { kind: "write", side: "github", write: { kind: "comment", installationId: 123, owner: "acme", repo: "web", repoId: 555, number: 9, body: "created" } },
       ]));
       const workflow = await db.query<{ write: unknown }>("SELECT write FROM outbound_writes WHERE write->'_plan'->>'root' IS NOT NULL AND side = 'plane' ORDER BY sequence DESC LIMIT 1");

@@ -84,7 +84,7 @@ test("github → plane comment: mirrored once, and Plane's creation event for it
 test("a plane item created by the github mirror: the creation event is an echo", async (t) => {
   const h = await setup(t);
   await h.feed(ghJob("issues", { action: "labeled", label: { name: "plane" }, issue: { number: 31, title: "Mirror me", body: "b", state: "open", labels: [{ name: "plane" }], assignees: [] } }));
-  const created = h.plane.writes().find((c) => c.method === "POST" && /\/issues\/$/.test(c.path));
+  const created = h.plane.writes().find((c) => c.method === "POST" && /\/work-items\/$/.test(c.path));
   ok(created);
   const id = h.plane.createdIssueIds[0]!;
   strictEqual(await h.feed(planeJob("issue", { action: "create", data: { id, project: "p-qll" }, activity: { field: null, actor: { id: "u-service" } } })), "echo");

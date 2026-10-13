@@ -36,14 +36,16 @@ test("F7 GitHub status routes through the live inbound handler and fires readine
   await h.mapping({ smartCommits: false, rules: "- when: pull_request.ready_for_merge\n  then: [{ comment: ready }]\n" });
   await h.link("iss-1", 12, { kind: "pr" });
   const head = sha("a");
+  h.gh.respond(/pulls\/\{pull_number\}$/, () => ({ ...pr(12, "topic"), state: "open", draft: false, merged: false, head: { ...pr(12, "topic").head, sha: head } }));
+  h.gh.respond(/commits\/\{ref\}\/status$/, () => ({ state: "success", total_count: 1 }));
   h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => [{ ...pr(12, "topic"), state: "open", draft: false, merged: false, head: { ...pr(12, "topic").head, sha: head } }]);
   h.gh.respond(/pulls\/\{pull_number\}\/reviews$/, () => [{ state: "APPROVED", user: { login: "reviewer", id: 9 } }]);
-  h.gh.respond(/commits\/\{ref\}\/check-suites$/, () => ({ check_suites: [{ status: "completed", conclusion: "success" }] }));
+  h.gh.respond(/commits\/\{ref\}\/check-suites$/, () => ({ total_count: 1, check_suites: [{ status: "completed", conclusion: "success" }] }));
   await h.feed(ghJob("status", { repository: repo, sha: head, state: "failure" }));
   strictEqual(h.plane.writes().length, 0);
   strictEqual(h.gh.calls.filter((c) => /commits\/\{commit_sha\}\/pulls$/.test(c.route)).length, 0);
   await h.feed(ghJob("status", { repository: repo, sha: head, state: "success" }));
-  deepStrictEqual(h.plane.writes().filter((w) => /\/comments\/$/.test(w.path)).map((w) => w.path), ["/workspaces/ws/projects/p-qll/issues/iss-1/comments/"]);
+  deepStrictEqual(h.plane.writes().filter((w) => /\/comments\/$/.test(w.path)).map((w) => w.path), ["/workspaces/ws/projects/p-qll/work-items/iss-1/comments/"]);
   deepStrictEqual((await h.audit("rule_match")).map((r) => r.detail.trigger), ["pull_request.ready_for_merge"]);
   strictEqual((await h.audit("ready_for_merge")).length, 1);
   strictEqual((await h.audit("inbound")).filter((r) => r.outcome === "unhandled").length, 0);
@@ -70,7 +72,7 @@ test("F4 later push association requires this branch and this repository, and ig
   for (const n of [12, 13, 14, 15, 16]) await h.link(`item-${n}`, n, { kind: "pr" });
   h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, (p) => p.commit_sha === sha("b") ? [pr(12, "other"), pr(13, "topic", 999), pr(14, "topic"), { number: 16, head: { ref: "topic" } }] : [pr(15, "topic")]);
   await h.feed(ghJob("push", { repository: repo, ref: "refs/heads/topic", created: false, before: sha("a"), after: sha("c"), head_commit: { id: sha("c") }, commits: [{ id: sha("b"), message: "ordinary new commit" }] }));
-  deepStrictEqual(h.plane.writes().filter((w) => /\/comments\/$/.test(w.path)).map((w) => w.path), ["/workspaces/ws/projects/p-qll/issues/item-14/comments/"]);
+  deepStrictEqual(h.plane.writes().filter((w) => /\/comments\/$/.test(w.path)).map((w) => w.path), ["/workspaces/ws/projects/p-qll/work-items/item-14/comments/"]);
   deepStrictEqual(h.gh.calls.filter((c) => /commits\/\{commit_sha\}\/pulls$/.test(c.route)).map((c) => c.params.commit_sha), [sha("b")]);
 });
 
@@ -112,7 +114,12 @@ test("F10 live run completions keep CI rollups, but only a completed suite runs 
   const h = await makeHarness(); t.after(() => h.close());
   await h.mapping({ rules: "- when: check_suite.*\n  then: [{ comment: suite-only }]\n" });
   await h.link("iss-1", 12, { kind: "pr" });
-  h.gh.respond(/check-runs$/, () => ({ check_runs: [{ conclusion: "success" }, { conclusion: "failure" }] }));
+  h.gh.respond(/check-runs$/, () => ({ total_count: 2, check_runs: [{ conclusion: "success" }, { conclusion: "failure" }] }));
+  h.gh.respond(/pulls\/\{pull_number\}$/, () => ({ ...pr(12, "topic"), state: "open", head: { ...pr(12, "topic").head, sha: sha("f") }, base: { repo } }));
+  h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => []);
+  h.gh.respond(/check-suites$/, () => ({ total_count: 0, check_suites: [] }));
+  h.gh.respond(/reviews$/, () => []);
+  h.gh.respond(/commits\/\{ref\}\/status$/, () => ({ state: "pending", total_count: 0 }));
   const subject = { head_sha: sha("f"), head_branch: "topic", pull_requests: [pr(12, "topic")] };
   for (const conclusion of ["success", "failure"]) await h.feed(ghJob("check_run", { action: "completed", check_run: { ...subject, conclusion } }));
   strictEqual(h.plane.writes().filter((w) => /\/comments\/$/.test(w.path)).length, 0);
@@ -129,7 +136,7 @@ test("F4 default-branch push targets introduced commit references only, even for
   await h.link("iss-1", 12, { kind: "pr" });
   h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => [pr(12, "main")]);
   await h.feed(ghJob("push", { repository: repo, ref: "refs/heads/main", created: false, before: sha("a"), after: sha("b"), head_commit: { id: sha("b") }, commits: [{ id: sha("b"), message: "Fixes QLL-2" }] }));
-  deepStrictEqual(h.plane.writes().filter((w) => /\/comments\/$/.test(w.path)).map((w) => w.path), ["/workspaces/ws/projects/p-qll/issues/iss-2/comments/", "/workspaces/ws/projects/p-qll/issues/iss-2/comments/"]);
+  deepStrictEqual(h.plane.writes().filter((w) => /\/comments\/$/.test(w.path)).map((w) => w.path), ["/workspaces/ws/projects/p-qll/work-items/iss-2/comments/", "/workspaces/ws/projects/p-qll/work-items/iss-2/comments/"]);
   strictEqual(h.gh.calls.filter((c) => /commits\/\{commit_sha\}\/pulls$/.test(c.route)).length, 0);
 });
 
@@ -139,7 +146,7 @@ test("F4 an explicit first-push rule can target an introduced commit reference w
   await h.link("iss-1", 12, { kind: "pr" });
   h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => [pr(12, "topic")]);
   await h.feed(ghJob("push", { repository: repo, ref: "refs/heads/topic", created: true, before: sha("0"), after: sha("b"), commits: [{ id: sha("b"), message: "Fixes QLL-2" }] }));
-  deepStrictEqual(patches(h).map((w) => [w.path, w.body]), [["/workspaces/ws/projects/p-qll/issues/iss-2/", { state: "s-prog" }]]);
+  deepStrictEqual(patches(h).map((w) => [w.path, w.body]), [["/workspaces/ws/projects/p-qll/work-items/iss-2/", { state: "s-prog" }]]);
   strictEqual(h.gh.calls.filter((c) => /commits\/\{commit_sha\}\/pulls$/.test(c.route)).length, 0);
 });
 

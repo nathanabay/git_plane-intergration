@@ -27,7 +27,7 @@ for (const saved of [false, true]) {
       const job = ghJob("push", { created: true, before: sha("0"), after: sha("a"), ref: `refs/heads/${example.branch}`, commits: [{ id: sha("a"), message: example.message }] });
       await h.feed(job);
       deepStrictEqual(h.plane.writes().slice(before).filter((w) => w.method === "PATCH" && !/\/links\//.test(w.path)).map((w) => ({ path: w.path, body: w.body })),
-        example.targets.map((id) => ({ path: `/workspaces/ws/projects/p-qll/issues/${id}/`, body: { state: "s-prog" } })));
+        example.targets.map((id) => ({ path: `/workspaces/ws/projects/p-qll/work-items/${id}/`, body: { state: "s-prog" } })));
       deepStrictEqual((await h.audit("rule_match")).filter((r) => r.delivery_id === job.deliveryId).map((r) => r.detail.issues), example.targets.length ? [example.targets] : []);
     });
     strictEqual(h.gh.calls.filter((c) => /commits\/\{commit_sha\}\/pulls$/.test(c.route)).length, 0);

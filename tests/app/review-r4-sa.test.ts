@@ -9,6 +9,7 @@ import { startServer } from "../../src/index.ts";
 import { migrate } from "../../src/db/migrate.ts";
 import { PlaneClient } from "../../src/sync/plane.ts";
 import { ADM, KEY, ORIGIN, startFakePlane } from "../ui/harness.ts";
+import { GITHUB_OAUTH_CONFIG, linkGithubUser, withGithubListing } from "../ui/linked-github.ts";
 
 test("F1: composeRoutes accepts an allow-listed installation, refuses an unlisted one and another workspace's", async () => {
   const db = new PGlite(); await db.waitReady; await migrate(db);
@@ -20,15 +21,19 @@ test("F1: composeRoutes accepts an allow-listed installation, refuses an unliste
     installationIdFor: async (o: string, r: string) => installs[`${o}/${r}`]!,
   };
   const credentials = { load: async () => { throw new Error("unused"); }, webhookSecret: async () => "s", describe: async () => ({ source: "environment" as const, decryptOk: true }) };
-  const config: any = { PLANE_WEBHOOK_SECRET: "p", PLANE_BASE_URL: plane.url, PUBLIC_ORIGIN: ORIGIN };
+  const config: any = { PLANE_WEBHOOK_SECRET: "p", PLANE_BASE_URL: plane.url, PUBLIC_ORIGIN: ORIGIN, ...GITHUB_OAUTH_CONFIG };
   const routes = composeRoutes({ config, db, tokenKey: KEY, ctx: { db } as any, planeClient, ghClient, credentials, enqueue: async () => {} });
   const srv = await startServer({ port: 0, host: "127.0.0.1", routes });
   try {
     await db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (123, 'acme'), (789, 'elsewhere')");
-    const post = (ghRepoId: number, name: string, project: string) => fetch(`http://127.0.0.1:${srv.port}/git-sync/api/workspaces/acme/mappings`, {
+    // Parity C3: saves first re-check the admin's own GitHub listing. Here it names all three repositories, so the
+    // refusals below still come from the App-side installation allow-list this test is about.
+    await linkGithubUser(db, KEY, "u-adm");
+    const listing = { 123: [{ id: 555, full_name: "acme/web" }, { id: 556, full_name: "acme/other" }, { id: 557, full_name: "acme/theirs" }] };
+    const post = (ghRepoId: number, name: string, project: string) => withGithubListing(listing, () => fetch(`http://127.0.0.1:${srv.port}/git-sync/api/workspaces/acme/mappings`, {
       method: "POST", headers: { cookie: ADM, origin: ORIGIN, "content-type": "application/json" },
       body: JSON.stringify({ ghRepoId, ghRepoFullName: name, planeProjectId: project, syncDirection: "bidirectional", smartCommitsEnabled: true, linkbackComments: true }),
-    });
+    }));
     strictEqual((await post(555, "acme/web", "p1")).status, 201);
     strictEqual((await post(556, "acme/other", "p2")).status, 422); // installation 456 is not allow-listed
     strictEqual((await post(557, "acme/theirs", "p3")).status, 422); // installation 789 belongs to another workspace
