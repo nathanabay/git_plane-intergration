@@ -1,15 +1,24 @@
 // Authenticates a browser request against Plane's own session (spec §8: no second auth system).
 // Every call goes to Plane; nothing is cached, so a demoted admin's next request fails. Only the
-// one relevant Plane cookie is forwarded, and only GET requests are ever made.
+// relevant Plane session is forwarded, and only GET requests are ever made.
 import type { IncomingMessage } from "node:http";
 import { HttpError } from "./http.ts";
+import type { PlaneWorkspace } from "./client/types.ts";
 
 export interface PlaneAuthDeps {
   planeInternalUrl: string;
+  planeSessionCookieName?: string;
   fetch?: typeof fetch;
 }
 
-export interface Viewer { id: string; email: string | null }
+/** `workspaceId`: the Plane workspace the session's membership row belongs to (workspace routes only; audit S2). */
+export interface Viewer { id: string; email: string | null; workspaceId?: string }
+
+/** Plane v1.4.2 serialises every field of the membership row (`fields = "__all__"`), so `workspace` is its id. */
+export const membershipWorkspace = (json: unknown): { workspaceId?: string } => {
+  const id = field(json, "workspace");
+  return typeof id === "string" && id ? { workspaceId: id } : {};
+};
 
 export const WORKSPACE_ADMIN_ROLE = 20;
 const WEB_COOKIE = "session-id";
@@ -60,9 +69,11 @@ function field(json: unknown, key: string): unknown {
 
 /** Valid Plane web session, workspace role 20 (admin). 401 without a session, 403 below admin. */
 export async function authenticateWorkspaceAdmin(deps: PlaneAuthDeps, req: IncomingMessage, slug: string): Promise<Viewer> {
-  const sid = cookieValue(req.headers.cookie, WEB_COOKIE);
+  const webCookie = deps.planeSessionCookieName ?? WEB_COOKIE;
+  if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(webCookie)) throw new HttpError(502, "Plane session cookie name is invalid");
+  const sid = cookieValue(req.headers.cookie, webCookie);
   if (!sid) throw new HttpError(401, "Sign in to Plane to continue");
-  const cookie = `${WEB_COOKIE}=${sid}`;
+  const cookie = `${webCookie}=${sid}`;
 
   const me = await planeGet(deps, "/api/users/me/", cookie);
   if (me.status === 401 || me.status === 403) throw new HttpError(401, "Sign in to Plane to continue");
@@ -71,13 +82,17 @@ export async function authenticateWorkspaceAdmin(deps: PlaneAuthDeps, req: Incom
   if (typeof id !== "string" || id === "") throw new HttpError(502, "Plane could not verify the session");
   const email = field(me.json, "email");
 
-  const member = await planeGet(deps, `/api/workspaces/${encodeURIComponent(slug)}/workspace-members/me/`, cookie);
+  // Plane v1.4.2 selects ADMIN_SESSION_COOKIE_NAME whenever the decoded path contains
+  // "instances". Both names use the same session store: alias this verified web session,
+  // never substitute the browser's potentially different instance-admin identity.
+  const memberCookie = slug.includes("instances") ? `${cookie}; ${ADMIN_COOKIE}=${sid}` : cookie;
+  const member = await planeGet(deps, `/api/workspaces/${encodeURIComponent(slug)}/workspace-members/me/`, memberCookie);
   if (member.status === 401) throw new HttpError(401, "Sign in to Plane to continue");
   if (member.status === 403 || member.status === 404) throw new HttpError(403, "Workspace admin access is required");
   if (member.status !== 200) throw new HttpError(502, "Plane could not verify the workspace role");
   const role = Number(field(member.json, "role"));
   if (!Number.isFinite(role) || role < WORKSPACE_ADMIN_ROLE) throw new HttpError(403, "Workspace admin access is required");
-  return { id, email: typeof email === "string" ? email : null };
+  return { id, email: typeof email === "string" ? email : null, ...membershipWorkspace(member.json) };
 }
 
 /** Valid Plane instance-admin session (the admin app's own cookie). */
@@ -91,4 +106,32 @@ export async function authenticateInstanceAdmin(deps: PlaneAuthDeps, req: Incomi
   if (typeof id !== "string" || id === "") throw new HttpError(502, "Plane could not verify the admin session");
   const email = field(me.json, "email");
   return { id, email: typeof email === "string" ? email : null };
+}
+
+/** The v1.4.2 instance-admin endpoint paginates all workspaces using the admin session. */
+export async function listInstanceWorkspaces(deps: PlaneAuthDeps, req: IncomingMessage): Promise<PlaneWorkspace[]> {
+  const sid = cookieValue(req.headers.cookie, ADMIN_COOKIE);
+  if (!sid) throw new HttpError(401, "Sign in to the Plane admin app to continue");
+  const out: PlaneWorkspace[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < 1000; page++) {
+    const result = await planeGet(deps, `/api/instances/workspaces/${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, `${ADMIN_COOKIE}=${sid}`);
+    if (result.status === 401 || result.status === 403) throw new HttpError(401, "Sign in to the Plane admin app to continue");
+    if (result.status !== 200) throw new HttpError(502, "Plane could not load workspaces");
+    const rows = Array.isArray(result.json) ? result.json : field(result.json, "results");
+    if (!Array.isArray(rows)) throw new HttpError(502, "Plane returned an unreadable workspace list");
+    for (const row of rows) {
+      const id = field(row, "id"), slug = field(row, "slug"), name = field(row, "name");
+      if (typeof id !== "string" || typeof slug !== "string" || typeof name !== "string" || !id || !slug || !name)
+        throw new HttpError(502, "Plane returned an unreadable workspace");
+      out.push({ id, slug, name });
+    }
+    if (Array.isArray(result.json) || field(result.json, "next_page_results") !== true)
+      return out.sort((a, b) => a.name.localeCompare(b.name));
+    const next = field(result.json, "next_cursor");
+    if (typeof next !== "string" || !next || seen.has(next)) throw new HttpError(502, "Plane workspace pagination did not complete");
+    seen.add(next); cursor = next;
+  }
+  throw new HttpError(502, "Plane workspace pagination did not complete");
 }

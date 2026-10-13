@@ -1,5 +1,8 @@
 // Request-body validation shared by the config API (server) and the React app (browser), so the
 // form rejects exactly what the API would. Pure functions; no Node or DOM imports.
+import { deriveGithubHosts } from "../github/hosts.ts";
+import type { GithubEdition } from "../github/hosts.ts";
+import { parseRules } from "../rules/engine.ts";
 
 export class ValidationError extends Error {}
 
@@ -58,6 +61,16 @@ function posInt(v: unknown, name: string, max = Number.MAX_SAFE_INTEGER): number
   return v;
 }
 
+/** Audit S3: a hand-off link must name the organization it is for, by GitHub account id or login (exactly one). */
+export function parseOwnerHandoff(raw: unknown): { accountId: number } | { accountLogin: string } {
+  const body = requireRecord(raw);
+  rejectUnknownKeys(body, ["accountId", "accountLogin"]);
+  if ((body.accountId === undefined) === (body.accountLogin === undefined)) throw new ValidationError("Name the GitHub organization: accountId or accountLogin");
+  if (body.accountId !== undefined) return { accountId: posInt(body.accountId, "accountId") };
+  if (typeof body.accountLogin !== "string" || !GITHUB_LOGIN.test(body.accountLogin)) throw new ValidationError("accountLogin must be a GitHub login");
+  return { accountLogin: body.accountLogin };
+}
+
 function bool(v: unknown, name: string): boolean {
   if (typeof v !== "boolean") throw new ValidationError(`${name} must be true or false`);
   return v;
@@ -86,9 +99,11 @@ export interface MappingInput {
   smartCommitsEnabled: boolean;
   linkbackComments: boolean;
   autolinks: boolean;
+  openStateId: string | null;
+  closedStateId: string | null;
 }
 
-const MAPPING_KEYS = ["ghRepoId", "ghRepoFullName", "planeProjectId", "syncDirection", "smartCommitsEnabled", "linkbackComments", "autolinks"];
+const MAPPING_KEYS = ["ghRepoId", "ghRepoFullName", "planeProjectId", "syncDirection", "smartCommitsEnabled", "linkbackComments", "autolinks", "openStateId", "closedStateId"];
 
 /** Validates a mapping body. `partial` (PATCH) requires at least one field; otherwise the three identity fields are required. */
 export function parseMappingInput(raw: unknown, partial: boolean): Partial<MappingInput> {
@@ -122,6 +137,14 @@ export function parseMappingInput(raw: unknown, partial: boolean): Partial<Mappi
   if (has("smartCommitsEnabled")) out.smartCommitsEnabled = bool(body.smartCommitsEnabled, "smartCommitsEnabled");
   if (has("linkbackComments")) out.linkbackComments = bool(body.linkbackComments, "linkbackComments");
   if (has("autolinks")) out.autolinks = bool(body.autolinks, "autolinks");
+  for (const key of ["openStateId", "closedStateId"] as const) {
+    if (!has(key)) continue;
+    if (body[key] === null || body[key] === "") { out[key] = null; continue; }
+    const id = text(body[key], key, 64);
+    if (!PLANE_ID.test(id)) throw new ValidationError(`${key} contains invalid characters`);
+    out[key] = id;
+  }
+  if (out.openStateId && out.openStateId === out.closedStateId) throw new ValidationError("Open and closed states must differ");
   return out;
 }
 
@@ -183,27 +206,28 @@ export function parseMagicWords(raw: unknown): Record<MagicTier, string[]> {
   return out;
 }
 
-export interface InstanceSettings { smartCommitsDefault: boolean; reconciliationIntervalMinutes: number; opTtlMinutes: number }
+export interface InstanceSettings { smartCommitsDefault: boolean; reconciliationIntervalMinutes: number; opTtlMinutes: number; requireVerifiedCommits?: boolean }
 
 export function parseInstanceSettings(raw: unknown): Partial<InstanceSettings> {
   const body = requireRecord(raw);
-  rejectUnknownKeys(body, ["smartCommitsDefault", "reconciliationIntervalMinutes", "opTtlMinutes"]);
+  rejectUnknownKeys(body, ["smartCommitsDefault", "reconciliationIntervalMinutes", "opTtlMinutes", "requireVerifiedCommits"]);
   const out: Partial<InstanceSettings> = {};
   if (body.smartCommitsDefault !== undefined) out.smartCommitsDefault = bool(body.smartCommitsDefault, "smartCommitsDefault");
+  if (body.requireVerifiedCommits !== undefined) out.requireVerifiedCommits = bool(body.requireVerifiedCommits, "requireVerifiedCommits");
   if (body.reconciliationIntervalMinutes !== undefined) out.reconciliationIntervalMinutes = posInt(body.reconciliationIntervalMinutes, "reconciliationIntervalMinutes", 10080);
   if (body.opTtlMinutes !== undefined) out.opTtlMinutes = posInt(body.opTtlMinutes, "opTtlMinutes", 10080);
   if (Object.keys(out).length === 0) throw new ValidationError("no settings given");
   return out;
 }
 
-export interface GithubAppInput { appId: number; privateKey?: string; webhookSecret?: string; gheBaseUrl: string | null }
+export interface GithubAppInput { appId: number; privateKey?: string; webhookSecret?: string; gheBaseUrl: string | null; clientId?: string | null; clientSecret?: string; appSlug?: string | null; edition?: GithubEdition; gheSubdomain?: string | null }
 
 const PEM = /^-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+-----END [A-Z ]*PRIVATE KEY-----\s*$/;
 
 /** Secrets may be omitted to keep the stored ones (the API never returns them, so a form cannot resend them). */
 export function parseGithubApp(raw: unknown): GithubAppInput {
   const body = requireRecord(raw);
-  rejectUnknownKeys(body, ["appId", "privateKey", "webhookSecret", "gheBaseUrl"]);
+  rejectUnknownKeys(body, ["appId", "privateKey", "webhookSecret", "gheBaseUrl", "clientId", "clientSecret", "appSlug", "edition", "gheSubdomain"]);
   const out: GithubAppInput = { appId: posInt(body.appId, "appId"), gheBaseUrl: null };
   if (body.privateKey !== undefined && body.privateKey !== "") {
     if (typeof body.privateKey !== "string" || body.privateKey.length > 16384 || !PEM.test(body.privateKey.trim())) {
@@ -227,18 +251,51 @@ export function parseGithubApp(raw: unknown): GithubAppInput {
     }
     out.gheBaseUrl = u.origin + u.pathname.replace(/\/+$/, "");
   }
+  for (const field of ["clientId", "appSlug"] as const) {
+    if (body[field] !== undefined) out[field] = body[field] === null || body[field] === "" ? null : text(body[field], field, 200);
+  }
+  if (out.appSlug && !/^[a-z0-9][a-z0-9_-]*$/i.test(out.appSlug)) throw new ValidationError("appSlug must be a GitHub App slug");
+  if (body.clientSecret !== undefined && body.clientSecret !== "") out.clientSecret = text(body.clientSecret, "clientSecret", 4096);
+  if (body.edition !== undefined || out.gheBaseUrl !== null) {
+    try {
+      const hosts = deriveGithubHosts({ edition: body.edition as GithubEdition | undefined,
+        gheBaseUrl: out.gheBaseUrl, gheSubdomain: body.gheSubdomain as string | null | undefined });
+      out.edition = hosts.edition;
+      out.gheBaseUrl = hosts.edition === "github" ? null : hosts.apiBaseUrl;
+      out.gheSubdomain = hosts.edition === "ghe_cloud" ? hosts.webOrigin.slice(8, -8) : null;
+    } catch (err) { throw new ValidationError(err instanceof Error ? err.message : "Invalid GitHub edition"); }
+  } else if (body.gheSubdomain !== undefined) throw new ValidationError("gheSubdomain requires an edition");
   return out;
+}
+
+export function isValidRepoFullName(fullName: string): boolean {
+  return REPO_FULL_NAME.test(fullName);
 }
 
 export function isValidGithubLogin(login: string): boolean {
   return GITHUB_LOGIN.test(login);
 }
 
-export const DRY_RUN_EVENTS = ["pull_request", "pull_request_review", "push"] as const;
+export const DRY_RUN_EVENTS = ["pull_request", "pull_request_review", "push", "check_suite", "deployment_status", "issues", "issue_comment", "issue"] as const;
 export type DryRunEvent = (typeof DRY_RUN_EVENTS)[number];
 
+export const DRY_RUN_TRIGGERS = ["branch.created", "push", "commit.pushed_to_default",
+  ...["drafted", "opened", "review_requested", "changes_requested", "approved", "ready_for_merge", "merged", "closed_unmerged", "reopened"].map((action) => `pull_request.${action}`),
+  "pull_request.*", "check_suite.success", "check_suite.failure", "check_suite.*", "deployment_status.success", "deployment_status.failure", "deployment_status.*",
+  "issue.created", "issue.updated", "issue.deleted", "issue.opened", "issue.closed", "issue.*", "comment.created", "comment.edited", "comment.deleted", "comment.*"];
+
+/** Delegate trigger syntax to the engine so new accepted family actions need no UI enumeration. */
+export function validateRuleTrigger(trigger: unknown): string {
+  if (typeof trigger !== "string" || trigger.length > 100) throw new ValidationError("Enter a rule trigger");
+  try { parseRules(`- when: ${JSON.stringify(trigger)}\n  then: [{comment: preview}]\n`); }
+  catch { throw new ValidationError("That trigger is not accepted by the rules engine"); }
+  return trigger;
+}
+
 export interface DryRunInput {
-  event: DryRunEvent;
+  event?: DryRunEvent;
+  trigger?: string;
+  source?: "github" | "plane";
   /** A pasted delivery payload; ignored when `auditId` names a recorded one. */
   payload?: JsonObject;
   auditId?: number;
@@ -249,12 +306,14 @@ export interface DryRunInput {
 
 export function parseDryRun(raw: unknown): DryRunInput {
   const body = requireRecord(raw);
-  rejectUnknownKeys(body, ["event", "payload", "auditId", "yaml", "mappingId"]);
+  rejectUnknownKeys(body, ["event", "trigger", "source", "payload", "auditId", "yaml", "mappingId"]);
   const event = body.event;
-  if (typeof event !== "string" || !(DRY_RUN_EVENTS as readonly string[]).includes(event)) {
+  if (body.trigger === undefined && (typeof event !== "string" || !(DRY_RUN_EVENTS as readonly string[]).includes(event))) {
     throw new ValidationError(`event must be one of ${DRY_RUN_EVENTS.join(", ")}`);
   }
-  const out: DryRunInput = { event: event as DryRunEvent };
+  if (body.source !== undefined && body.source !== "github" && body.source !== "plane") throw new ValidationError("source must be github or plane");
+  const out: DryRunInput = { ...(body.source !== undefined ? { source: body.source as "github" | "plane" } : {}),
+    ...(body.trigger !== undefined ? { trigger: validateRuleTrigger(body.trigger) } : { event: event as DryRunEvent }) };
   if (body.payload !== undefined) out.payload = requireRecord(body.payload, "payload");
   if (body.auditId !== undefined) out.auditId = posInt(body.auditId, "auditId");
   if (out.payload === undefined && out.auditId === undefined) throw new ValidationError("give a payload or an auditId to test against");

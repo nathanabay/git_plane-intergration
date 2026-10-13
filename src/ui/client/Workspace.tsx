@@ -1,13 +1,22 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, failedWriteId, isNotAuthorised, retryFailedWrite } from "./http.ts";
-import { Async, Field, Link, SaveStatus, formatTime, useLoad, useSaver } from "./common.tsx";
+import { Async, ErrorNote, Field, Link, SaveStatus, formatTime, useLoad, useSaver } from "./common.tsx";
 import type { Loaded } from "./common.tsx";
-import { lookupRepo, lookupUser } from "./github.ts";
+import { lookupUser } from "./github.ts";
 import { mappingHref, workspaceHref } from "./router.ts";
-import type { AppRoute, MappingTab } from "./router.ts";
-import type { AuditPage, BackfillResult, DryRunResult, Mapping, Policies, RulesDoc, UserLink } from "./types.ts";
-import { CONFLICT_FIELDS, CONFLICT_POLICIES, DRY_RUN_EVENTS, SYNC_DIRECTIONS, isValidGithubLogin } from "../validate.ts";
+import type { AppRoute, AuditFilters, MappingTab } from "./router.ts";
+import type { AuditPage, BackfillResult, DryRunResult, Mapping, PlaneMember, PlaneProject, PlaneState, Policies, RulesDoc, UserLink, WorkspaceHealth } from "./types.ts";
+import { GithubConnectionPanel, PersonalAccountPanel, RepositoryPicker } from "./Connect.tsx";
+import type { PickableRepositories } from "./Connect.tsx";
+import { DevPanel } from "./DevPanel.tsx";
+import { MappingHealthCard, SetupChecklist, WorkspaceHealthBanners } from "./health.tsx";
+import { CONFLICT_FIELDS, CONFLICT_POLICIES, DRY_RUN_EVENTS, DRY_RUN_TRIGGERS, SYNC_DIRECTIONS, isValidGithubLogin } from "../validate.ts";
+import { MemberPicker, StatePicker } from "./pickers.tsx";
+import { mappingFormBody } from "./mapping-form.ts";
+import { setRuleState } from "./rule-editor.ts";
+import { parseRules } from "../../rules/engine.ts";
+import { AuditDetail, auditKindLabel, humanLabel } from "./audit.tsx";
 import type { DryRunEvent } from "../validate.ts";
 import type { ConflictField, ConflictPolicy, SyncDirection } from "../validate.ts";
 import { LIFECYCLES, QLL_DEFAULTS, compileLifecycleRules, parseLifecycleMappingFromYaml } from "../../github/pr-automation.ts";
@@ -20,40 +29,60 @@ type WorkspaceRoute = Exclude<AppRoute, { name: "admin" } | { name: "notfound" }
 
 export function WorkspacePage({ route }: { route: WorkspaceRoute }) {
   const { slug } = route;
+  const adminSection = route.name !== "account" && route.name !== "development";
+  const health = useLoad(() => adminSection ? api<WorkspaceHealth>("GET", `${ws(slug)}/health`) : Promise.resolve(null), [slug, adminSection]);
+  useEffect(() => { if (!adminSection) return; const timer = setInterval(health.reload, 30_000); return () => clearInterval(timer); }, [adminSection, health.reload]);
+  if (route.name === "development") return <DevPanel route={route} />;
   return (
     <main>
       <h1>Git sync: {slug}</h1>
       <nav aria-label="Workspace sections" className="tabs">
         <Link href={workspaceHref(slug)} aria-current={route.name === "mappings" || route.name === "mapping" ? "page" : undefined}>Repositories</Link>
         <Link href={workspaceHref(slug, "users")} aria-current={route.name === "users" ? "page" : undefined}>User links</Link>
+        <Link href={workspaceHref(slug, "account")} aria-current={route.name === "account" ? "page" : undefined}>My GitHub account</Link>
         <Link href={workspaceHref(slug, "audit")} aria-current={route.name === "audit" ? "page" : undefined}>Audit log</Link>
       </nav>
-      {route.name === "mappings" ? <MappingsPage slug={slug} /> : null}
+      {health.data ? <WorkspaceHealthBanners health={health.data} /> : null}
+      {adminSection ? <ErrorNote error={health.error} /> : null}
+      {route.name === "account" ? <PersonalAccountPanel slug={slug} /> : null}
+      {route.name === "mappings" ? <MappingsPage slug={slug} health={health} /> : null}
       {route.name === "mapping" ? <MappingPage slug={slug} id={route.id} tab={route.tab} /> : null}
       {route.name === "users" ? <UserLinksPage slug={slug} /> : null}
-      {route.name === "audit" ? <AuditLogPage slug={slug} /> : null}
+      {route.name === "audit" ? <AuditLogPage slug={slug} filters={route.filters} /> : null}
     </main>
   );
 }
 
 // ---- repositories ---------------------------------------------------------------------------------
-function MappingsPage({ slug }: { slug: string }) {
+function MappingsPage({ slug, health }: { slug: string; health: Loaded<WorkspaceHealth | null> }) {
   const list = useLoad(() => api<Mapping[]>("GET", `${ws(slug)}/mappings`), [slug]);
+  const projects = useLoad(() => api<PlaneProject[]>("GET", `${ws(slug)}/projects`), [slug]);
+  const [addedMapping, setAddedMapping] = useState<number | null>(null);
+  useEffect(() => { setAddedMapping(null); }, [slug]);
   const remove = useSaver();
   return (
     <>
+      <PersonalAccountPanel slug={slug} />
+      <GithubConnectionPanel slug={slug} />
+      <button type="button" onClick={health.reload}>Refresh sync health</button>
+      {addedMapping !== null ? <section className="panel" aria-label="Mapping added">
+        <h2>Repository mapped</h2><BackfillPanel key={addedMapping} slug={slug} id={addedMapping} offer />
+        <button type="button" onClick={() => setAddedMapping(null)}>Not now</button>
+      </section> : null}
       <section className="panel" aria-labelledby="maps-h">
         <h2 id="maps-h">Mapped repositories</h2>
         <Async state={list} denied={DENIED}>
-          {(maps) => maps.length === 0 ? <p>No repository is mapped to a project in this workspace yet.</p> : (
+          {(maps) => maps.length === 0 ? <><p>No repository is mapped to a project in this workspace yet.</p>
+            {health.data ? <SetupChecklist slug={slug} setup={health.data.setup} /> : <p>Loading setup checklist…</p>}</> : (
             <table>
-              <thead><tr><th>Repository</th><th>Plane project</th><th>Direction</th><th><span className="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th>Repository</th><th>Plane project</th><th>Direction</th><th>Sync health</th><th><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 {maps.map((m) => (
                   <tr key={m.id}>
                     <td>{m.ghRepoFullName}</td>
-                    <td><code>{m.planeProjectId}</code></td>
+                    <td>{projects.data?.find((project) => project.id === m.planeProjectId)?.label ?? (projects.loading ? "Loading project…" : "Project unavailable")}</td>
                     <td>{m.syncDirection === "bidirectional" ? "Two-way" : "GitHub to Plane"}</td>
+                    <td>{health.data?.mappings.find((item) => item.mappingId === m.id) ? <MappingHealthCard slug={slug} health={health.data.mappings.find((item) => item.mappingId === m.id)!} /> : "Health unavailable"}</td>
                     <td className="actions">
                       <Link href={mappingHref(slug, m.id, "settings")}>Edit</Link>
                       <button type="button" className="danger" disabled={remove.busy}
@@ -69,114 +98,97 @@ function MappingsPage({ slug }: { slug: string }) {
           )}
         </Async>
         <SaveStatus saver={remove} />
+        <ErrorNote error={projects.error} />
+        {projects.error ? <button type="button" onClick={projects.reload}>Reload project names</button> : null}
       </section>
       {list.error && isNotAuthorised(list.error) ? null : (
         <section className="panel" aria-labelledby="new-h">
           <h2 id="new-h">Map a repository</h2>
-          <MappingForm slug={slug} onSaved={list.reload} />
+          <MappingForm slug={slug} onSaved={(id) => { list.reload(); health.reload(); if (id !== undefined) setAddedMapping(id); }} />
         </section>
       )}
     </>
   );
 }
 
-interface PlaneProject { id: string; label: string }
-
-/** Best effort: the browser asks Plane (same origin, own session) for the workspace's projects. */
-function useProjects(slug: string): PlaneProject[] | null {
-  const [projects, setProjects] = useState<PlaneProject[] | null>(null);
-  useEffect(() => {
-    let live = true;
-    fetch(`/api/workspaces/${encodeURIComponent(slug)}/projects/`, { credentials: "same-origin", headers: { accept: "application/json" } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((json: unknown) => {
-        const items = Array.isArray(json) ? json : (typeof json === "object" && json !== null && Array.isArray((json as { results?: unknown }).results)
-          ? (json as { results: unknown[] }).results : null);
-        if (!items || !live) return;
-        const out: PlaneProject[] = [];
-        for (const p of items) {
-          if (typeof p !== "object" || p === null) continue;
-          const { id, name, identifier } = p as { id?: unknown; name?: unknown; identifier?: unknown };
-          if (typeof id === "string") out.push({ id, label: [identifier, name].filter((x) => typeof x === "string").join(" · ") || id });
-        }
-        if (out.length) setProjects(out);
-      })
-      .catch(() => undefined);
-    return () => { live = false; };
-  }, [slug]);
-  return projects;
-}
-
-function MappingForm({ slug, existing, onSaved }: { slug: string; existing?: Mapping; onSaved(): void }) {
+export function MappingForm({ slug, existing, onSaved }: { slug: string; existing?: Mapping; onSaved(id?: number): void }) {
   const [repoName, setRepoName] = useState(existing?.ghRepoFullName ?? "");
   const [repoId, setRepoId] = useState(existing ? String(existing.ghRepoId) : "");
   const [project, setProject] = useState(existing?.planeProjectId ?? "");
   const [direction, setDirection] = useState<SyncDirection>(existing?.syncDirection ?? "bidirectional");
-  const [smart, setSmart] = useState(existing?.smartCommitsEnabled ?? true);
+  const [smart, setSmart] = useState<boolean | undefined>(undefined);
+  const defaults = useLoad(() => existing ? Promise.resolve({ smartCommitsDefault: existing.smartCommitsEnabled })
+    : api<{ smartCommitsDefault: boolean }>("GET", `${ws(slug)}/defaults`), [slug, existing?.id]);
   const [linkback, setLinkback] = useState(existing?.linkbackComments ?? true);
-  const [autolinks, setAutolinks] = useState(existing?.autolinks ?? false);
-  const [lookupError, setLookupError] = useState<string | null>(null);
-  const projects = useProjects(slug);
+  // C4: per-mapping open/closed Plane states (state ids); empty means the project default.
+  const stored = existing as (Mapping & { openStateId?: string | null; closedStateId?: string | null }) | undefined;
+  const [openState, setOpenState] = useState(stored?.openStateId ?? "");
+  const [closedState, setClosedState] = useState(stored?.closedStateId ?? "");
+  const states = useLoad(() => project ? api<PlaneState[]>("GET", `${ws(slug)}/projects/${encodeURIComponent(project)}/states`) : Promise.resolve([] as PlaneState[]), [slug, project]);
+  const sameState = openState !== "" && openState === closedState;
+  const repositories = useLoad(() => api<PickableRepositories>("GET", `${ws(slug)}/github/repositories`), [slug]);
+  const projects = useLoad(() => api<PlaneProject[]>("GET", `${ws(slug)}/projects`), [slug]);
   const saver = useSaver();
-
-  const lookup = async () => {
-    setLookupError(null);
-    try {
-      const r = await lookupRepo(repoName.trim());
-      setRepoName(r.fullName);
-      setRepoId(String(r.id));
-    } catch (e) {
-      setLookupError(e instanceof Error ? e.message : "Lookup failed");
-    }
-  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const body = {
+    const body = mappingFormBody({
       ghRepoId: Number(repoId), ghRepoFullName: repoName.trim(), planeProjectId: project.trim(), syncDirection: direction,
-      smartCommitsEnabled: smart, linkbackComments: linkback, autolinks,
-    };
-    const ok = await saver.run(() => existing
-      ? api("PATCH", `${ws(slug)}/mappings/${existing.id}`, body)
-      : api("POST", `${ws(slug)}/mappings`, body));
+      linkbackComments: linkback,
+    }, smart);
+    const withStates = { ...body, openStateId: openState || null, closedStateId: closedState || null };
+    let savedId: number | undefined;
+    const ok = await saver.run(async () => {
+      const saved = await api<{ id: number }>(existing ? "PATCH" : "POST", existing ? `${ws(slug)}/mappings/${existing.id}` : `${ws(slug)}/mappings`, withStates);
+      savedId = saved.id;
+    });
     if (ok) {
-      if (!existing) { setRepoName(""); setRepoId(""); setProject(""); }
-      onSaved();
+      if (!existing) { setRepoName(""); setRepoId(""); setProject(""); setSmart(undefined); setOpenState(""); setClosedState(""); defaults.reload(); }
+      onSaved(savedId);
     }
   };
 
   return (
     <form onSubmit={submit}>
-      <Field label="GitHub repository" hint="owner/repo">
-        <span className="row">
-          <input value={repoName} onChange={(e) => setRepoName(e.target.value)} required pattern="[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+" />
-          <button type="button" onClick={lookup} disabled={!repoName.includes("/")}>Look up id</button>
-        </span>
+      <Field label="GitHub repository" hint="Repositories your account can access in this workspace's connected installations.">
+        <RepositoryPicker repositories={repositories.data?.repositories ?? []} value={repoId ? Number(repoId) : null} disabled={repositories.loading || !!repositories.error}
+          onChange={(repo) => { setRepoId(String(repo.id)); setRepoName(repo.fullName); }} />
       </Field>
-      <Field label="GitHub repository id" hint="Numeric id; Look up id fills it from api.github.com.">
-        <input inputMode="numeric" value={repoId} onChange={(e) => setRepoId(e.target.value)} required />
-      </Field>
-      {lookupError ? <p className="error" role="alert">{lookupError}</p> : null}
+      <ErrorNote error={repositories.error} /><button type="button" onClick={repositories.reload}>Refresh repositories</button>
+      {repositories.data?.needsGithubAccount || repositories.data?.needsReauth ? <p><Link href={workspaceHref(slug, "account")}>{repositories.data.needsReauth ? "Reconnect" : "Connect"} your personal GitHub account to select a repository.</Link></p> : null}
+      {repositories.data && !repositories.data.needsGithubAccount && !repositories.data.needsReauth && !repositories.data.repositories.length ? <p>No repositories available. Connect an installation or ask its owner to grant repository access.</p> : null}
       <Field label="Plane project">
-        {projects ? (
-          <select value={project} onChange={(e) => setProject(e.target.value)} required>
+          <select value={project} onChange={(e) => { setProject(e.target.value); setOpenState(""); setClosedState(""); }} required disabled={projects.loading || !!projects.error}>
             <option value="" disabled>Choose a project</option>
-            {project && !projects.some((p) => p.id === project) ? <option value={project}>{project}</option> : null}
-            {projects.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+            {project && !projects.data?.some((p) => p.id === project) ? <option value={project}>Previously selected project (unavailable)</option> : null}
+            {(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
-        ) : (
-          <input value={project} onChange={(e) => setProject(e.target.value)} required placeholder="project id" />
-        )}
       </Field>
+      <ErrorNote error={projects.error} />
+      {projects.error ? <button type="button" onClick={projects.reload}>Reload projects</button> : null}
+      {!projects.loading && projects.data?.length === 0 ? <p>No projects are available in this workspace.</p> : null}
+      <Field label="Open state" hint="Where an issue goes when it is reopened on GitHub (and where new open issues start). Leave empty for the project's default not-started state; new issues then keep Plane's default state.">
+        <StatePicker states={states.data ?? []} valueKind="id" label="Open state" value={openState} onChange={setOpenState} disabled={!project || states.loading || !!states.error} />
+      </Field>
+      <Field label="Closed state" hint="Where an issue goes when it is closed on GitHub. Leave empty for the project's default completed state.">
+        <StatePicker states={states.data ?? []} valueKind="id" label="Closed state" value={closedState} onChange={setClosedState} disabled={!project || states.loading || !!states.error} />
+      </Field>
+      {sameState ? <p className="error" role="alert">Choose different states for open and closed.</p> : null}
+      <ErrorNote error={states.error} />
+      {states.error ? <button type="button" onClick={states.reload}>Reload states</button> : null}
       <Field label="Sync direction" hint="Two-way mirrors issues both ways; GitHub to Plane only never writes back to GitHub.">
         <select value={direction} onChange={(e) => setDirection(e.target.value as SyncDirection)}>
           {SYNC_DIRECTIONS.map((d) => <option key={d} value={d}>{d === "bidirectional" ? "Two-way" : "GitHub to Plane only"}</option>)}
         </select>
       </Field>
-      <label className="check"><input type="checkbox" checked={smart} onChange={(e) => setSmart(e.target.checked)} /><span>Smart Commits</span></label>
+      <label className="check"><input type="checkbox" checked={smart ?? existing?.smartCommitsEnabled ?? defaults.data?.smartCommitsDefault ?? false}
+        disabled={!existing && defaults.data === null} onChange={(e) => setSmart(e.target.checked)} /><span>Smart Commits</span></label>
+      {!existing && defaults.loading ? <p className="hint">Loading instance default…</p> : null}
+      <ErrorNote error={defaults.error} />
+      {defaults.error ? <button type="button" onClick={defaults.reload}>Reload defaults</button> : null}
       <label className="check"><input type="checkbox" checked={linkback} onChange={(e) => setLinkback(e.target.checked)} /><span>Post link-back comments on GitHub</span></label>
-      <label className="check"><input type="checkbox" checked={autolinks} onChange={(e) => setAutolinks(e.target.checked)} /><span>Create GitHub autolink references</span></label>
-      <button type="submit" disabled={saver.busy}>{existing ? "Save changes" : "Add mapping"}</button>
+      <label className="check"><input type="checkbox" checked={existing?.autolinks ?? false} disabled /><span>GitHub autolink references (unavailable)</span></label>
+      <button type="submit" disabled={saver.busy || sameState || (!existing && defaults.data === null) || !projects.data || !repositories.data?.repositories.some((repo) => repo.id === Number(repoId))}>{existing ? "Save changes" : "Add mapping"}</button>
       <SaveStatus saver={saver} />
     </form>
   );
@@ -200,10 +212,10 @@ function MappingPage({ slug, id, tab }: { slug: string; id: number; tab: Mapping
                 <Link key={t} href={mappingHref(slug, id, t)} aria-current={t === tab ? "page" : undefined}>{TAB_LABELS[t]}</Link>
               ))}
             </nav>
-            {tab === "settings" ? <><MappingForm slug={slug} existing={mapping} onSaved={list.reload} /><BackfillPanel slug={slug} id={id} /></> : null}
+            {tab === "settings" ? <><MappingForm key={`${id}:${mapping.smartCommitsEnabled}:${mapping.autolinks}`} slug={slug} existing={mapping} onSaved={list.reload} /><BackfillPanel slug={slug} id={id} /></> : null}
             {tab === "dry-run" ? <DryRunPanel slug={slug} id={id} /> : null}
             {tab === "policies" ? <PoliciesEditor slug={slug} id={id} /> : null}
-            {tab === "rules" ? <RulesEditor slug={slug} id={id} /> : null}
+            {tab === "rules" ? <RulesEditor slug={slug} id={id} projectId={mapping.planeProjectId} /> : null}
           </section>
         );
       }}
@@ -248,9 +260,44 @@ function PolicyFields({ slug, id, initial }: { slug: string; id: number; initial
   );
 }
 
-function RulesEditor({ slug, id }: { slug: string; id: number }) {
+function RulesEditor({ slug, id, projectId }: { slug: string; id: number; projectId: string }) {
   const rules = useLoad(() => api<RulesDoc>("GET", `${ws(slug)}/mappings/${id}/rules`), [slug, id]);
-  return <Async state={rules} denied={DENIED}>{(r) => <RulesFields slug={slug} id={id} initial={r} />}</Async>;
+  const versions = useLoad(() => api<Omit<RulesDoc, "yaml">[]>("GET", `${ws(slug)}/mappings/${id}/rules/versions`), [slug, id]);
+  const members = useLoad(() => api<PlaneMember[]>("GET", `${ws(slug)}/members`), [slug]);
+  const states = useLoad(() => api<PlaneState[]>("GET", `${ws(slug)}/projects/${encodeURIComponent(projectId)}/states`), [slug, projectId]);
+  const restore = useSaver();
+  return <>
+    <ErrorNote error={states.error} />
+    {states.error ? <button type="button" onClick={states.reload}>Reload states</button> : null}
+    <Async state={rules} denied={DENIED}>{(r) => <RulesFields key={`${id}:${r.version}`} slug={slug} id={id} initial={r}
+      states={states.data ?? []} statesLoading={states.loading} onSaved={() => { rules.reload(); versions.reload(); }} />}</Async>
+    <h3>Rule versions</h3>
+    <ErrorNote error={members.error} />
+    {members.error ? <button type="button" onClick={members.reload}>Reload author names</button> : null}
+    <Async state={versions} denied={DENIED}>{(history) => <RuleVersions versions={history} members={members.data ?? []}
+      currentVersion={rules.data?.version ?? 0} busy={restore.busy} onRestore={async (version) => {
+        if (!window.confirm(`Restore version ${version}? This creates a new version and replaces unsaved editor changes.`)) return;
+        await restore.run(async () => {
+          await api("POST", `${ws(slug)}/mappings/${id}/rules/versions/${version}/restore`);
+          rules.set(await api<RulesDoc>("GET", `${ws(slug)}/mappings/${id}/rules`));
+          versions.reload();
+        });
+      }} />}</Async>
+    <SaveStatus saver={restore} />
+  </>;
+}
+
+export function RuleVersions({ versions, members, currentVersion, busy, onRestore }: {
+  versions: Omit<RulesDoc, "yaml">[]; members: PlaneMember[]; currentVersion: number; busy: boolean; onRestore(version: number): void;
+}) {
+  if (!versions.length) return <p>No saved versions yet.</p>;
+  return <table><thead><tr><th>Version</th><th>Saved by</th><th>Saved at</th><th>Action</th></tr></thead>
+    <tbody>{versions.map((version) => <tr key={version.version}>
+      <td>{version.version}{version.version === currentVersion ? " (current)" : ""}</td>
+      <td>{version.updatedBy ? members.find((member) => member.id === version.updatedBy)?.name ?? "Former or unavailable member" : "System"}</td>
+      <td>{formatTime(version.updatedAt)}</td>
+      <td><button type="button" disabled={busy || version.version === currentVersion} onClick={() => onRestore(version.version)}>Restore</button></td>
+    </tr>)}</tbody></table>;
 }
 
 const LIFECYCLE_LABELS: Record<Lifecycle, string> = {
@@ -266,7 +313,9 @@ const LIFECYCLE_LABELS: Record<Lifecycle, string> = {
   reopened: "PR reopened",
 };
 
-function RulesFields({ slug, id, initial }: { slug: string; id: number; initial: RulesDoc }) {
+export function RulesFields({ slug, id, initial, states = [], statesLoading = false, onSaved = () => {} }: {
+  slug: string; id: number; initial: RulesDoc; states?: PlaneState[]; statesLoading?: boolean; onSaved?(): void;
+}) {
   const initialMapping = initial.version > 0 && initial.yaml.trim()
     ? parseLifecycleMappingFromYaml(initial.yaml)
     : QLL_DEFAULTS;
@@ -279,7 +328,11 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
       : compileLifecycleRules(QLL_DEFAULTS)
   );
   const [version, setVersion] = useState(initial.version);
+  const [selectedRule, setSelectedRule] = useState("0");
+  const [selectedState, setSelectedState] = useState("");
   const saver = useSaver();
+  let yamlRules: ReturnType<typeof parseRules> = [];
+  try { yamlRules = parseRules(yaml); } catch { /* Invalid drafts remain editable. */ }
 
   const handleStateChange = (lc: Lifecycle, value: string) => {
     setMapping((prev) => ({
@@ -302,7 +355,7 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
   const addBranchRule = () => {
     setMapping((prev) => ({
       ...prev,
-      branchRules: [...prev.branchRules, { baseBranch: "^staging$", lifecycle: "merged", state: "started:In Review" }],
+      branchRules: [...prev.branchRules, { baseBranch: "^staging$", lifecycle: "merged", state: "" }],
     }));
     saver.clear();
   };
@@ -377,6 +430,7 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
       const r = await api<{ version: number }>("PUT", `${ws(slug)}/mappings/${id}/rules`, { yaml: compiled });
       setVersion(r.version);
       setYaml(compiled);
+      onSaved();
     });
   };
 
@@ -387,6 +441,7 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
       setVersion(r.version);
       const parsed = parseLifecycleMappingFromYaml(yaml);
       if (parsed) setMapping(parsed);
+      onSaved();
     });
   };
 
@@ -394,7 +449,7 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
     <div>
       <p>
         Rules decide what happens on each GitHub event. State mappings are rules too, for example
-        <code> when: pull_request.merged </code> then <code> set_state: Done</code>.
+        <code> when: pull_request.merged </code> then <code> set_state: completed:Done</code>.
         {version > 0 ? ` Saved version ${version}.` : " Using shipping defaults (not saved yet)."}
       </p>
       <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
@@ -418,7 +473,7 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
         <form onSubmit={submitTable}>
           <h3>Lifecycle points → Plane state</h3>
           <p className="hint" style={{ marginBottom: "12px" }}>
-            Map each §7.1 lifecycle point to a Plane state (e.g. <code>started:In Progress</code> or <code>completed:Done</code>). Leave blank for no change.
+            Choose a project state for each event. Leave it empty for no state change.
           </p>
           <table>
             <thead>
@@ -432,13 +487,11 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
                 <tr key={lc}>
                   <td>
                     <strong>{LIFECYCLE_LABELS[lc]}</strong>
-                    <span className="hint"><code>{lc}</code></span>
                   </td>
                   <td>
-                    <input
+                    <StatePicker states={states} label={`${LIFECYCLE_LABELS[lc]} target state`} disabled={statesLoading}
                       value={mapping.states[lc] ?? ""}
-                      onChange={(e) => handleStateChange(lc, e.target.value)}
-                      placeholder="e.g. started:In Progress (leave blank for no change)"
+                      onChange={(value) => handleStateChange(lc, value)}
                     />
                   </td>
                 </tr>
@@ -497,10 +550,9 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
                       </select>
                     </td>
                     <td>
-                      <input
+                      <StatePicker states={states} label={`Branch rule ${idx + 1} target state`} disabled={statesLoading}
                         value={rule.state}
-                        onChange={(e) => handleBranchRuleChange(idx, "state", e.target.value)}
-                        placeholder="started:In Review"
+                        onChange={(value) => handleBranchRuleChange(idx, "state", value)}
                         required
                       />
                     </td>
@@ -525,7 +577,7 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
         <form onSubmit={submitYaml}>
           <Field
             label="Rules (YAML)"
-            hint="Triggers: branch.created (first branch push), push (every push), commit.pushed_to_default, pull_request.* (e.g. opened, approved, ready_for_merge, merged, closed_unmerged, reopened), check_suite.success, check_suite.failure."
+            hint="Use lifecycle, branch, push, check, deployment, issue or comment triggers. Test rules before saving."
           >
             <textarea
               className="code"
@@ -535,6 +587,18 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
               spellCheck={false}
             />
           </Field>
+          <p className="hint">Example: <code>{'- when: pull_request.merged\n  then: [{set_state: "completed:Done"}]'}</code></p>
+          <Field label="Rule to update">
+            <select value={selectedRule} onChange={(event) => setSelectedRule(event.target.value)} disabled={!yamlRules.length}>
+              {yamlRules.map((rule, index) => <option key={index} value={index}>{rule.name ?? `Rule ${index + 1}`} · {rule.when.join(", ")}</option>)}
+            </select>
+          </Field>
+          <Field label="Target state"><StatePicker states={states} value={selectedState} onChange={setSelectedState}
+            label="Custom rule target state" disabled={statesLoading} /></Field>
+          <button type="button" disabled={!selectedState || !yamlRules[Number(selectedRule)]} onClick={() => {
+            try { setYaml(setRuleState(yaml, Number(selectedRule), selectedState)); saver.clear(); }
+            catch (error) { void saver.run(async () => { throw error; }); }
+          }}>Apply state to selected rule</button>
           <button type="submit" disabled={saver.busy}>Validate and save YAML</button>
           <SaveStatus saver={saver} />
         </form>
@@ -546,20 +610,22 @@ function RulesFields({ slug, id, initial }: { slug: string; id: number; initial:
 // ---- user links -----------------------------------------------------------------------------------
 function UserLinksPage({ slug }: { slug: string }) {
   const links = useLoad(() => api<UserLink[]>("GET", `${ws(slug)}/user-links`), [slug]);
+  const members = useLoad(() => api<PlaneMember[]>("GET", `${ws(slug)}/members`), [slug]);
   const unlink = useSaver();
   return (
     <>
+      <PersonalAccountPanel slug={slug} />
       <section className="panel" aria-labelledby="links-h">
         <h2 id="links-h">Linked GitHub accounts</h2>
         <Async state={links} denied={DENIED}>
           {(list) => list.length === 0 ? <p>No Plane users are linked to GitHub accounts yet. Unlinked users are attributed to the service account.</p> : (
             <table>
-              <thead><tr><th>Plane user id</th><th>GitHub account</th><th><span className="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th>Plane member</th><th>GitHub account</th><th><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 {list.map((l) => (
                   <tr key={l.planeUserId}>
-                    <td><code>{l.planeUserId}</code></td>
-                    <td>{l.githubLogin} <span className="hint">(id {l.githubId})</span></td>
+                    <td>{members.data?.find((member) => member.id === l.planeUserId)?.name ?? (members.loading ? "Loading member…" : "Former or unavailable member")}</td>
+                    <td>{l.githubLogin}{l.needsReauth ? <p className="error">Needs re-authorization. <Link role="button" href={workspaceHref(slug, "account")}>Reconnect</Link> using this member’s own Plane session.</p> : null}</td>
                     <td className="actions">
                       <button type="button" className="danger" disabled={unlink.busy}
                         onClick={async () => {
@@ -574,6 +640,8 @@ function UserLinksPage({ slug }: { slug: string }) {
           )}
         </Async>
         <SaveStatus saver={unlink} />
+        <ErrorNote error={members.error} />
+        {members.error ? <button type="button" onClick={members.reload}>Reload member names</button> : null}
       </section>
       {links.error && isNotAuthorised(links.error) ? null : (
         <section className="panel" aria-labelledby="link-new-h">
@@ -585,16 +653,17 @@ function UserLinksPage({ slug }: { slug: string }) {
   );
 }
 
-function LinkForm({ slug, onSaved }: { slug: string; onSaved(): void }) {
+export function LinkForm({ slug, onSaved }: { slug: string; onSaved(): void }) {
   const [userId, setUserId] = useState("");
   const [login, setLogin] = useState("");
   const [ghId, setGhId] = useState("");
   const [lookupError, setLookupError] = useState<string | null>(null);
   const saver = useSaver();
+  const members = useLoad(() => api<PlaneMember[]>("GET", `${ws(slug)}/members`), [slug]);
   const lookup = async () => {
     setLookupError(null);
     try {
-      const u = await lookupUser(login.trim());
+      const u = await lookupUser(slug, login.trim());
       setLogin(u.login);
       setGhId(String(u.id));
     } catch (e) {
@@ -610,9 +679,12 @@ function LinkForm({ slug, onSaved }: { slug: string; onSaved(): void }) {
   };
   return (
     <form onSubmit={submit}>
-      <Field label="Plane user id" hint="The user's id in Plane, not their email.">
-        <input value={userId} onChange={(e) => setUserId(e.target.value)} required pattern="[A-Za-z0-9_\-]{1,64}" />
+      <Field label="Plane member">
+        <MemberPicker members={members.data ?? []} value={userId} onChange={setUserId} disabled={members.loading || !!members.error} />
       </Field>
+      <ErrorNote error={members.error} />
+      {members.error ? <button type="button" onClick={members.reload}>Reload members</button> : null}
+      {!members.loading && members.data?.length === 0 ? <p>No active members are available.</p> : null}
       <Field label="GitHub username">
         <span className="row">
           <input value={login} onChange={(e) => setLogin(e.target.value)} required />
@@ -623,15 +695,19 @@ function LinkForm({ slug, onSaved }: { slug: string; onSaved(): void }) {
         <input inputMode="numeric" value={ghId} onChange={(e) => setGhId(e.target.value)} required />
       </Field>
       {lookupError ? <p className="error" role="alert">{lookupError}</p> : null}
-      <button type="submit" disabled={saver.busy}>Link account</button>
+      <button type="submit" disabled={saver.busy || !userId || !members.data}>Link account</button>
       <SaveStatus saver={saver} />
     </form>
   );
 }
 
 // ---- audit log ------------------------------------------------------------------------------------
-function AuditLogPage({ slug }: { slug: string }) {
-  const first = useLoad(() => api<AuditPage>("GET", `${ws(slug)}/audit?limit=50`), [slug]);
+export function AuditLogPage({ slug, filters = {} }: { slug?: string; filters?: AuditFilters }) {
+  const params = new URLSearchParams({ limit: "50", ...(filters.mappingId ? { mappingId: String(filters.mappingId) } : {}),
+    ...(filters.errorsOnly ? { errors: "1" } : {}), ...(filters.hours ? { hours: String(filters.hours) } : {}), ...(filters.allWorkspaces ? { scope: "all" } : {}) });
+  const endpoint = slug ? `${ws(slug)}/audit` : "/instance/audit";
+  const query = params.toString();
+  const first = useLoad(() => api<AuditPage>("GET", `${endpoint}?${query}`), [endpoint, query]);
   const [more, setMore] = useState<AuditPage["entries"]>([]);
   const [cursor, setCursor] = useState<number | null | undefined>(undefined);
   const saver = useSaver();
@@ -639,34 +715,37 @@ function AuditLogPage({ slug }: { slug: string }) {
   const retry = useSaver();
   const [retried, setRetried] = useState<Set<string>>(new Set());
   useEffect(() => { setRetried(new Set()); }, [slug]);
-  useEffect(() => { setMore([]); setCursor(undefined); }, [slug, first.data]);
+  useEffect(() => { setMore([]); setCursor(undefined); }, [endpoint, query, first.data]);
   const next = cursor === undefined ? first.data?.nextBefore ?? null : cursor;
   return (
     <section className="panel" aria-labelledby="audit-h">
       <h2 id="audit-h">Audit log</h2>
-      <Async state={first as Loaded<AuditPage>} denied={DENIED}>
+      {filters.errorsOnly ? <p>Errors{filters.hours ? ` in the last ${filters.hours} hours` : ""}{filters.mappingId ? ` for mapping ${filters.mappingId}` : ""}.</p> : null}
+      {!slug ? <p>{filters.allWorkspaces ? "Showing instance and workspace activity." : "Showing activity with no workspace."}</p> : null}
+      <Async state={first as Loaded<AuditPage>} denied={slug ? DENIED : "A Plane instance-admin session is required."}>
         {(page) => {
           const entries = [...page.entries, ...more];
-          if (entries.length === 0) return <p>Nothing has been recorded for this workspace yet.</p>;
+          if (entries.length === 0) return <p>No activity matches this view.</p>;
           return (
             <>
               <table>
-                <thead><tr><th>When</th><th>Event</th><th>Outcome</th><th>Detail</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                <thead><tr><th>When</th>{!slug ? <th>Workspace</th> : null}<th>Event</th><th>Outcome</th><th>Detail</th><th><span className="sr-only">Actions</span></th></tr></thead>
                 <tbody>
                   {entries.map((e) => (
                     <tr key={e.id}>
                       <td>{formatTime(e.createdAt)}</td>
-                      <td>{e.kind}{e.source ? <span className="hint"> · {e.source}</span> : null}</td>
-                      <td className={e.error ? "error" : undefined}>{e.outcome}</td>
-                      <td>{e.error ?? (e.detail ? <code className="detail">{JSON.stringify(e.detail)}</code> : "")}</td>
+                      {!slug ? <td>{e.workspaceSlug ? <Link href={workspaceHref(e.workspaceSlug, "audit")}>View workspace activity</Link> : "Instance"}</td> : null}
+                      <td>{auditKindLabel(e.kind)}{e.source ? <span className="hint"> · {e.source === "github" ? "GitHub" : "Plane"}</span> : null}</td>
+                      <td className={e.error ? "error" : undefined}>{humanLabel(e.outcome)}</td>
+                      <td><AuditDetail entry={e} /></td>
                       <td className="actions">
-                        {e.kind === "inbound_delivery" ? (
+                        {slug && e.kind === "inbound_delivery" ? (
                           <button type="button" disabled={replay.busy} onClick={async () => {
                             if (!window.confirm("Replay this delivery? It runs again under a new delivery id and may write to Plane and GitHub.")) return;
                             if (await replay.run(() => api("POST", `${ws(slug)}/audit/${e.id}/replay`))) first.reload();
                           }}>Replay</button>
                         ) : null}
-                        {failedWriteId(e) ? (
+                        {slug && failedWriteId(e) ? (
                           <FailedWriteRetry slug={slug} id={failedWriteId(e)!} busy={retry.busy}
                             retried={retried.has(failedWriteId(e)!)} run={retry.run} onScheduled={(id) => {
                               setRetried((ids) => new Set([...ids, id]));
@@ -680,7 +759,7 @@ function AuditLogPage({ slug }: { slug: string }) {
               </table>
               {next !== null ? (
                 <button type="button" disabled={saver.busy} onClick={() => saver.run(async () => {
-                  const p = await api<AuditPage>("GET", `${ws(slug)}/audit?limit=50&before=${next}`);
+                  const p = await api<AuditPage>("GET", `${endpoint}?${query}&before=${next}`);
                   setMore((m) => [...m, ...p.entries]);
                   setCursor(p.nextBefore);
                 })}>Load older entries</button>
@@ -707,28 +786,38 @@ export function FailedWriteRetry({ slug, id, busy, retried, run, onScheduled }: 
 
 
 // ---- operations (§7.6) ----------------------------------------------------------------------------
-function BackfillPanel({ slug, id }: { slug: string; id: number }) {
+export function BackfillControls({ busy, offer, result, onStart, onContinue }: { busy: boolean; offer: boolean; result: BackfillResult | null; onStart(): void; onContinue(): void }) {
+  return <><button type="button" disabled={busy} onClick={onStart}>{offer ? "Link existing open PRs and issues now" : "Run backfill"}</button>
+    {result?.complete === false && result.cursor ? <button type="button" disabled={busy} onClick={onContinue}>Continue</button> : null}</>;
+}
+export function BackfillPanel({ slug, id, offer = false }: { slug: string; id: number; offer?: boolean }) {
   const saver = useSaver();
   const [result, setResult] = useState<BackfillResult | null>(null);
   return (
     <section aria-labelledby="backfill-h">
       <h3 id="backfill-h">Backfill</h3>
       <p>Link this repository's open pull requests and issues to the Plane work items they mention.</p>
-      <button type="button" disabled={saver.busy} onClick={() => saver.run(async () => {
+      <BackfillControls busy={saver.busy} offer={offer} result={result} onStart={() => { void saver.run(async () => {
         setResult(await api<BackfillResult>("POST", `${ws(slug)}/mappings/${id}/backfill`));
-      })}>Run backfill</button>
+      }); }} onContinue={() => { if (result?.complete === false && result.cursor) void saver.run(async () => {
+        setResult(await api<BackfillResult>("POST", `${ws(slug)}/mappings/${id}/backfill`, { cursor: result.cursor }));
+      }); }} />
       <SaveStatus saver={saver} />
       {result ? (
         <p aria-live="polite">
           Checked {result.pullRequests} pull requests and {result.issues} issues: {result.linked} links made, {result.unresolved} references did not match a work item.
+          {result.complete === false ? " More items remain; continue to check the next batch." : null}
         </p>
       ) : null}
     </section>
   );
 }
 
-function DryRunPanel({ slug, id }: { slug: string; id: number }) {
+export function DryRunPanel({ slug, id }: { slug: string; id: number }) {
   const [event, setEvent] = useState<DryRunEvent>("pull_request");
+  const [mode, setMode] = useState<"delivery" | "trigger">("delivery");
+  const [trigger, setTrigger] = useState("pull_request.opened");
+  const [source, setSource] = useState<"github" | "plane">("github");
   const [payload, setPayload] = useState("");
   const [auditId, setAuditId] = useState("");
   const [yaml, setYaml] = useState("");
@@ -738,8 +827,8 @@ function DryRunPanel({ slug, id }: { slug: string; id: number }) {
     e.preventDefault();
     setResult(null);
     await saver.run(async () => {
-      const body: Record<string, unknown> = { event, mappingId: id };
-      if (auditId.trim()) body.auditId = Number(auditId);
+      const body: Record<string, unknown> = { mappingId: id, ...(mode === "trigger" ? { trigger } : { event, source }) };
+      if (mode === "delivery" && auditId.trim()) body.auditId = Number(auditId);
       else {
         try { body.payload = JSON.parse(payload); } catch { throw new Error("The payload is not valid JSON"); }
       }
@@ -750,16 +839,34 @@ function DryRunPanel({ slug, id }: { slug: string; id: number }) {
   return (
     <form onSubmit={submit}>
       <p>Run a delivery through the rules without writing anything. Leave the rules empty to use this mapping's saved rules.</p>
-      <Field label="Event">
-        <select value={event} onChange={(e) => setEvent(e.target.value as DryRunEvent)}>
-          {DRY_RUN_EVENTS.map((ev) => <option key={ev} value={ev}>{ev}</option>)}
+      <Field label="Test input">
+        <select value={mode} onChange={(event) => setMode(event.target.value as "delivery" | "trigger")}>
+          <option value="delivery">Webhook delivery</option><option value="trigger">Specific rule trigger</option>
         </select>
       </Field>
-      <Field label="Recorded delivery (audit entry id)" hint="Uses the payload stored in the audit log instead of the one below.">
-        <input inputMode="numeric" value={auditId} onChange={(e) => setAuditId(e.target.value)} />
+      {mode === "delivery" ? <>
+      <Field label="Source"><select value={source} onChange={(event) => {
+        const source = event.target.value as "github" | "plane";
+        setSource(source); setEvent(source === "plane" ? "issue" : "pull_request");
+      }}>
+        <option value="github">GitHub</option><option value="plane">Plane</option>
+      </select></Field>
+      <Field label="Event">
+        <select value={event} onChange={(e) => setEvent(e.target.value as DryRunEvent)}>
+          {DRY_RUN_EVENTS.filter((event) => source === "plane" ? ["issue", "issue_comment"].includes(event) : event !== "issue")
+            .map((ev) => <option key={ev} value={ev}>{humanLabel(ev)}</option>)}
+        </select>
       </Field>
-      <Field label="Payload (JSON)">
-        <textarea className="code" rows={8} value={payload} onChange={(e) => setPayload(e.target.value)} spellCheck={false} required={!auditId.trim()} />
+      </> : <Field label="Rule trigger" hint="Choose a suggestion or enter any trigger accepted by the engine, including issue.*, comment.*, check_suite.* and deployment_status.* families.">
+        <input list={`rule-triggers-${id}`} value={trigger} onChange={(event) => setTrigger(event.target.value)} required />
+        <datalist id={`rule-triggers-${id}`}>{DRY_RUN_TRIGGERS.map((trigger) => <option key={trigger} value={trigger} />)}</datalist>
+      </Field>}
+      {mode === "delivery" ? <Field label="Recorded delivery (audit entry id)" hint="Uses the payload stored in the audit log instead of the one below.">
+        <input inputMode="numeric" value={auditId} onChange={(e) => setAuditId(e.target.value)} />
+      </Field> : null}
+      <Field label={mode === "trigger" ? "Rule context (JSON)" : "Payload (JSON)"}
+        hint={mode === "trigger" ? 'Optional fields: repo, project, author, base_branch, head_branch, labels, context (for templates). Use {} to test only the trigger.' : undefined}>
+        <textarea className="code" rows={8} value={payload} onChange={(e) => setPayload(e.target.value)} spellCheck={false} required={mode === "trigger" || !auditId.trim()} />
       </Field>
       <Field label="Rules to test (YAML, optional)">
         <textarea className="code" rows={6} value={yaml} onChange={(e) => setYaml(e.target.value)} spellCheck={false} />
@@ -768,7 +875,7 @@ function DryRunPanel({ slug, id }: { slug: string; id: number }) {
       <SaveStatus saver={saver} />
       {result ? (
         <div aria-live="polite">
-          <p>{result.trigger === null ? "That delivery is not an automation event." : `Trigger: ${result.trigger}. ${result.matched ? `Matched rule ${result.matched.index + 1}${result.matched.name ? ` (${result.matched.name})` : ""}.` : "No rule matched."}`}</p>
+          {(result.events ?? [result]).map((event, index) => <p key={index}>{event.trigger === null ? "That delivery is not an automation event." : `Trigger: ${event.trigger}. ${event.matched ? `Matched rule ${event.matched.index + 1}${event.matched.name ? ` (${event.matched.name})` : ""}.` : "No rule matched."}`}</p>)}
           {result.actions.length ? <pre><code>{JSON.stringify(result.actions, null, 2)}</code></pre> : <p>No actions would run.</p>}
         </div>
       ) : null}

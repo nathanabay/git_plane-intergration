@@ -2,7 +2,8 @@
 // proves they administer the workspace in the path; it does not prove the project belongs to that
 // workspace or that the repository is one this deployment's GitHub App can reach. Without these checks a
 // workspace admin could map another workspace's project, or any repository the App is installed on.
-import { PlaneApiError } from "../sync/plane.ts";
+import { classifyGithubError } from "../github/errors.ts";
+import { PlaneApiError, planeWorkspacePath } from "../sync/plane.ts";
 
 /** Returns the reason a mapping is refused, or null when it is acceptable. Infrastructure errors throw. */
 export type MappingVerifier = (check: {
@@ -37,16 +38,15 @@ export function installationWorkspaceFromDb(db: { query<T = any>(sql: string, pa
   };
 }
 
-const statusOf = (e: unknown): number | undefined => (e as { status?: number } | null)?.status;
-
 export function createMappingVerifier(deps: MappingVerifierDeps): MappingVerifier {
   return async ({ slug, planeProjectId, repo, onInstallationVerified }) => {
     if (planeProjectId !== undefined) {
       try {
-        await deps.plane.request("GET", `/workspaces/${encodeURIComponent(slug)}/projects/${encodeURIComponent(planeProjectId)}/`);
+        await deps.plane.request("GET", planeWorkspacePath(slug, "projects", planeProjectId));
       } catch (e) {
         // 404: no such project here. 403: the service account cannot see it, so it cannot sync it either.
-        if (e instanceof PlaneApiError && (e.status === 404 || e.status === 403)) return "That Plane project does not exist in this workspace";
+        // 400: the id is not a Plane id at all (`..`, `/`, `%`), refused before any request (audit S1).
+        if (e instanceof PlaneApiError && (e.status === 404 || e.status === 403 || e.status === 400)) return "That Plane project does not exist in this workspace";
         throw e;
       }
     }
@@ -63,7 +63,8 @@ export function createMappingVerifier(deps: MappingVerifierDeps): MappingVerifie
         const octokit = await deps.github.installationOctokit(installationId);
         data = (await octokit.request("GET /repos/{owner}/{repo}", { owner, repo: name })).data;
       } catch (e) {
-        if (statusOf(e) === 404 || statusOf(e) === 403) return "The GitHub App is not installed on that repository";
+        const kind = classifyGithubError(e).kind;
+        if (kind === "not_found" || kind === "permission") return "The GitHub App is not installed on that repository";
         throw e;
       }
       if (Number(data?.id) !== repo.id) return "The repository id does not match that repository on GitHub";
@@ -79,7 +80,7 @@ export function createMappingVerifier(deps: MappingVerifierDeps): MappingVerifie
 /** Resolves a login to GitHub's canonical login and id; null when no such account exists. Outages throw. */
 export type GithubUserLookup = (login: string) => Promise<{ login: string; id: number } | null>;
 
-/** `GET /users/{login}` is public data, so any App installation token (or the App's own client) can answer it. */
+/** Resolve public profiles through an unauthenticated client or an authorized installation token. */
 export function createGithubUserLookup(request: (route: string, params: Record<string, unknown>) => Promise<{ data: any }>): GithubUserLookup {
   return async (login) => {
     try {
@@ -87,7 +88,7 @@ export function createGithubUserLookup(request: (route: string, params: Record<s
       const id = Number(data?.id);
       return Number.isSafeInteger(id) && typeof data?.login === "string" ? { login: data.login, id } : null;
     } catch (e) {
-      if (statusOf(e) === 404) return null;
+      if (classifyGithubError(e).kind === "not_found") return null;
       throw e;
     }
   };
@@ -98,7 +99,7 @@ export type WorkspaceMemberCheck = (slug: string, planeUserId: string) => Promis
 
 export function createPlaneMemberCheck(plane: { request(method: string, path: string): Promise<unknown> }): WorkspaceMemberCheck {
   return async (slug, planeUserId) => {
-    const body = (await plane.request("GET", `/workspaces/${encodeURIComponent(slug)}/members/`)) as any;
+    const body = (await plane.request("GET", planeWorkspacePath(slug, "members"))) as any;
     const rows: any[] = Array.isArray(body) ? body : Array.isArray(body?.results) ? body.results : [];
     return rows.some((m) => String((m?.member && typeof m.member === "object" ? m.member.id : m?.member) ?? m?.id ?? "") === planeUserId);
   };

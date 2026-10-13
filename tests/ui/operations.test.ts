@@ -6,6 +6,23 @@ import { appendAudit } from "../../src/db/ledgers.ts";
 import { mappingHref, parseLocation } from "../../src/ui/client/router.ts";
 import { parseDryRun, ValidationError } from "../../src/ui/validate.ts";
 import { throws } from "node:assert/strict";
+import { encryptSecret } from "../../src/auth/identity.ts";
+import { putGithubOAuthToken } from "../../src/db/parity.ts";
+import { KEY } from "./harness.ts";
+import type { ConfigApiDeps } from "../../src/ui/api.ts";
+
+// C3 requires personal access; S5 backfills only through this workspace's approved installation.
+const githubAccess: Partial<ConfigApiDeps> = {
+  githubOAuthConfig: { GITHUB_CLIENT_ID: "Iv1.fixture", GITHUB_CLIENT_SECRET: "fixture-secret" },
+  appRequest: async () => ({ data: [] }),
+  fetch: (async (url: string | URL, init?: RequestInit) => {
+    const u = new URL(String(url));
+    if (u.hostname !== "api.github.com") return fetch(url, init);
+    strictEqual(new Headers(init?.headers).get("authorization"), "Bearer ghu-fixture");
+    strictEqual(u.pathname, "/user/installations/1/repositories");
+    return new Response(JSON.stringify({ total_count: 1, repositories: [{ id: 555, full_name: "acme/web", permissions: { triage: true } }] }), { headers: { "content-type": "application/json" } });
+  }) as typeof fetch,
+};
 
 const enqueued: any[] = [];
 const requested: { route: string; params: any }[] = [];
@@ -23,10 +40,13 @@ before(async () => {
       return { data: [] };
     } }),
     resolveIssue: async (slug, key) => { resolved.push(`${slug}:${key}`); return { projectId: "p1", issueId: `iss-${key}` }; },
-  });
-  bare = await setup();
+  }, undefined, githubAccess);
+  bare = await setup([], undefined, undefined, githubAccess);
   for (const x of [h, bare]) {
+    await x.db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (1,'acme')");
+    await putGithubOAuthToken(x.db, "u-adm", { accessCiphertext: encryptSecret("ghu-fixture", KEY), refreshCiphertext: null, accessExpiresAt: null, refreshExpiresAt: null });
     const r = await x.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: MAPPING });
+    strictEqual(r.status, 201, await r.clone().text());
     id = ((await r.json()) as { id: number }).id;
   }
 });
@@ -64,7 +84,9 @@ test("dry-run: invalid rules and unresolvable templates are 422 with the reason"
 test("dry-run: validation, auth and CSRF", async () => {
   const post = (body: unknown, o: object = {}) => h.call("POST", "/workspaces/acme/dry-run", { cookie: ADM, body, ...o });
   strictEqual((await post({ payload: MERGED })).status, 422);
-  strictEqual((await post({ event: "issues", payload: MERGED })).status, 422);
+  strictEqual((await post({ event: "unknown_event", payload: MERGED })).status, 422);
+  const issue = await post({ event: "issues", payload: { action: "opened", issue: { number: 1 } } });
+  strictEqual(issue.status, 200); strictEqual((await issue.json() as any).trigger, "issue.opened");
   strictEqual((await post({ event: "push" })).status, 422);
   strictEqual((await post({ event: "push", payload: [] })).status, 422);
   strictEqual((await post({ event: "push", payload: {}, extra: 1 })).status, 422);
@@ -120,7 +142,7 @@ test("backfill: lists the mapped repository, links references and reports counts
   const r = await h.call("POST", `/workspaces/acme/mappings/${id}/backfill`, { cookie: ADM });
   strictEqual(r.status, 200);
   deepStrictEqual(await r.json(), { linked: 1, unresolved: 0, pullRequests: 1, issues: 0 });
-  ok(requested.every((q) => q.params.owner === "acme" && q.params.repo === "web" && q.params.ghRepoId === 555));
+  ok(requested.every((q) => q.params.owner === "acme" && q.params.repo === "web" && q.params.ghRepoId === 555 && q.params.installationId === 1));
   deepStrictEqual(resolved, ["acme:QLL-1"]);
   const link = (await h.db.query<any>(`SELECT plane_workspace_slug, plane_project_id, gh_kind FROM sync_links`)).rows[0];
   deepStrictEqual([link.plane_workspace_slug, link.plane_project_id, link.gh_kind], ["acme", "p1", "pr"]);

@@ -13,7 +13,9 @@ const PEM = "-----BEGIN RSA PRIVATE KEY-----\nSECRETKEYMATERIAL\n-----END RSA PR
 const APP = { appId: 4242, privateKey: PEM, webhookSecret: "whsec_TOPSECRET", gheBaseUrl: null };
 
 test("github app: unconfigured GET says so; first save needs both secrets", async () => {
-  deepStrictEqual(await (await h.call("GET", "/instance/github-app", { cookie: INST })).json(), { appId: null, gheBaseUrl: null, configured: false });
+  deepStrictEqual(await (await h.call("GET", "/instance/github-app", { cookie: INST })).json(), {
+    appId: null, gheBaseUrl: null, configured: false, clientId: null, clientSecretConfigured: false, appSlug: null, edition: "github", gheSubdomain: null,
+  });
   strictEqual((await h.call("PUT", "/instance/github-app", { cookie: INST, body: { appId: 1, gheBaseUrl: null } })).status, 422);
   strictEqual((await h.call("PUT", "/instance/github-app", { cookie: INST, body: { ...APP, privateKey: "not a key" } })).status, 422);
   strictEqual((await h.call("PUT", "/instance/github-app", { cookie: INST, body: { ...APP, appId: "x" } })).status, 422);
@@ -23,7 +25,7 @@ test("github app: secrets are stored encrypted (v1 blobs that decrypt) and never
   strictEqual((await h.call("PUT", "/instance/github-app", { cookie: INST, body: APP })).status, 200);
   const text = await (await h.call("GET", "/instance/github-app", { cookie: INST })).text();
   ok(!text.includes("SECRETKEYMATERIAL") && !text.includes("TOPSECRET"));
-  deepStrictEqual(JSON.parse(text), { appId: 4242, gheBaseUrl: null, configured: true });
+  deepStrictEqual(JSON.parse(text), { appId: 4242, gheBaseUrl: null, configured: true, clientId: null, clientSecretConfigured: false, appSlug: null, edition: "github", gheSubdomain: null });
   const row = (await h.db.query<any>(`SELECT * FROM github_app_config`)).rows[0];
   ok(row.private_key_v1.startsWith("v1:") && row.webhook_secret_v1.startsWith("v1:"));
   strictEqual(decryptSecret(row.private_key_v1, KEY), PEM);
@@ -32,12 +34,31 @@ test("github app: secrets are stored encrypted (v1 blobs that decrypt) and never
 
 test("github app: omitting the secrets keeps the stored ones while other fields change", async () => {
   const before = (await h.db.query<any>(`SELECT * FROM github_app_config`)).rows[0];
-  strictEqual((await h.call("PUT", "/instance/github-app", { cookie: INST, body: { appId: 77, gheBaseUrl: "https://ghe.example.com/" } })).status, 200);
+  strictEqual((await h.call("PUT", "/instance/github-app", { cookie: INST, body: { appId: 77 } })).status, 200);
   const after = (await h.db.query<any>(`SELECT * FROM github_app_config`)).rows[0];
   strictEqual(Number(after.app_id), 77);
-  strictEqual(after.ghe_base_url, "https://ghe.example.com");
   strictEqual(after.private_key_v1, before.private_key_v1);
   strictEqual(after.webhook_secret_v1, before.webhook_secret_v1);
+});
+
+// Audit S4 replaced "a host change keeps the stored secrets": the stored host decides where the App JWTs, the client
+// secret and users' refresh tokens are sent, so moving it needs the key again and drops tokens the old host issued.
+test("github app: changing the host requires the private key again and drops users' GitHub tokens", async () => {
+  const before = (await h.db.query<any>(`SELECT * FROM github_app_config`)).rows[0];
+  await h.db.query(`INSERT INTO user_tokens (plane_user_id, kind, ciphertext) VALUES ('u1', 'github_oauth', 'v1:x'), ('u1', 'plane_pat', 'v1:y')`);
+  strictEqual((await h.call("PUT", "/instance/github-app", { cookie: INST, body: { appId: 77, gheBaseUrl: "https://ghe.example.com/" } })).status, 422);
+  const unchanged = (await h.db.query<any>(`SELECT * FROM github_app_config`)).rows[0];
+  strictEqual(unchanged.ghe_base_url, before.ghe_base_url);
+  strictEqual((await h.db.query("SELECT 1 FROM user_tokens WHERE kind = 'github_oauth'")).rows.length, 1);
+
+  strictEqual((await h.call("PUT", "/instance/github-app", { cookie: INST, body: { appId: 77, gheBaseUrl: "https://ghe.example.com/", privateKey: PEM } })).status, 200);
+  const after = (await h.db.query<any>(`SELECT * FROM github_app_config`)).rows[0];
+  ok(String(after.ghe_base_url).startsWith("https://ghe.example.com"));
+  strictEqual(decryptSecret(after.private_key_v1, KEY), PEM);
+  strictEqual(after.webhook_secret_v1, before.webhook_secret_v1, "the inbound webhook secret is never sent to the host");
+  deepStrictEqual((await h.db.query<{ kind: string }>("SELECT kind FROM user_tokens ORDER BY kind")).rows.map((r) => r.kind), ["plane_pat"]);
+  // Saving the same host again is not a change: no key needed.
+  strictEqual((await h.call("PUT", "/instance/github-app", { cookie: INST, body: { appId: 77, gheBaseUrl: "https://ghe.example.com/" } })).status, 200);
 });
 
 test("github app: the GHE URL must be plain https", async () => {
@@ -65,10 +86,10 @@ test("magic words: empty tiers, unknown tiers, bad words and cross-tier duplicat
 
 test("settings: defaults, partial updates merge, out-of-range values are 422", async () => {
   deepStrictEqual(await (await h.call("GET", "/instance/settings", { cookie: INST })).json(),
-    { smartCommitsDefault: true, reconciliationIntervalMinutes: 60, opTtlMinutes: 10 });
+    { smartCommitsDefault: true, requireVerifiedCommits: false, reconciliationIntervalMinutes: 60, opTtlMinutes: 10 });
   const r = await h.call("PUT", "/instance/settings", { cookie: INST, body: { reconciliationIntervalMinutes: 15 } });
   strictEqual(r.status, 200);
-  deepStrictEqual(await r.json(), { smartCommitsDefault: true, reconciliationIntervalMinutes: 15, opTtlMinutes: 10 });
+  deepStrictEqual(await r.json(), { smartCommitsDefault: true, requireVerifiedCommits: false, reconciliationIntervalMinutes: 15, opTtlMinutes: 10 });
   for (const body of [{}, { opTtlMinutes: 0 }, { opTtlMinutes: 1.5 }, { opTtlMinutes: 99999999 }, { smartCommitsDefault: "no" }, { nope: 1 }]) {
     strictEqual((await h.call("PUT", "/instance/settings", { cookie: INST, body })).status, 422, JSON.stringify(body));
   }

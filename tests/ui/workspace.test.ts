@@ -5,12 +5,35 @@ import type { Harness } from "./harness.ts";
 import { TokenVault } from "../../src/auth/identity.ts";
 import { PgTokenStore } from "../../src/db/token-store.ts";
 import { appendAudit } from "../../src/db/ledgers.ts";
+import { encryptSecret } from "../../src/auth/identity.ts";
+import { putGithubOAuthToken } from "../../src/db/parity.ts";
+import type { MappingVerifier } from "../../src/ui/mapping-check.ts";
+
+// C3 now proves the viewer's own repository access before the existing App/project verifier.
+async function mappingHarness(verifyMapping?: MappingVerifier | null): Promise<Harness> {
+  const repos = [{ id: 555, full_name: "acme/web" }, { id: 9, full_name: "acme/api" }, { id: 7, full_name: "acme/other" }, { id: 8, full_name: "acme/x" }];
+  const h = await setup([], undefined, verifyMapping, {
+    githubOAuthConfig: { GITHUB_CLIENT_ID: "Iv1.fixture", GITHUB_CLIENT_SECRET: "fixture-secret" },
+    appRequest: async () => ({ data: [] }),
+    fetch: (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url));
+      if (u.hostname !== "api.github.com") return fetch(url, init);
+      strictEqual(new Headers(init?.headers).get("authorization"), "Bearer ghu-fixture");
+      strictEqual(u.pathname, "/user/installations/1/repositories");
+      return new Response(JSON.stringify({ total_count: repos.length, repositories: repos.map((repo) => ({ ...repo, permissions: { triage: true } })) }), { headers: { "content-type": "application/json" } });
+    }) as typeof fetch,
+  });
+  await h.db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (1,'acme')");
+  await putGithubOAuthToken(h.db, "u-adm", { accessCiphertext: encryptSecret("ghu-fixture", KEY), refreshCiphertext: null, accessExpiresAt: null, refreshExpiresAt: null });
+  return h;
+}
 
 let h: Harness;
 let id: number;
 before(async () => {
-  h = await setup();
+  h = await mappingHarness();
   const r = await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: MAPPING });
+  strictEqual(r.status, 201, await r.clone().text());
   id = ((await r.json()) as { id: number }).id;
 });
 after(async () => { await h.close(); });
@@ -35,7 +58,7 @@ test("mappings: list returns camelCase DTOs with numeric ids", async () => {
   const list = await (await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).json() as any[];
   const m = list.find((x) => x.id === id);
   deepStrictEqual(m, { id, workspaceSlug: "acme", ghRepoId: 555, ghRepoFullName: "acme/web", planeProjectId: "p1",
-    syncDirection: "bidirectional", smartCommitsEnabled: true, linkbackComments: true, autolinks: false });
+    syncDirection: "bidirectional", smartCommitsEnabled: true, linkbackComments: true, autolinks: false, openStateId: null, closedStateId: null });
 });
 
 test("mappings: duplicates are 409", async () => {
@@ -125,7 +148,7 @@ test("user links: need both login and id; a duplicate GitHub id is 409; a member
   strictEqual((await h.call("PUT", "/workspaces/acme/user-links/u-2", { cookie: ADM, body: { githubLogin: "other", githubId: 1 } })).status, 409);
   strictEqual((await h.call("PUT", "/workspaces/acme/user-links/u-1", { cookie: ADM, body: { githubLogin: "octo2", githubId: 1 } })).status, 200);
   const list = await (await h.call("GET", "/workspaces/acme/user-links", { cookie: ADM })).json() as any[];
-  deepStrictEqual(list, [{ planeUserId: "u-1", githubLogin: "octo2", githubId: 1 }]);
+  deepStrictEqual(list, [{ planeUserId: "u-1", githubLogin: "octo2", githubId: 1, needsReauth: false }]);
 });
 
 test("user links: unlinking deletes the mapping and revokes that user's tokens, and only theirs", async () => {
@@ -148,9 +171,12 @@ test("user links: unlinking someone who is not linked here is 404 and revokes no
 });
 
 test("audit: newest first, paged by before, scoped to this workspace's entries", async () => {
-  for (let i = 0; i < 5; i++) await appendAudit(h.db, { kind: "rule.match", outcome: "ok", detail: { workspaceSlug: "acme", n: i } });
+  // C2/S6 can leave scoped grant-revocation diagnostics from an earlier unlink; those belong in this view too.
+  const prior = (await h.db.query<{ id: number }>("SELECT id FROM audit_log WHERE workspace_slug = 'acme'")).rows.map((row) => Number(row.id));
+  const expected = [...prior];
+  for (let i = 0; i < 5; i++) expected.push(Number(await appendAudit(h.db, { kind: "rule.match", outcome: "ok", detail: { workspaceSlug: "acme", n: i } })));
   await appendAudit(h.db, { kind: "rule.match", outcome: "ok", detail: { workspaceSlug: "elsewhere" } });
-  await appendAudit(h.db, { kind: "rule.match", outcome: "ok", detail: { mappingId: String(id) } });
+  expected.push(Number(await appendAudit(h.db, { kind: "rule.match", outcome: "ok", detail: { mappingId: String(id) } })));
   await appendAudit(h.db, { kind: "webhook", outcome: "ok" });
   const page1 = await (await h.call("GET", "/workspaces/acme/audit?limit=3", { cookie: ADM })).json() as any;
   strictEqual(page1.entries.length, 3);
@@ -159,8 +185,8 @@ test("audit: newest first, paged by before, scoped to this workspace's entries",
   const page2 = await (await h.call("GET", `/workspaces/acme/audit?limit=10&before=${page1.nextBefore}`, { cookie: ADM })).json() as any;
   ok(page2.entries.every((e: any) => e.id < page1.nextBefore));
   const all = [...page1.entries, ...page2.entries];
-  strictEqual(all.length, 6);
-  ok(all.every((e: any) => e.detail?.workspaceSlug === "acme" || e.detail?.mappingId === String(id)));
+  deepStrictEqual(all.map((e: any) => e.id), expected.sort((a, b) => b - a));
+  ok(all.every((e: any) => prior.includes(e.id) || e.detail?.workspaceSlug === "acme" || e.detail?.mappingId === String(id)));
   strictEqual(page2.nextBefore, null);
 });
 
@@ -182,7 +208,7 @@ test("mappings: DELETE removes the mapping and cascades its rules and policies",
 test("F2: mappings are verified against Plane and GitHub; a refusal is 422 and stores nothing, an outage is 502", async () => {
   const seen: unknown[] = [];
   let outcome: string | null | Error = null;
-  const v = await setup([], undefined, async (check) => {
+  const v = await mappingHarness(async (check) => {
     const { onInstallationVerified, ...identity } = check;
     seen.push(identity);
     if (outcome instanceof Error) throw outcome;
@@ -306,10 +332,12 @@ test("r3 F5: createPlaneMemberCheck understands list and {member} shapes", async
 
 // ---- r2 F1: no verifier configured means no mapping writes ---------------------------------------------
 test("r2 F1: without a mapping verifier, create and update fail closed (503) and store nothing", async () => {
-  const v = await setup([], undefined, null);
+  const v = await mappingHarness(null); // C3 succeeds, so 503 must come from the missing App/project verifier.
   try {
     const body = { ghRepoId: 7, ghRepoFullName: "acme/other", planeProjectId: "p1" };
-    strictEqual((await v.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body })).status, 503);
+    const refused = await v.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body });
+    strictEqual(refused.status, 503);
+    ok((await refused.json() as { error: string }).error.includes("Mapping verification is not configured"));
     strictEqual(await v.count("repo_mappings"), 0);
     await v.db.query(`INSERT INTO repo_mappings (workspace_slug, gh_repo_id, gh_repo_full_name, plane_project_id, sync_direction) VALUES ('acme', 7, 'acme/other', 'p1', 'bidirectional')`);
     const id = (await v.db.query<{ id: number }>(`SELECT id FROM repo_mappings`)).rows[0]!.id;

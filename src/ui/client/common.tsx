@@ -11,9 +11,9 @@ export function navigate(href: string): void {
 }
 
 export function usePathname(): string {
-  const [path, setPath] = useState(() => location.pathname);
+  const [path, setPath] = useState(() => location.pathname + location.search);
   useEffect(() => {
-    const update = () => setPath(location.pathname);
+    const update = () => setPath(location.pathname + location.search);
     window.addEventListener("popstate", update);
     window.addEventListener(NAVIGATE_EVENT, update);
     return () => {
@@ -46,21 +46,27 @@ export interface Loaded<T> {
 }
 
 export function useLoad<T>(load: () => Promise<T>, deps: readonly unknown[]): Loaded<T> {
-  const [state, setState] = useState<{ data: T | null; error: unknown; loading: boolean }>({ data: null, error: null, loading: true });
   const [tick, setTick] = useState(0);
+  const [state, setState] = useState<{ scope: readonly unknown[]; tick: number; data: T | null; error: unknown; loading: boolean }>(
+    () => ({ scope: [...deps], tick, data: null, error: null, loading: true }));
+  const matches = (candidate: { scope: readonly unknown[]; tick: number }) => candidate.tick === tick
+    && candidate.scope.length === deps.length && deps.every((value, index) => Object.is(value, candidate.scope[index]));
+  const current = matches(state);
+  // Reset this hook's own state during render, before a changed workspace/view can render old private data.
+  if (!current) setState({ scope: [...deps], tick, data: null, error: null, loading: true });
   useEffect(() => {
     let live = true;
-    setState((s) => ({ ...s, loading: true, error: null }));
     load().then(
-      (data) => { if (live) setState({ data, error: null, loading: false }); },
-      (error) => { if (live) setState({ data: null, error, loading: false }); },
+      (data) => { if (live) setState((previous) => matches(previous) ? { ...previous, data, error: null, loading: false } : previous); },
+      (error) => { if (live) setState((previous) => matches(previous) ? { ...previous, data: null, error, loading: false } : previous); },
     );
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, tick]);
   const reload = useCallback(() => setTick((t) => t + 1), []);
-  const set = useCallback((data: T) => setState({ data, error: null, loading: false }), []);
-  return { ...state, reload, set };
+  const set = useCallback((data: T) => setState((previous) => matches(previous)
+    ? { ...previous, data, error: null, loading: false } : previous), [...deps, tick]);
+  return { data: current ? state.data : null, error: current ? state.error : null, loading: current ? state.loading : true, reload, set };
 }
 
 // ---- presentation ---------------------------------------------------------------------------------

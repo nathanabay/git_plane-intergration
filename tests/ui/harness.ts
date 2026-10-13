@@ -17,11 +17,13 @@ export interface PlaneCall { method: string; url: string; cookie: string }
 export async function startFakePlane() {
   const calls: PlaneCall[] = [];
   const roles: Record<string, Record<string, number>> = { "u-adm": { acme: 20, other: 15 }, "u-mem": { acme: 15 } };
+  // Plane's membership row carries its workspace id; a test reissues a slug by changing it (audit S2).
+  const workspaceIds: Record<string, string> = {};
   const sessions: Record<string, { id: string; email: string }> = {
     adm: { id: "u-adm", email: "adm@x.y" },
     mem: { id: "u-mem", email: "mem@x.y" },
   };
-  const state = { instanceAdminCookie: "inst", unavailable: false };
+  const state = { instanceAdminCookie: "inst", unavailable: false, instanceWorkspaces: [] as { id: string; slug: string; name: string }[] };
   const server: Server = createServer((req, res) => {
     const cookie = req.headers.cookie ?? "";
     calls.push({ method: req.method ?? "", url: req.url ?? "", cookie });
@@ -29,6 +31,9 @@ export async function startFakePlane() {
     if (state.unavailable) return send(503, { error: "down" });
     const sid = /(?:^|;\s*)session-id=([^;]+)/.exec(cookie)?.[1];
     const aid = /(?:^|;\s*)admin-session-id=([^;]+)/.exec(cookie)?.[1];
+    if (req.url === "/api/instances/workspaces/") {
+      return aid === state.instanceAdminCookie ? send(200, state.instanceWorkspaces) : send(401, { error: "no" });
+    }
     if (req.url === "/api/instances/admins/me/") {
       return aid === state.instanceAdminCookie ? send(200, { id: "u-inst", email: "root@x.y" }) : send(401, { error: "no" });
     }
@@ -38,14 +43,14 @@ export async function startFakePlane() {
     const m = /^\/api\/workspaces\/([^/]+)\/workspace-members\/me\/$/.exec(req.url ?? "");
     if (m) {
       const role = roles[user.id]?.[m[1]!];
-      return role ? send(200, { id: "wm", role }) : send(403, { error: "no" });
+      return role ? send(200, { id: "wm", role, workspace: workspaceIds[m[1]!] ?? `ws-id-${m[1]}` }) : send(403, { error: "no" });
     }
     send(404, { error: "no" });
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as { port: number }).port;
   return {
-    calls, roles, sessions, state, url: `http://127.0.0.1:${port}`,
+    calls, roles, sessions, state, workspaceIds, url: `http://127.0.0.1:${port}`,
     close: () => new Promise<void>((r) => { server.close(() => r()); server.closeAllConnections(); }),
   };
 }

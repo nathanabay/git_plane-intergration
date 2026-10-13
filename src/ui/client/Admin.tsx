@@ -1,8 +1,12 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { api, isNotAuthorised } from "./http.ts";
-import { Async, Field, NotAuthorised, SaveStatus, formatTime, useLoad, useSaver } from "./common.tsx";
-import type { GithubAppInfo, Health, InstanceSettings, MagicWords, WorkspaceInstallation } from "./types.ts";
+import { Async, ErrorNote, Field, Link, NotAuthorised, SaveStatus, formatTime, useLoad, usePathname, useSaver } from "./common.tsx";
+import type { GithubAppInfo, Health, InstanceSettings, MagicWords, PlaneProject, PlaneWorkspace, WorkspaceInstallation } from "./types.ts";
+import { AuditLogPage } from "./Workspace.tsx";
+import { parseLocation, UI_BASE } from "./router.ts";
+import type { SetupCheckResult } from "../setup-check.ts";
+import { WorkspacePicker } from "./pickers.tsx";
 import { MAGIC_TIERS } from "../validate.ts";
 import type { MagicTier } from "../validate.ts";
 import type { DisabledMapping } from "../../app/mappings.ts";
@@ -10,19 +14,49 @@ import type { DisabledMapping } from "../../app/mappings.ts";
 const DENIED = "The instance settings need a Plane instance-admin session.";
 
 export function AdminPage() {
+  const route = parseLocation(usePathname());
+  const audit = route.name === "admin" && route.tab === "audit";
   const health = useLoad(() => api<Health>("GET", "/instance/health"), []);
   if (health.error && isNotAuthorised(health.error)) return <NotAuthorised what={DENIED} />;
   return (
     <main>
       <h1>Git sync: instance settings</h1>
+      <nav className="tabs" aria-label="Instance sections"><Link href={`${UI_BASE}/admin`} aria-current={!audit ? "page" : undefined}>Settings</Link><Link href={`${UI_BASE}/admin/audit`} aria-current={audit ? "page" : undefined}>Instance audit</Link></nav>
+      {audit ? <AuditLogPage filters={route.name === "admin" ? route.filters : undefined} /> : <>
       <HealthPanel state={health} />
+      <SetupCheckPanel />
       <GithubAppForm onSaved={health.reload} />
       <WorkspaceInstallationsPanel />
       <DisabledMappingsPanel />
+      <ManualMappingPanel />
       <MagicWordsForm />
       <SettingsForm />
+      </>}
     </main>
   );
+}
+
+function ManualMappingPanel() {
+  const workspaces = useLoad(() => api<PlaneWorkspace[]>("GET", "/instance/workspaces"), []);
+  const [slug, setSlug] = useState("");
+  const projects = useLoad(() => slug ? api<PlaneProject[]>("GET", `/instance/workspaces/${encodeURIComponent(slug)}/projects`) : Promise.resolve([]), [slug]);
+  const [project, setProject] = useState("");
+  const [repoId, setRepoId] = useState("");
+  const [repo, setRepo] = useState("");
+  const saver = useSaver();
+  return <section className="panel"><h2>Manual mapping recovery</h2><p>Instance admins can map a repository by ID when personal GitHub authorization is unavailable. The App installation and Plane project are still verified.</p>
+    <form onSubmit={async (event) => { event.preventDefault(); if (await saver.run(() => api("POST", `/instance/workspaces/${encodeURIComponent(slug)}/mappings`, {
+      ghRepoId: Number(repoId), ghRepoFullName: repo.trim(), planeProjectId: project,
+    }))) { setRepoId(""); setRepo(""); setProject(""); } }}>
+      <Field label="Workspace"><WorkspacePicker workspaces={workspaces.data ?? []} value={slug} onChange={(value) => { setSlug(value); setProject(""); }} disabled={workspaces.loading || !!workspaces.error} /></Field>
+      <Field label="Plane project"><select value={project} onChange={(event) => setProject(event.target.value)} required disabled={!slug || projects.loading || !!projects.error}>
+        <option value="" disabled>Choose a project</option>{projects.data?.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+      </select></Field>
+      <Field label="GitHub repository"><input value={repo} onChange={(event) => setRepo(event.target.value)} required placeholder="owner/repository" /></Field>
+      <Field label="GitHub repository ID"><input value={repoId} onChange={(event) => setRepoId(event.target.value)} inputMode="numeric" required /></Field>
+      <button type="submit" disabled={saver.busy || !slug || !project || projects.loading}>Add manual mapping</button><SaveStatus saver={saver} />
+    </form><ErrorNote error={workspaces.error ?? projects.error} />
+  </section>;
 }
 
 function DisabledMappingsPanel() {
@@ -33,37 +67,64 @@ function DisabledMappingsPanel() {
       <p>Unresolved mappings and mappings whose installation is no longer allowed are disabled. Allow-list the installation for its workspace, then have a workspace admin save the mapping to verify it.</p>
       <button type="button" onClick={state.reload}>Refresh mappings</button>
       <Async state={state} denied={DENIED}>
-        {(list) => list.length === 0 ? <p>No disabled mappings.</p> : (
-          <table>
-            <thead><tr><th>Workspace</th><th>Repository</th><th>Project</th><th>Installation</th><th>Reason</th></tr></thead>
-            <tbody>{list.map((m) => <tr key={m.id}>
-              <td>{m.workspaceSlug}</td><td>{m.ghRepoFullName}</td><td>{m.planeProjectId}</td>
-              <td>{m.installationId ?? "Unresolved"}</td><td>{m.reason === "unresolved" ? "Save the mapping to verify its installation" : "Installation is not allowed for this workspace"}</td>
-            </tr>)}</tbody>
-          </table>
+        {(list) => list.length === 0 ? <p>No disabled mappings.</p> : <DisabledMappingsTable list={list} />}
+      </Async>
+    </section>
+  );
+}
+
+function DisabledMappingsTable({ list }: { list: DisabledMapping[] }) {
+  const workspaces = useLoad(() => api<PlaneWorkspace[]>("GET", "/instance/workspaces"), []);
+  const slugs = [...new Set(list.map((mapping) => mapping.workspaceSlug))].sort();
+  const projects = useLoad(async () => {
+    const result = await Promise.all(slugs.map(async (slug) => {
+      try { return { slug, projects: await api<PlaneProject[]>("GET", `/instance/workspaces/${encodeURIComponent(slug)}/projects`), error: null }; }
+      catch (error) { return { slug, projects: [] as PlaneProject[], error }; }
+    }));
+    return result;
+  }, [slugs.join(",")]);
+  return <>
+    <ErrorNote error={workspaces.error} />
+    {workspaces.error ? <button type="button" onClick={workspaces.reload}>Reload workspace names</button> : null}
+    {projects.data?.some((result) => result.error) ? <p className="error">Some project names could not be loaded. <button type="button" onClick={projects.reload}>Reload project names</button></p> : null}
+    <table><thead><tr><th>Workspace</th><th>Repository</th><th>Project</th><th>Installation</th><th>Reason</th></tr></thead>
+      <tbody>{list.map((mapping) => <tr key={mapping.id}>
+        <td>{workspaces.data?.find((workspace) => workspace.slug === mapping.workspaceSlug)?.name ?? "Workspace unavailable"}</td>
+        <td>{mapping.ghRepoFullName}</td>
+        <td>{projects.data?.find((result) => result.slug === mapping.workspaceSlug)?.projects.find((project) => project.id === mapping.planeProjectId)?.label ?? (projects.loading ? "Loading project…" : "Project unavailable")}</td>
+        <td>{mapping.installationId ?? "Unresolved"}</td><td>{mapping.reason === "unresolved" ? "Save the mapping to verify its installation" : "Installation is not allowed for this workspace"}</td>
+      </tr>)}</tbody></table>
+  </>;
+}
+
+export function HealthPanel({ state }: { state: ReturnType<typeof useLoad<Health>> }) {
+  return (
+    <section className="panel" aria-labelledby="health-h">
+      <h2 id="health-h">Connection health</h2>
+      <Async state={state} denied={DENIED}>
+        {(h) => (
+          <>
+          {h.healthError ? <p className="error" role="alert">{h.healthError}</p> : null}
+          {h.database && h.githubAppCredentials?.decryptOk === false ? <p className="error" role="alert">GitHub App credentials cannot be decrypted. Save the App secrets again.</p> : null}
+          <dl className="facts">
+            <dt>Database</dt><dd>{h.database ? "reachable" : "unreachable"}</dd>
+            <dt>GitHub App</dt><dd>{h.githubAppConfigured ? "configured" : "not configured"}</dd>
+            <dt>Repository mappings</dt><dd>{h.mappings ?? "Unknown"}</dd>
+            <dt>Last sync activity</dt><dd>{formatTime(h.lastActivityAt)}</dd>
+            <dt>Failures in the last 24 hours</dt><dd className={(h.failuresLast24h ?? 0) > 0 ? "error" : undefined}>{h.failuresLast24h === null ? "Unknown" : <Link href={`${UI_BASE}/admin/audit?errors=1&hours=24&scope=all`}>{h.failuresLast24h}</Link>}</dd>
+          </dl></>
         )}
       </Async>
     </section>
   );
 }
 
-function HealthPanel({ state }: { state: ReturnType<typeof useLoad<Health>> }) {
-  return (
-    <section className="panel" aria-labelledby="health-h">
-      <h2 id="health-h">Connection health</h2>
-      <Async state={state} denied={DENIED}>
-        {(h) => (
-          <dl className="facts">
-            <dt>Database</dt><dd>{h.database ? "reachable" : "unreachable"}</dd>
-            <dt>GitHub App</dt><dd>{h.githubAppConfigured ? "configured" : "not configured"}</dd>
-            <dt>Repository mappings</dt><dd>{h.mappings}</dd>
-            <dt>Last sync activity</dt><dd>{formatTime(h.lastActivityAt)}</dd>
-            <dt>Failures in the last 24 hours</dt><dd className={h.failuresLast24h > 0 ? "error" : undefined}>{h.failuresLast24h}</dd>
-          </dl>
-        )}
-      </Async>
-    </section>
-  );
+function SetupCheckPanel() {
+  const state = useLoad(() => api<SetupCheckResult>("GET", "/instance/setup-check"), []);
+  return <section className="panel"><h2>Setup checks</h2><button type="button" onClick={state.reload}>Check setup again</button>
+    <Async state={state} denied={DENIED}>{(result) => <><p>Checked {formatTime(result.checkedAt)}</p><ul>{result.checks.map((check) => <li key={check.id}>
+      <strong>{check.title}: {check.status === "pass" ? "Verified" : check.status === "fail" ? "Needs attention" : "Not verified"}</strong> — {check.detail}
+    </li>)}</ul></>}</Async></section>;
 }
 
 function GithubAppForm({ onSaved }: { onSaved(): void }) {
@@ -80,6 +141,11 @@ function GithubAppForm({ onSaved }: { onSaved(): void }) {
 
 function GithubAppFields({ app, onSaved }: { app: GithubAppInfo; onSaved(): void }) {
   const [appId, setAppId] = useState(app.appId === null ? "" : String(app.appId));
+  const [clientId, setClientId] = useState(app.clientId ?? "");
+  const [clientSecret, setClientSecret] = useState("");
+  const [appSlug, setAppSlug] = useState(app.appSlug ?? "");
+  const [edition, setEdition] = useState(app.edition ?? "github");
+  const [subdomain, setSubdomain] = useState(app.gheSubdomain ?? "");
   const [ghe, setGhe] = useState(app.gheBaseUrl ?? "");
   const [privateKey, setPrivateKey] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
@@ -89,11 +155,15 @@ function GithubAppFields({ app, onSaved }: { app: GithubAppInfo; onSaved(): void
     e.preventDefault();
     const ok = await saver.run(() => api("PUT", "/instance/github-app", {
       appId: Number(appId),
-      gheBaseUrl: ghe.trim() === "" ? null : ghe.trim(),
+      edition, gheSubdomain: edition === "ghe_cloud" ? subdomain.trim() : null,
+      gheBaseUrl: edition === "ghes" ? ghe.trim() : null,
+      ...(clientId.trim() !== (app.clientId ?? "") ? { clientId: clientId.trim() || null } : {}),
+      ...(appSlug.trim() !== (app.appSlug ?? "") ? { appSlug: appSlug.trim() || null } : {}),
+      ...(clientSecret ? { clientSecret } : {}),
       ...(privateKey.trim() ? { privateKey } : {}),
       ...(webhookSecret ? { webhookSecret } : {}),
     }));
-    if (ok) { setPrivateKey(""); setWebhookSecret(""); onSaved(); }
+    if (ok) { setPrivateKey(""); setWebhookSecret(""); setClientSecret(""); onSaved(); }
   };
 
   return (
@@ -108,9 +178,15 @@ function GithubAppFields({ app, onSaved }: { app: GithubAppInfo; onSaved(): void
         <input type="password" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} autoComplete="new-password"
           required={!app.configured} />
       </Field>
-      <Field label="GitHub Enterprise base URL" hint="Leave empty for github.com.">
-        <input type="url" value={ghe} onChange={(e) => setGhe(e.target.value)} placeholder="https://github.example.com" />
-      </Field>
+      <Field label="App slug" hint="Used for the Connect GitHub installation link."><input value={appSlug} onChange={(event) => setAppSlug(event.target.value)} /></Field>
+      <Field label="OAuth client ID"><input value={clientId} onChange={(event) => setClientId(event.target.value)} /></Field>
+      <Field label="OAuth client secret" hint={app.clientSecretConfigured ? "Configured. Leave empty to keep the secret." : "Required for personal account authorization."}>
+        <input type="password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} autoComplete="new-password" /></Field>
+      <Field label="GitHub edition"><select value={edition} onChange={(event) => setEdition(event.target.value as typeof edition)}>
+        <option value="github">GitHub.com</option><option value="ghe_cloud">Enterprise Cloud with data residency</option><option value="ghes">Enterprise Server</option>
+      </select></Field>
+      {edition === "ghe_cloud" ? <Field label="Enterprise Cloud subdomain" hint="The enterprise name before .ghe.com."><input value={subdomain} onChange={(event) => setSubdomain(event.target.value)} required /></Field> : null}
+      {edition === "ghes" ? <Field label="Enterprise Server URL"><input type="url" value={ghe} onChange={(event) => setGhe(event.target.value)} placeholder="https://github.example.com" required /></Field> : null}
       <button type="submit" disabled={saver.busy}>Save GitHub App</button>
       <SaveStatus saver={saver} />
     </form>
@@ -131,6 +207,7 @@ export function WorkspaceInstallationsPanel() {
 }
 
 export function WorkspaceInstallationsTable({ list, onReload }: { list: WorkspaceInstallation[]; onReload(): void }) {
+  const workspaces = useLoad(() => api<PlaneWorkspace[]>("GET", "/instance/workspaces"), []);
   const [instId, setInstId] = useState("");
   const [slug, setSlug] = useState("");
   const [login, setLogin] = useState("");
@@ -169,7 +246,7 @@ export function WorkspaceInstallationsTable({ list, onReload }: { list: Workspac
         <table>
           <thead>
             <tr>
-              <th>Workspace slug</th>
+              <th>Workspace</th>
               <th>Installation ID</th>
               <th>Account / Org</th>
               <th>Allow-listed at</th>
@@ -179,7 +256,7 @@ export function WorkspaceInstallationsTable({ list, onReload }: { list: Workspac
           <tbody>
             {list.map((item) => (
               <tr key={item.installationId}>
-                <td><code>{item.workspaceSlug}</code></td>
+                <td>{workspaces.data?.find((workspace) => workspace.slug === item.workspaceSlug)?.name ?? (workspaces.loading ? "Loading workspace…" : "Workspace unavailable")}</td>
                 <td><code>{item.installationId}</code></td>
                 <td>{item.accountLogin ?? <span className="hint">—</span>}</td>
                 <td>{formatTime(item.createdAt)}</td>
@@ -199,6 +276,8 @@ export function WorkspaceInstallationsTable({ list, onReload }: { list: Workspac
         </table>
       )}
       <SaveStatus saver={remover} />
+      <ErrorNote error={workspaces.error} />
+      {workspaces.error ? <button type="button" onClick={workspaces.reload}>Reload workspaces</button> : null}
 
       <h3 style={{ marginTop: "16px" }}>Allow-list an installation</h3>
       <form onSubmit={add}>
@@ -212,13 +291,8 @@ export function WorkspaceInstallationsTable({ list, onReload }: { list: Workspac
               required
             />
           </Field>
-          <Field label="Workspace slug" hint="Workspace allowed to use this installation.">
-            <input
-              value={slug}
-              onChange={(e) => setSlug(e.target.value)}
-              placeholder="e.g. acme"
-              required
-            />
+          <Field label="Workspace" hint="Workspace allowed to use this installation.">
+            <WorkspacePicker workspaces={workspaces.data ?? []} value={slug} onChange={setSlug} disabled={workspaces.loading || !!workspaces.error} />
           </Field>
           <Field label="Account / Org (optional)" hint="GitHub org or user name for display.">
             <input
@@ -228,7 +302,7 @@ export function WorkspaceInstallationsTable({ list, onReload }: { list: Workspac
             />
           </Field>
         </div>
-        <button type="submit" disabled={saver.busy}>Allow-list installation</button>
+        <button type="submit" disabled={saver.busy || !slug || !workspaces.data}>Allow-list installation</button>
         <SaveStatus saver={saver} />
       </form>
     </div>
@@ -289,7 +363,8 @@ function SettingsForm() {
   );
 }
 
-function SettingsFields({ initial }: { initial: InstanceSettings }) {
+export function SettingsFields({ initial }: { initial: InstanceSettings }) {
+  const [verified, setVerified] = useState(initial.requireVerifiedCommits ?? false);
   const [smart, setSmart] = useState(initial.smartCommitsDefault);
   const [interval, setInterval_] = useState(String(initial.reconciliationIntervalMinutes));
   const [ttl, setTtl] = useState(String(initial.opTtlMinutes));
@@ -297,7 +372,7 @@ function SettingsFields({ initial }: { initial: InstanceSettings }) {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     await saver.run(() => api("PUT", "/instance/settings", {
-      smartCommitsDefault: smart, reconciliationIntervalMinutes: Number(interval), opTtlMinutes: Number(ttl),
+      smartCommitsDefault: smart, requireVerifiedCommits: verified, reconciliationIntervalMinutes: Number(interval), opTtlMinutes: Number(ttl),
     }));
   };
   return (
@@ -306,6 +381,8 @@ function SettingsFields({ initial }: { initial: InstanceSettings }) {
         <input type="checkbox" checked={smart} onChange={(e) => setSmart(e.target.checked)} />
         <span>Enable Smart Commits for newly mapped repositories</span>
       </label>
+      <label className="check"><input type="checkbox" checked={verified} onChange={(e) => setVerified(e.target.checked)} /><span>Require signed commits for Smart Commits</span></label>
+      <p className="hint">Only commits GitHub marks as verified can run Smart Commit commands when enabled.</p>
       <Field label="Reconciliation interval (minutes)" hint="How often missed webhooks are reconciled.">
         <input inputMode="numeric" value={interval} onChange={(e) => setInterval_(e.target.value)} required />
       </Field>

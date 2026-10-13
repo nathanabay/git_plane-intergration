@@ -22,6 +22,7 @@ import { addUserLinkTombstone, isUserLinkTombstoned, withUserLinkTransaction } f
 import { createWebhookRoutes } from "../../src/api/handler.ts";
 import { startServer } from "../../src/index.ts";
 import { ADM, INST, KEY, MAPPING, setup } from "./harness.ts";
+import { GITHUB_OAUTH_CONFIG, githubListingFetch, linkGithubUser } from "./linked-github.ts";
 
 const sender = { id: 41, login: "octo", type: "User" } as const;
 const mapping = { workspaceSlug: "acme", installationId: 1 } as Mapping;
@@ -32,10 +33,19 @@ const deferred = () => {
 };
 const turn = () => new Promise<void>((r) => setImmediate(r));
 
+// installationFor no longer trusts a remembered installation id: it asks GitHub for the repository's current
+// installation and requires that installation to be allow-listed for the workspace. The fake GitHub answers 1, and
+// allowInstallation seeds the allow-list, so the email lookup reaches the race these tests are about.
+const allowInstallation = (db: Db) => db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (1, 'acme') ON CONFLICT DO NOTHING");
+// A gate that the code under test never reaches would otherwise leave the test awaiting forever; the timeout then
+// abandons it before its finally closes the harness, and the open server keeps the whole file alive.
+const reached = <T>(gate: Promise<void>, rival: Promise<T>, what: string) =>
+  Promise.race([gate, rival.then((value) => { throw new Error(`${what} finished (${JSON.stringify(value)}) without reaching the gate`); })]);
+
 function emailContext(db: Db, listMembers: () => Promise<any[]> = async () => [{ id: "u-1", email: "octo@example.test" }]): AppContext {
   return {
     db,
-    ghClient: { installationOctokit: async () => ({ request: async () => ({ data: { id: 41, email: "octo@example.test" } }) }) },
+    ghClient: { installationIdFor: async () => 1, installationOctokit: async () => ({ request: async () => ({ data: { id: 41, email: "octo@example.test" } }) }) },
     planeClient: { listAll: listMembers },
   } as unknown as AppContext;
 }
@@ -63,12 +73,13 @@ test("F7: unlink waits for the final suppression check and insert, then removes 
   const ctx = emailContext(h.db);
   try {
     await query("INSERT INTO user_tokens VALUES ('u-1', 'plane_pat', 'encrypted')");
+    await allowInstallation(h.db);
     const auto = ensureLinkedByEmail(ctx, mapping, sender);
-    await checked.promise;
+    await reached(checked.promise, auto, "auto-link");
     let unlinked = false;
     const deletion = h.call("DELETE", "/workspaces/acme/user-links/u-1", { cookie: ADM }).then((r) => { unlinked = true; return r; });
     // Wait until authorization has finished. The shared lock must still keep DELETE outside BEGIN.
-    while (!h.plane.calls.some((c) => c.url.includes("workspace-members"))) await turn();
+    while (!unlinked && !h.plane.calls.some((c) => c.url.includes("workspace-members"))) await turn();
     await turn(); await turn();
     strictEqual(unlinked, false);
     release.resolve();
@@ -91,8 +102,9 @@ test("F7: auto-link cannot insert while unlink has deleted the map but not writt
   const lookup = deferred(), finishLookup = deferred(), deleted = deferred(), finishDelete = deferred();
   const ctx = emailContext(h.db, async () => { lookup.resolve(); await finishLookup.promise; return [{ id: "u-1", email: "octo@example.test" }]; });
   try {
+    await allowInstallation(h.db);
     const auto = ensureLinkedByEmail(ctx, mapping, sender);
-    await lookup.promise;
+    await reached(lookup.promise, auto, "auto-link");
     strictEqual((await putLink(h)).status, 200);
     h.db.query = (async (sql: string, params?: any[]) => {
       const result = await query(sql, params);
@@ -100,7 +112,7 @@ test("F7: auto-link cannot insert while unlink has deleted the map but not writt
       return result;
     }) as typeof h.db.query;
     const deletion = h.call("DELETE", "/workspaces/acme/user-links/u-1", { cookie: ADM });
-    await deleted.promise;
+    await reached(deleted.promise, deletion.then((r) => r.status), "unlink");
     let autoFinished = false;
     const completion = auto.then((value) => { autoFinished = true; return value; });
     finishLookup.resolve(); await turn(); await turn();
@@ -230,7 +242,9 @@ test("F8: production mount supports non-root writes with a read-only secret and 
       const key = Buffer.alloc(32, 7);
       strictEqual(process.getuid() === 0, false);
       throws(() => writeFileSync(join(dirname(config.GITHUB_PRIVATE_KEY_PATH), '.gitsync-db-credentials'), 'x'), /EACCES|EROFS/);
-      const db = { query: async (sql) => ({ rows: sql.startsWith('SELECT app_id') ? [{ app_id: 42, private_key_v1: encryptSecret('DB-PEM', key), webhook_secret_v1: encryptSecret('rotated', key) }] : [] }) };
+      // The loader also reads the stored App client (edition and host, parity G4 migration 010) from the same row.
+      const db = { query: async (sql) => ({ rows: sql.startsWith('SELECT app_id') ? [{ app_id: 42, private_key_v1: encryptSecret('DB-PEM', key), webhook_secret_v1: encryptSecret('rotated', key) }]
+        : sql.startsWith('SELECT client_id') ? [{ client_id: null, client_secret_v1: null, app_slug: null, edition: 'github', ghe_subdomain: null, ghe_base_url: null }] : [] }) };
       strictEqual(await createCredentialSource(db, key, config, 0).webhookSecret(), 'rotated');
       ok(existsSync(config.GITHUB_CREDENTIAL_MARKER_PATH));
       const unwritable = createCredentialSource(db, key, { ...config, GITHUB_CREDENTIAL_MARKER_PATH: join(dirname(config.GITHUB_PRIVATE_KEY_PATH), 'cannot-persist') }, 0);
@@ -333,8 +347,13 @@ test("F3 relay: mapping POST and every PATCH verify the effective repository and
     if (!verifiedId) return "installation revoked";
     check.onInstallationVerified?.(verifiedId);
     return null;
-  });
+  // Parity C3: a save first re-checks the repository against the saving admin's own GitHub listing, so the admin is
+  // linked and installation 7 (allow-listed for acme) lists it; the relay of the verifier's installation is unchanged.
+  }, { githubOAuthConfig: GITHUB_OAUTH_CONFIG, fetch: githubListingFetch({ 7: [{ id: 555, full_name: "acme/web" }] }, fetch),
+    appRequest: async (route) => { throw new Error(`unexpected App request ${route}`); } });
   try {
+    await linkGithubUser(h.db, KEY, "u-adm");
+    await h.db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (7, 'acme')");
     const creation = await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: MAPPING });
     strictEqual(creation.status, 201);
     const { id } = await creation.json() as { id: number };
@@ -413,7 +432,7 @@ test("F8 migration: Postgres 15.7 applies 001-008 fresh and upgrades an existing
     await upgrade.query("INSERT INTO user_map (workspace_slug, plane_user_id, gh_login, gh_id) VALUES ('acme', 'u-old', 'octo', 41)");
     await upgrade.query("INSERT INTO user_link_tombstones VALUES ('acme', 41, now())");
     await upgrade.query("INSERT INTO user_tokens VALUES ('u-old', 'plane_pat', 'encrypted')");
-    deepStrictEqual((await migrate(upgrade)).applied, all.filter((f) => f.startsWith("008-")));
+    deepStrictEqual((await migrate(upgrade)).applied, all.filter((f) => f >= "008-"));
     strictEqual((await upgrade.query("SELECT 1 FROM github_credential_state WHERE db_row_seen")).rows.length, 1, "upgrade backfills existing credentials");
     strictEqual((await upgrade.query("SELECT 1 FROM workspace_installations WHERE installation_id = 7")).rows.length, 1, "allow-list survives migration");
     strictEqual((await upgrade.query("SELECT 1 FROM user_map")).rows.length, 0, "upgrade removes a map contradicted by suppression");

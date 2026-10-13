@@ -1,10 +1,27 @@
 import test, { after, before } from "node:test";
 import { strictEqual, ok, deepStrictEqual } from "node:assert/strict";
-import { ADM, INST, MAPPING, MEM, ORIGIN, setup } from "./harness.ts";
+import { ADM, INST, KEY, MAPPING, MEM, ORIGIN, setup } from "./harness.ts";
 import type { Harness } from "./harness.ts";
+import { encryptSecret } from "../../src/auth/identity.ts";
+import { putGithubOAuthToken } from "../../src/db/parity.ts";
 
 let h: Harness;
-before(async () => { h = await setup(); });
+before(async () => {
+  // C3 adds personal repository access after the auth/CSRF guards; valid JSON must reach that positive control.
+  h = await setup([], undefined, undefined, {
+    githubOAuthConfig: { GITHUB_CLIENT_ID: "Iv1.fixture", GITHUB_CLIENT_SECRET: "fixture-secret" },
+    appRequest: async () => ({ data: [] }),
+    fetch: (async (url: string | URL, init?: RequestInit) => {
+      const u = new URL(String(url));
+      if (u.hostname !== "api.github.com") return fetch(url, init);
+      strictEqual(new Headers(init?.headers).get("authorization"), "Bearer ghu-fixture");
+      strictEqual(u.pathname, "/user/installations/1/repositories");
+      return new Response(JSON.stringify({ total_count: 1, repositories: [{ id: 555, full_name: "acme/web", permissions: { triage: true } }] }), { headers: { "content-type": "application/json" } });
+    }) as typeof fetch,
+  });
+  await h.db.query("INSERT INTO workspace_installations (installation_id, workspace_slug) VALUES (1,'acme')");
+  await putGithubOAuthToken(h.db, "u-adm", { accessCiphertext: encryptSecret("ghu-fixture", KEY), refreshCiphertext: null, accessExpiresAt: null, refreshExpiresAt: null });
+});
 after(async () => { await h.close(); });
 
 test("auth: no cookie, forged cookie and a member session are 401/401/403 and write nothing", async () => {
@@ -57,6 +74,18 @@ test("auth: a demoted admin fails the very next write; no result is cached", asy
 
 test("auth: an admin of one workspace is 403 in a workspace where they are a member", async () => {
   strictEqual((await h.call("GET", "/workspaces/other/mappings", { cookie: ADM })).status, 403);
+});
+
+test("S2: an admin in a reissued workspace cannot inherit the former workspace's data", async () => {
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).status, 200);
+  h.plane.workspaceIds.acme = "replacement-workspace-id";
+  try {
+    strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).status, 409);
+    strictEqual((await h.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: MAPPING })).status, 409);
+    strictEqual((await h.db.query<any>("SELECT plane_workspace_id FROM workspace_identity WHERE workspace_slug = 'acme'")).rows[0].plane_workspace_id, "ws-id-acme");
+    strictEqual(await h.count("repo_mappings"), 0);
+  } finally { delete h.plane.workspaceIds.acme; }
+  strictEqual((await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).status, 200);
 });
 
 test("auth: a Plane outage is 502, never a pass", async () => {

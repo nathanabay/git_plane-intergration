@@ -4,9 +4,11 @@ export const API_BASE = "/git-sync/api";
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  readonly reason?: string;
+  constructor(status: number, message: string, reason?: string) {
     super(message);
     this.status = status;
+    this.reason = reason;
   }
 }
 
@@ -47,7 +49,9 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
     const msg = typeof payload === "object" && payload !== null && typeof (payload as { error?: unknown }).error === "string"
       ? (payload as { error: string }).error
       : `Request failed (${res.status})`;
-    throw new ApiError(res.status, msg);
+    const reason = typeof payload === "object" && payload !== null && typeof (payload as { reason?: unknown }).reason === "string"
+      ? (payload as { reason: string }).reason : undefined;
+    throw new ApiError(res.status, msg, reason);
   }
   return payload as T;
 }
