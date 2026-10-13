@@ -180,12 +180,17 @@ test("F2: a saved create result survives failure during local linking and re-opt
 });
 
 /**
- * Reconcile A2: one unexplained 404 only marks a link missing ("awaiting_confirmation"); the next sweep that agrees
- * orphans it (`not_found_twice`). Confirmation therefore takes two sweeps here, and the first must not orphan.
+ * The partner is deleted in Plane, then reconcile confirms the orphan. Since E2E-2 an item git-sync created is
+ * looked up by its external id when the activity log says nothing: a deleted one is no longer found (Plane v1.4.2's
+ * soft delete hides it from that lookup too), so one sweep confirms it (`deleted`). Without that evidence the
+ * two-sweep rule still applies (tests/reconcile/e2e2-archive.test.ts).
  */
 async function confirmOrphan(h: Awaited<ReturnType<typeof makeHarness>>): Promise<void> {
-  strictEqual((await reconcileOnce({ db: h.db, plane: h.ctx.planeClient })).orphaned, 0, "a single 404 is not yet a confirmed orphan");
+  const created = (await h.db.query<{ plane_issue_id: string }>("SELECT plane_issue_id FROM sync_links WHERE status = 'active'")).rows;
+  strictEqual(created.length, 1);
+  h.plane.deleteIssue(created[0]!.plane_issue_id);
   strictEqual((await reconcileOnce({ db: h.db, plane: h.ctx.planeClient })).orphaned, 1);
+  strictEqual((await h.db.query<{ reason: string }>("SELECT detail->>'reason' AS reason FROM audit_log WHERE kind = 'sync_link_orphaned'")).rows[0]?.reason, "deleted");
 }
 
 test("F2: successful but unlinked workflow cannot advance; confirmed orphan can get a replacement", async (t) => {

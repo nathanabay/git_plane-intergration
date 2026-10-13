@@ -45,6 +45,44 @@ test("title keys close; body keys are relations; the strongest tier across sourc
   strictEqual(by["WEB-2"]!.tier, "closing"); strictEqual(by["WEB-2"]!.source, "commit");
   strictEqual(r.refs.length, 2);
 });
+test("E2E-4: Ref in a PR title is non-closing, even with a bare body reference", () => {
+  const parsed = parseReferences({ branch: "e2e_run-s34", title: "Ref GITSY-82", body: "GITSY-82" });
+  deepStrictEqual(parsed.refs, [{ identifier: "GITSY-82", project: "GITSY", sequence: 82, tier: "non_closing", source: "title" }]);
+});
+test("E2E-4: explicit words classify their own occurrences in every source without bare promotion", () => {
+  for (const source of ["branch", "title", "body", "commit"] as const) {
+    for (const tier of ["closing", "non_closing", "relation"] as const) {
+      for (const word of DEFAULT_MAGIC_WORDS[tier]) {
+        const text = `${word.toUpperCase()}: GITSY-1, gitsy-2 and GITSY-3`;
+        const input = source === "commit" ? { commits: [text] } : { [source]: text };
+        const parsed = parseReferences(input);
+        deepStrictEqual(ids(parsed), [1, 2, 3].map((n) => `GITSY-${n}:${tier}`), `${source}: ${word}`);
+        ok(parsed.refs.every((r) => r.source === source));
+      }
+    }
+  }
+});
+test("E2E-4: only separate closing occurrences can promote an explicit non-closing reference", () => {
+  deepStrictEqual(ids(parseReferences({ title: "Refs WEB-1, WEB-2. WEB-3" })), ["WEB-1:non_closing", "WEB-2:non_closing", "WEB-3:closing"]);
+  deepStrictEqual(ids(parseReferences({ title: "Refs WEB-1. WEB-1" })), ["WEB-1:closing"]);
+  deepStrictEqual(ids(parseReferences({ branch: "feature/web-1", title: "Ref WEB-1" })), ["WEB-1:closing"]);
+  deepStrictEqual(ids(parseReferences({ title: "Ref WEB-1", body: "Fixes WEB-1" })), ["WEB-1:closing"]);
+  deepStrictEqual(ids(parseReferences({ title: "Related to WEB-1", body: "Refs WEB-1" })), ["WEB-1:non_closing"]);
+});
+test("E2E-4: body skip/ignore suppress all source tiers while title/branch words are not overrides", () => {
+  for (const override of ["skip", "ignore"]) {
+    const parsed = parseReferences({ branch: "feature/web-1", title: "Ref WEB-1", body: `${override.toUpperCase()} web-1\nFixes WEB-1`, commits: ["Fixes WEB-1"] });
+    deepStrictEqual(parsed.refs, []); deepStrictEqual(parsed.skipped, ["WEB-1"]);
+    deepStrictEqual(ids(parseReferences({ branch: `${override}/web-1`, title: `${override} WEB-1`, body: "Ref WEB-1" })), ["WEB-1:closing"]);
+  }
+});
+test("E2E-4: configured literal phrases and repeated keys retain occurrence boundaries", () => {
+  const words = { closing: [], non_closing: ["c++ ref"], relation: [] };
+  deepStrictEqual(ids(parseReferences({ title: "c++ ref: WEB-01, WEB-2. WEB-3" }, words)), ["WEB-1:non_closing", "WEB-2:non_closing", "WEB-3:closing"]);
+  const text = Array.from({ length: 256 }, (_, i) => `Ref WEB-${i + 1}.`).join(" ");
+  const parsed = parseReferences({ title: text });
+  strictEqual(parsed.refs.length, 256); ok(parsed.refs.every((r) => r.tier === "non_closing"));
+});
 test("bare lowercase keys in free text are prose, not references", () => {
   deepStrictEqual(parseReferences({ body: "step-2 of web-5", commits: ["wip web-1"] }).refs, []);
 });

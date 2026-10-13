@@ -1,0 +1,41 @@
+{
+  "runId": "2610131547-aec9",
+  "startedAt": "2026-10-13T15:47:35.785Z",
+  "finishedAt": "2026-10-13T15:48:03.976Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S15"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S15",
+      "title": "Plane item with `github` label → GitHub issue, cross-linked",
+      "status": "PASS",
+      "seconds": 28.2,
+      "evidence": [
+        {
+          "label": "GITSY-58 → GitHub #47",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/47"
+        },
+        {
+          "label": "GitHub issue",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/47 by gitsync-test-nathanabay[bot], labels plane"
+        },
+        {
+          "label": "cross-links",
+          "value": "{\"planeLinkToIssue\":1,\"ghLinkback\":1,\"mirroredTo\":1}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

@@ -7,6 +7,7 @@ import {
 } from "../../src/github/pr-automation.ts";
 import { TriageWriteRejected } from "../../src/sync/plane.ts";
 import { QLL, fakePlaneWriter } from "./fakes.ts";
+import { parseReferences } from "../../src/parse/references.ts";
 
 const DSAF = [{ id: "d-todo", name: "Todo", group: "unstarted" }, { id: "d-cancel", name: "Cancelled", group: "cancelled" }, { id: "d-done", name: "Done", group: "completed" }];
 const rules = (m = QLL_DEFAULTS) => parseRules(compileLifecycleRules(m));
@@ -172,6 +173,27 @@ test("executor: non-closing links still advance on non-merge events; relation li
   const ex = createRuleExecutor({ writer: w, listStates: async () => QLL, issues: [issue("nc", { tier: "non_closing" }), issue("rel", { tier: "relation" })] });
   await ex.execute({ type: "set_state", state: "started:In Review" }, ev("pull_request.review_requested"));
   deepStrictEqual(w.writes.map((x: any) => x.issueId), ["nc"]);
+});
+test("E2E-4: the parsed Ref title advances through the workflow and skips the merged state", async () => {
+  const parsed = parseReferences({ branch: "e2e_run-s34", title: "Ref GITSY-82", body: "GITSY-82" });
+  strictEqual(parsed.refs.length, 1); strictEqual(parsed.refs[0]!.tier, "non_closing");
+  const w = fakePlaneWriter(); let stateReads = 0;
+  const ex = createRuleExecutor({ writer: w, listStates: async () => { stateReads++; return QLL; }, issues: [issue("i-82", { tier: parsed.refs[0]!.tier })] });
+  for (const [trigger, state] of [
+    ["pull_request.opened", "started:In Progress"],
+    ["pull_request.ready_for_review", "started:In Review"],
+    ["pull_request.review_requested", "started:In Review"],
+    ["pull_request.ready_for_merge", "started:In Review"],
+  ] as const) {
+    await ex.execute({ type: "set_state", state }, ev(trigger));
+  }
+  deepStrictEqual(w.writes.map((write: any) => write.fields.state), ["s-prog", "s-review", "s-review", "s-review"]);
+  strictEqual(stateReads, 1);
+  await ex.execute({ type: "set_state", state: "completed:Done" }, ev("pull_request.merged"));
+  strictEqual(w.writes.length, 4); strictEqual(stateReads, 1, "a non-closing merge is skipped before state lookup");
+  // Non-closing references also retain their additive development link.
+  await ex.execute({ type: "add_link", url: "https://github.example/o/r/pull/82", title: "PR 82" }, ev("pull_request.opened"));
+  deepStrictEqual(w.writes.map((write) => write.kind), ["update_issue", "update_issue", "update_issue", "update_issue", "add_link"]);
 });
 
 test("executor: comment, log_time and add_link become Plane writes with escaped text", async () => {

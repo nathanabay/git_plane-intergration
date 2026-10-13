@@ -10,6 +10,7 @@ export interface Mapping {
   smartCommitsEnabled: boolean;
   linkbackComments: boolean;
   autolinks: boolean;
+  reportProblems: boolean;
   openStateId?: string | null;
   closedStateId?: string | null;
 }

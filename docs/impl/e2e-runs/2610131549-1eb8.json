@@ -1,0 +1,41 @@
+{
+  "runId": "2610131549-1eb8",
+  "startedAt": "2026-10-13T15:49:07.315Z",
+  "finishedAt": "2026-10-13T15:49:22.275Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S47"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S47",
+      "title": "Deleted item is orphaned on first sweep and GitHub remains untouched",
+      "status": "PASS",
+      "seconds": 15,
+      "evidence": [
+        {
+          "label": "GitHub issue #54",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/54"
+        },
+        {
+          "label": "mirror fixture",
+          "value": "{\"issue\":54,\"item\":\"3016bf2a-57e9-42df-9ce9-4388b291f7c8\"}"
+        },
+        {
+          "label": "first deletion sweep",
+          "value": "{\"activity\":[{\"id\":\"b3e94305-007e-4e82-97c6-d9b85e822da0\",\"verb\":\"deleted\",\"field\":\"issue\"}],\"first\":{\"result\":{\"checked\":1,\"orphaned\":1,\"archived\":0,\"errors\":0},\"links\":[{\"id\":50,\"status\":\"orphaned\",\"plane_archived_at\":null,\"missing_since\":null}]},\"githubState\":\"open\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

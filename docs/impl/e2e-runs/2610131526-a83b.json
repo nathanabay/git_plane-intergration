@@ -1,0 +1,37 @@
+{
+  "runId": "2610131526-a83b",
+  "startedAt": "2026-10-13T15:26:27.653Z",
+  "finishedAt": "2026-10-13T15:26:38.085Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S29"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S29",
+      "title": "Create branch from panel is real and idempotent",
+      "status": "PASS",
+      "seconds": 10.4,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-13",
+          "value": "a9e8fcfc-14e7-4819-bb89-1c9e17d6f9aa"
+        },
+        {
+          "label": "branch creation",
+          "value": "{\"first\":{\"created\":true,\"branch\":\"GITSY-13-e2e-2610131526-a83b-s29\",\"url\":\"https://github.com/nathanabay/gitsync-test/tree/GITSY-13-e2e-2610131526-a83b-s29\"},\"second\":{\"created\":false,\"branch\":\"GITSY-13-e2e-2610131526-a83b-s29\",\"url\":\"https://github.com/nathanabay/gitsync-test/tree/GITSY-13-e2e-2610131526-a83b-s29\"},\"sha\":\"e5858db88d1197a83e7ff6cc442e3d5718599851\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

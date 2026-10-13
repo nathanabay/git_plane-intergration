@@ -61,19 +61,25 @@ function scan(text: string, source: Source, words: MagicWords, out: IssueRef[], 
   }
   const lookup = tierLookup(words);
   const magic = magicRegex(words);
+  // A magic-word occurrence already has its tier. Only independent occurrences
+  // may compete with it; rescanning the same title key as bare would promote Ref.
+  const classified = new Set<number>();
   if (magic) {
     for (const m of text.matchAll(magic)) {
       const tier = lookup.get(m[1]!.toLowerCase().replace(/\s+/g, " "));
       if (!tier) continue;
       for (const k of m[2]!.matchAll(new RegExp(KEY_SRC, "g"))) {
+        classified.add(m.index! + m[0].length - m[2]!.length + k.index!);
         const r = ref(k[1]!, k[2]!, tier, source);
         if (r) out.push(r);
       }
     }
   }
   // Bare keys are uppercase-only in free text, which keeps prose like "step-2" out of the results.
-  const bare: Tier = source === "title" ? "closing" : "relation";
-  for (const m of text.matchAll(new RegExp(KEY_SRC.replace(PROJECT, "[A-Z][A-Z0-9]{1,11}"), "g"))) {
+  const bare: Tier = source === "title" || source === "branch" ? "closing" : "relation";
+  const bareKey = source === "branch" ? KEY_SRC : KEY_SRC.replace(PROJECT, "[A-Z][A-Z0-9]{1,11}");
+  for (const m of text.matchAll(new RegExp(bareKey, source === "branch" ? "gi" : "g"))) {
+    if (classified.has(m.index!)) continue;
     const r = ref(m[1]!, m[2]!, bare, source);
     if (r) out.push(r);
   }
@@ -85,11 +91,9 @@ export function parseReferences(input: { branch?: string; title?: string; body?:
   const creates = new Set<string>();
 
   if (input.branch) {
-    // Branch names link the way Linear's do: any key, any case, closing tier.
-    for (const m of input.branch.matchAll(new RegExp(KEY_SRC, "g"))) {
-      const r = ref(m[1]!, m[2]!, "closing", "branch");
-      if (r) found.push(r);
-    }
+    // Bare branch keys remain case-insensitive/closing; explicit words use the
+    // same classification as title/body/commit references.
+    scan(input.branch, "branch", words, found, skip, creates);
   }
   if (input.title) scan(input.title, "title", words, found, skip, creates);
   if (input.body) scan(input.body, "body", words, found, skip, creates);

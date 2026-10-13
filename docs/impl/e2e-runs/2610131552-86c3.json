@@ -1,0 +1,41 @@
+{
+  "runId": "2610131552-86c3",
+  "startedAt": "2026-10-13T15:52:31.739Z",
+  "finishedAt": "2026-10-13T15:52:38.617Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S51"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S51",
+      "title": "Workspace GitHub Sync settings render at full height",
+      "status": "PASS",
+      "seconds": 6.9,
+      "evidence": [
+        {
+          "label": "screenshot",
+          "value": "/home/claudeuser/orca/workspaces/git_plane-intergration/seal/docs/impl/e2e-runs/2610131552-86c3/s51.png"
+        },
+        {
+          "label": "rendered DOM",
+          "value": "{\"status\":200,\"found\":{\"GitHub Sync\":true,\"Repositories\":true,\"nathanabay/gitsync-test\":true},\"frames\":[{\"title\":\"GitHub Sync Workspace Configuration\",\"src\":\"/git-sync/ui/workspaces/gitsync-test\",\"width\":900,\"height\":772,\"viewportHeight\":900}],\"finalUrl\":\"http://100.85.50.109:8090/gitsync-test/settings/git-sync/\"}"
+        },
+        {
+          "label": "full-height iframe",
+          "value": "{\"title\":\"GitHub Sync Workspace Configuration\",\"src\":\"/git-sync/ui/workspaces/gitsync-test\",\"width\":900,\"height\":772,\"viewportHeight\":900}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

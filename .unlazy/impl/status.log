@@ -259,3 +259,13 @@
 2026-10-13T14:18:55Z full run: 70/95 files, only failure audit-g4 A5 (91 sends in one minute: window-boundary off-by-one in plane.ts TokenBucket); G4 preparing fix, apply after run
 2026-10-13T14:29:59Z full run DONE: typecheck+stubs pass, 11/11 oracles pass, 95 files 1100 pass 1 fail (A5 limiter boundary); G4 applying fix
 2026-10-13T14:37:07Z A5 fixed by G4 (audit-g4 25/25); final typecheck, then 16 commits on seal and push
+2026-10-13T14:38:17Z e2e step 0: rebuilding git-sync, admin and web fork images at d81e928
+2026-10-13T14:48:27Z e2e 4.1: created GitHub issue #1 with plane label
+2026-10-13T15:02:58Z e2e: 19 scenarios PASS, 1 FAIL; defects E2E-1 (N2 toggle unreachable -> G5), E2E-2 (archived item orphaned on real Plane -> G4); results docs/impl/e2e-results.md
+2026-10-13T15:09:02Z automated e2e suite started: G3 harness + S01-S27, G1 S28-S52 (brief e2e-suite.md, scripts/e2e/)
+2026-10-13T15:14:15Z e2e suite: relayed lib.mjs app()/web() contract to G1; asked G3 to add SCREENSHOT expectText (page + iframes); G5 DONE E2E1
+2026-10-13T15:24:29Z G4 DONE E2E2 (migration 012); relayed iframe geometry request G1->G3; redeploying git-sync with E2E-1/E2E-2 fixes
+2026-10-13T16:09:36Z e2e suite complete: 53 scenarios, 50 PASS, 3 FAIL; E2E-1 and E2E-2 confirmed fixed live. New defects: E2E-3 empty body Plane 400 -> G3; E2E-4 Ref tier closing -> G2; E2E-5 commit status no CI rollup -> G1
+2026-10-13T16:35:19Z E2E-3/4/5 fixed (G3, G2, G1); redeploying and running full e2e suite
+2026-10-13T16:50:52Z FULL E2E SUITE: 53/53 PASS (run 2610131635-9c1b); E2E-1..5 confirmed fixed live. Starting full check
+2026-10-13T17:07:07Z full check: tsc/stubs/11 oracles pass; unit tests: a8/rule-engine non-closing advance fails -> my brief/instruction wrong (spec: non-closing advances, skips merge). G2 reverting pr-automation gate, G1 fixing S34 to spec

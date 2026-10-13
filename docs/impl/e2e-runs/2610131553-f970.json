@@ -1,0 +1,46 @@
+{
+  "runId": "2610131553-f970",
+  "startedAt": "2026-10-13T15:53:32.240Z",
+  "finishedAt": "2026-10-13T15:53:47.837Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S34"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 0,
+    "FAIL": 1,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S34",
+      "title": "Ref KEY links without a state change",
+      "status": "FAIL",
+      "error": "Error: Ref link tier: expected \"non_closing\", got \"closing\" |     at eq (file:///home/claudeuser/orca/workspaces/git_plane-intergration/seal/scripts/e2e/lib.mjs:509:11) |     at Object.fn (file:///home/claudeuser/orca/workspaces/git_plane-intergration/seal/scripts/e2e/scenarios/04-dev.mjs:238:132)",
+      "seconds": 15.6,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-78",
+          "value": "b21241f1-b97e-4fe8-8aa2-5c111f9f41f1"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e-2610131553-f970-s34\",\"sha\":\"facac9b2dcaf4d4c92a8c29d354b834b5227a38b\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/69"
+        },
+        {
+          "label": "Ref semantics",
+          "value": "{\"tier\":\"closing\",\"before\":\"d6bf6264-32ea-431c-a310-7e0fdc1f601d\",\"after\":\"67bf71af-9767-4214-af12-e3139f0c504e\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

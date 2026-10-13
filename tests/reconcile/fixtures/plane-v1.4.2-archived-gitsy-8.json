@@ -1,0 +1,176 @@
+{
+  "_source": "Captured 2026-10-13 from the test Plane v1.4.2 with the service API key (GET only), for GITSY-8 after it was archived outside Plane's archive paths (E2E-2). Long description/comment bodies are trimmed; every id, field, status and key is as returned.",
+  "detail": {
+    "status": 404,
+    "body": {
+      "error": "The requested resource does not exist."
+    }
+  },
+  "project": {
+    "status": 200,
+    "body": {
+      "id": "972d93a8-6889-46b8-9b47-93f9e7546afb",
+      "identifier": "GITSY",
+      "name": "GitSync Test",
+      "archived_at": null
+    }
+  },
+  "activities": {
+    "status": 200,
+    "body": {
+      "grouped_by": null,
+      "sub_grouped_by": null,
+      "total_count": 5,
+      "next_cursor": "50:1:0",
+      "prev_cursor": "50:-1:1",
+      "next_page_results": false,
+      "prev_page_results": false,
+      "count": 5,
+      "total_pages": 1,
+      "total_results": 5,
+      "extra_stats": null,
+      "results": [
+        {
+          "id": "62247543-89e3-40ad-8ec1-da6577655bc0",
+          "created_at": "2026-10-13T14:50:41.997103Z",
+          "updated_at": "2026-10-13T14:50:41.997122Z",
+          "deleted_at": null,
+          "verb": "updated",
+          "field": "state",
+          "old_value": "Backlog",
+          "new_value": "Done",
+          "comment": "updated the state to",
+          "attachments": [],
+          "old_identifier": "29b0a8d6-ee6f-46e3-ab98-f3d307a4c5ed",
+          "new_identifier": "164e607d-c48d-45e8-a646-b99ceef52e22",
+          "epoch": 1791903041,
+          "project": "972d93a8-6889-46b8-9b47-93f9e7546afb",
+          "workspace": "f5defc8d-5eaf-4374-9e19-5782fb43f112",
+          "issue": "9bb4c535-5e01-4a31-92ad-cd39ca916ba1",
+          "issue_comment": null,
+          "actor": "3f699eba-673c-4dab-8497-79e9f3bea6d6"
+        },
+        {
+          "id": "5401df57-a421-4b45-8550-55842d06b913",
+          "created_at": "2026-10-13T14:49:33.540061Z",
+          "updated_at": "2026-10-13T14:49:33.540084Z",
+          "deleted_at": null,
+          "verb": "updated",
+          "field": "description",
+          "old_value": "<trimmed>",
+          "new_value": "<trimmed>",
+          "comment": "updated the description to",
+          "attachments": [],
+          "old_identifier": null,
+          "new_identifier": null,
+          "epoch": 1791902973,
+          "project": "972d93a8-6889-46b8-9b47-93f9e7546afb",
+          "workspace": "f5defc8d-5eaf-4374-9e19-5782fb43f112",
+          "issue": "9bb4c535-5e01-4a31-92ad-cd39ca916ba1",
+          "issue_comment": null,
+          "actor": "3f699eba-673c-4dab-8497-79e9f3bea6d6"
+        },
+        {
+          "id": "404e0c09-cd5a-462d-a61f-4114518f7e63",
+          "created_at": "2026-10-13T14:49:33.332780Z",
+          "updated_at": "2026-10-13T14:49:33.332806Z",
+          "deleted_at": null,
+          "verb": "updated",
+          "field": "name",
+          "old_value": "E2E 4.1 mirror from GitHub",
+          "new_value": "E2E 4.3 title edited on GitHub",
+          "comment": "updated the name to",
+          "attachments": [],
+          "old_identifier": null,
+          "new_identifier": null,
+          "epoch": 1791902973,
+          "project": "972d93a8-6889-46b8-9b47-93f9e7546afb",
+          "workspace": "f5defc8d-5eaf-4374-9e19-5782fb43f112",
+          "issue": "9bb4c535-5e01-4a31-92ad-cd39ca916ba1",
+          "issue_comment": null,
+          "actor": "3f699eba-673c-4dab-8497-79e9f3bea6d6"
+        },
+        {
+          "id": "f17c4637-adc5-4bd2-97ef-64c9b83375f5",
+          "created_at": "2026-10-13T14:48:32.184633Z",
+          "updated_at": "2026-10-13T14:48:32.184664Z",
+          "deleted_at": null,
+          "verb": "created",
+          "field": "link",
+          "old_value": null,
+          "new_value": "https://github.com/nathanabay/gitsync-test/issues/1",
+          "comment": "created a link",
+          "attachments": [],
+          "old_identifier": null,
+          "new_identifier": null,
+          "epoch": 1791902912,
+          "project": "972d93a8-6889-46b8-9b47-93f9e7546afb",
+          "workspace": "f5defc8d-5eaf-4374-9e19-5782fb43f112",
+          "issue": "9bb4c535-5e01-4a31-92ad-cd39ca916ba1",
+          "issue_comment": null,
+          "actor": "3f699eba-673c-4dab-8497-79e9f3bea6d6"
+        },
+        {
+          "id": "993d3afe-383b-47c3-8cba-2977ca186dc9",
+          "created_at": "2026-10-13T14:48:31.264957Z",
+          "updated_at": "2026-10-13T14:48:31.401498Z",
+          "deleted_at": null,
+          "verb": "created",
+          "field": null,
+          "old_value": null,
+          "new_value": null,
+          "comment": "created the issue",
+          "attachments": [],
+          "old_identifier": null,
+          "new_identifier": null,
+          "epoch": 1791902911,
+          "project": "972d93a8-6889-46b8-9b47-93f9e7546afb",
+          "workspace": "f5defc8d-5eaf-4374-9e19-5782fb43f112",
+          "issue": "9bb4c535-5e01-4a31-92ad-cd39ca916ba1",
+          "issue_comment": null,
+          "actor": "3f699eba-673c-4dab-8497-79e9f3bea6d6"
+        }
+      ]
+    }
+  },
+  "external": {
+    "status": 200,
+    "body": {
+      "id": "9bb4c535-5e01-4a31-92ad-cd39ca916ba1",
+      "type_id": null,
+      "created_at": "2026-10-13T14:48:31.264957Z",
+      "updated_at": "2026-10-13T14:50:41.979065Z",
+      "deleted_at": null,
+      "point": null,
+      "name": "E2E 4.3 title edited on GitHub",
+      "description_html": "<trimmed>",
+      "description_binary": null,
+      "priority": "none",
+      "start_date": null,
+      "target_date": null,
+      "sequence_id": 8,
+      "sort_order": 33000,
+      "completed_at": "2026-10-13T14:50:41.861341Z",
+      "archived_at": "2026-10-13",
+      "is_draft": false,
+      "external_source": "gitsync",
+      "external_id": "plan-66c27b409e17c327a07ae2924557e9a8dc958c930c98b49acf42a83031edad1b-1",
+      "created_by": "3f699eba-673c-4dab-8497-79e9f3bea6d6",
+      "updated_by": "3f699eba-673c-4dab-8497-79e9f3bea6d6",
+      "project": "972d93a8-6889-46b8-9b47-93f9e7546afb",
+      "workspace": "f5defc8d-5eaf-4374-9e19-5782fb43f112",
+      "parent": null,
+      "state": "164e607d-c48d-45e8-a646-b99ceef52e22",
+      "estimate_point": null,
+      "type": null,
+      "assignees": [],
+      "labels": []
+    }
+  },
+  "externalMissing": {
+    "status": 404,
+    "body": {
+      "error": "The requested resource does not exist."
+    }
+  }
+}

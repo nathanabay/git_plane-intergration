@@ -1,0 +1,41 @@
+{
+  "runId": "2610131532-6db7",
+  "startedAt": "2026-10-13T15:32:16.144Z",
+  "finishedAt": "2026-10-13T15:32:32.624Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S36"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S36",
+      "title": "Project NEW directive creates exactly one linked item",
+      "status": "PASS",
+      "seconds": 16.5,
+      "evidence": [
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e-2610131532-6db7-s36\",\"sha\":\"533c0f98eb0696c14144501d7a015072c45a134d\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/18"
+        },
+        {
+          "label": "NEW item",
+          "value": "{\"id\":\"17a32d8b-08f0-447c-b330-76c59dc518f9\",\"key\":\"GITSY-26\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

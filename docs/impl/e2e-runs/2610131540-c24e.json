@@ -1,0 +1,41 @@
+{
+  "runId": "2610131540-c24e",
+  "startedAt": "2026-10-13T15:40:23.669Z",
+  "finishedAt": "2026-10-13T15:41:19.605Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S25"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S25",
+      "title": "Two rapid GitHub title edits → the final value wins",
+      "status": "PASS",
+      "seconds": 55.9,
+      "evidence": [
+        {
+          "label": "GitHub #32 → GITSY-42",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/32"
+        },
+        {
+          "label": "edits sent within",
+          "value": "1585 ms"
+        },
+        {
+          "label": "final",
+          "value": "[e2e 2610131540-c24e] S25 v2"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

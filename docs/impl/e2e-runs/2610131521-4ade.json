@@ -1,0 +1,49 @@
+{
+  "runId": "2610131521-4ade",
+  "startedAt": "2026-10-13T15:21:30.984Z",
+  "finishedAt": "2026-10-13T15:21:33.011Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S08"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S08",
+      "title": "Oversized webhook body → 413 (proxy limit and the service's own 25 MiB limit)",
+      "status": "PASS",
+      "seconds": 2,
+      "evidence": [
+        {
+          "label": "6 MiB via proxy",
+          "value": "413"
+        },
+        {
+          "label": "direct githubDeclared",
+          "value": "socket ECONNRESET "
+        },
+        {
+          "label": "direct githubChunked",
+          "value": "413 {\"error\":\"Payload Too Large\"}"
+        },
+        {
+          "label": "direct planeDeclared",
+          "value": "413 {\"error\":\"Payload Too Large\"}"
+        },
+        {
+          "label": "512 KiB forged",
+          "value": "401"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

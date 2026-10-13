@@ -1,0 +1,45 @@
+{
+  "runId": "2610131533-eeb8",
+  "startedAt": "2026-10-13T15:33:57.480Z",
+  "finishedAt": "2026-10-13T15:34:08.799Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S38"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S38",
+      "title": "Smart Commit comment is attributed and linked to commit",
+      "status": "PASS",
+      "seconds": 11.3,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-29",
+          "value": "2021cecb-84ce-4227-9c72-2c55c928643e"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e-2610131533-eeb8-s38\",\"sha\":\"7dbf682c721c1e57abf5fe9b73a63a0918b5058c\"}"
+        },
+        {
+          "label": "Smart Commit source",
+          "value": "{\"key\":\"GITSY-29\",\"sha\":\"7dbf682c721c1e57abf5fe9b73a63a0918b5058c\",\"command\":\"#comment [e2e 2610131533-eeb8] S38 comment payload\"}"
+        },
+        {
+          "label": "Smart Commit comment",
+          "value": "{\"id\":\"a9c357e6-0abc-4c3d-a3d0-2568a90a414b\",\"html\":\"<p>[e2e 2610131533-eeb8] S38 comment payload</p><p><small>via <a href=\\\"https://github.com/nathanabay/gitsync-test/commit/7dbf682c721c1e57abf5fe9b73a63a0918b5058c\\\">7dbf682</a> by nathanabay</small></p>\",\"audit\":394}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

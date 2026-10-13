@@ -1,0 +1,37 @@
+{
+  "runId": "2610131550-4733",
+  "startedAt": "2026-10-13T15:50:50.593Z",
+  "finishedAt": "2026-10-13T15:51:24.323Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S22"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S22",
+      "title": "Plane comment → GitHub, posted as the linked user",
+      "status": "PASS",
+      "seconds": 33.7,
+      "evidence": [
+        {
+          "label": "GitHub #63 → GITSY-72",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/63"
+        },
+        {
+          "label": "GitHub comment",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/63#issuecomment-6149514496 by nathanabay (User)"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

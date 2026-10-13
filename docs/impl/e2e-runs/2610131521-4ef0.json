@@ -1,0 +1,46 @@
+{
+  "runId": "2610131521-4ef0",
+  "startedAt": "2026-10-13T15:21:44.444Z",
+  "finishedAt": "2026-10-13T15:22:18.827Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S12"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S12",
+      "title": "A non-admin cannot reach admin routes; an admin cannot reach another workspace",
+      "status": "PASS",
+      "seconds": 34.4,
+      "evidence": [
+        {
+          "label": "member",
+          "value": "403,403,403,403,403,403,401,401,200"
+        },
+        {
+          "label": "member own-account route (allowed)",
+          "value": "200"
+        },
+        {
+          "label": "admin on other workspace / instance / encoded slugs",
+          "value": "403,403,403,403,401,404,404"
+        }
+      ],
+      "log": [
+        "other workspace e2e-2610131521-4ef0 (e992d588-a873-4edc-ae48-3b4e0b449280)"
+      ],
+      "cleanupErrors": [
+        "docker exec -i plane-test-api-1 exited 1: e()\n  File \"/usr/local/lib/python3.12/site-packages/django/core/management/__init__.py\", line 436, in execute\n    self.fetch_command(subcommand).run_from_argv(self.argv)\n  File \"/usr/local/lib/python3.12/site-packages/django/core/management/base.py\", line 420, in run_from_argv\n    self.execute(*args, **cmd_options)\n  File \"/usr/local/lib/python3.12/site-packages/django/core/management/base.py\", line 464, in execute\n    output = self.handle(*args, **options)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/site-packages/django/core/management/commands/shell.py\", line 257, in handle\n    exec(sys.stdin.read(), {**globals(), **self.get_namespace(**options)})\n  File \"<string>\", line 4, in <module>\nTypeError: QuerySet.delete() got an unexpected keyword argument 'soft'"
+      ],
+      "cleaned": true
+    }
+  ]
+}

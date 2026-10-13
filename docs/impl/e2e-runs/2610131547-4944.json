@@ -1,0 +1,57 @@
+{
+  "runId": "2610131547-4944",
+  "startedAt": "2026-10-13T15:47:11.604Z",
+  "finishedAt": "2026-10-13T15:47:25.736Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S40"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S40",
+      "title": "Smart Commit executes once on real push redelivery",
+      "status": "PASS",
+      "seconds": 14.1,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-56",
+          "value": "6e94b3a9-b0e6-4c19-9396-3d89056c2064"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e-2610131547-4944-s40\",\"sha\":\"813a7065a283ec20a30aff8fa0bc5e1ccbb53d05\"}"
+        },
+        {
+          "label": "Smart Commit source",
+          "value": "{\"key\":\"GITSY-56\",\"sha\":\"813a7065a283ec20a30aff8fa0bc5e1ccbb53d05\",\"command\":\"#comment [e2e 2610131547-4944] S40 once only\"}"
+        },
+        {
+          "label": "selected App delivery",
+          "value": "{\"id\":\"3848089771645673472\",\"guid\":\"5d7f29f4-c71d-11f1-9a8e-fb80d78c1cea\",\"event\":\"push\"}"
+        },
+        {
+          "label": "App redelivery and backend duplicate",
+          "value": "{\"status\":202,\"duplicate\":{\"jobId\":\"github-5d7f29f4-c71d-11f1-9a8e-fb80d78c1cea\",\"streamId\":\"1791906443893-0\"}}"
+        },
+        {
+          "label": "real redelivery",
+          "value": "{\"id\":\"3848089771645673472\",\"guid\":\"5d7f29f4-c71d-11f1-9a8e-fb80d78c1cea\",\"event\":\"push\",\"jobId\":\"github-5d7f29f4-c71d-11f1-9a8e-fb80d78c1cea\",\"streamId\":\"1791906443893-0\"}"
+        },
+        {
+          "label": "once-only comment",
+          "value": "{\"id\":\"78c5538e-2521-4676-94d6-62e110725ae1\",\"step\":\"sc:813a7065a283ec20a30aff8fa0bc5e1ccbb53d05:0:GITSY-56:comment\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

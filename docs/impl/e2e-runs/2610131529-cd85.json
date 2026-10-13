@@ -1,0 +1,37 @@
+{
+  "runId": "2610131529-cd85",
+  "startedAt": "2026-10-13T15:29:43.157Z",
+  "finishedAt": "2026-10-13T15:30:02.248Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S17"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S17",
+      "title": "GitHub description edit → Plane",
+      "status": "PASS",
+      "seconds": 19.1,
+      "evidence": [
+        {
+          "label": "GitHub #11 → GITSY-20",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/11"
+        },
+        {
+          "label": "description_html",
+          "value": "<p>edited body <strong>e2e-2610131529-cd85-S17-9kzmp</strong></p>"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

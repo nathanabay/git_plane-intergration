@@ -1,0 +1,53 @@
+{
+  "runId": "2610131548-69d2",
+  "startedAt": "2026-10-13T15:48:24.677Z",
+  "finishedAt": "2026-10-13T15:48:46.827Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S46"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S46",
+      "title": "Real issue-comment redelivery has no second mirror effect",
+      "status": "PASS",
+      "seconds": 22.1,
+      "evidence": [
+        {
+          "label": "GitHub issue #52",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/52"
+        },
+        {
+          "label": "mirror fixture",
+          "value": "{\"issue\":52,\"item\":\"d2c939bc-98fe-48bd-ac01-e220dabd5e69\"}"
+        },
+        {
+          "label": "selected App delivery",
+          "value": "{\"id\":\"3848089942364315648\",\"guid\":\"8cb70660-c71d-11f1-929f-68951d9fa890\",\"event\":\"issue_comment\"}"
+        },
+        {
+          "label": "App redelivery and backend duplicate",
+          "value": "{\"status\":202,\"duplicate\":{\"jobId\":\"github-8cb70660-c71d-11f1-929f-68951d9fa890\",\"streamId\":\"1791906523543-0\"}}"
+        },
+        {
+          "label": "real redelivery",
+          "value": "{\"id\":\"3848089942364315648\",\"guid\":\"8cb70660-c71d-11f1-929f-68951d9fa890\",\"event\":\"issue_comment\",\"jobId\":\"github-8cb70660-c71d-11f1-929f-68951d9fa890\",\"streamId\":\"1791906523543-0\"}"
+        },
+        {
+          "label": "mirrored comment deduplication",
+          "value": "{\"githubComment\":6149468859,\"planeComment\":\"92c41a27-c2b9-4f89-935c-ee8cfc1007e8\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

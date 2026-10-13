@@ -1,0 +1,41 @@
+{
+  "runId": "2610131539-bbee",
+  "startedAt": "2026-10-13T15:39:18.985Z",
+  "finishedAt": "2026-10-13T15:40:14.524Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S27"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S27",
+      "title": "Echo safety: outbound writes and comments settle (no loop)",
+      "status": "PASS",
+      "seconds": 55.5,
+      "evidence": [
+        {
+          "label": "GitHub #31 → GITSY-41",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/31"
+        },
+        {
+          "label": "settled",
+          "value": "{\"githubWrites\":2,\"planeWrites\":2,\"githubComments\":2,\"planeComments\":2,\"title\":\"[e2e 2610131539-bbee] S27 echo edited\"}"
+        },
+        {
+          "label": "echo deliveries dropped",
+          "value": "5"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

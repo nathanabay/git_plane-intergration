@@ -389,7 +389,7 @@ async function mirrorGithubIssue(payload: any, deps: MirrorDeps): Promise<Mirror
         if (r.action === "updated") results.push("title");
       }
       if (changes.body !== undefined) {
-        const r = await update("description", { description_html: await textToHtml(String(current.body ?? ""), proseContext(deps)) });
+        const r = await update("description", { description_html: await planeDescriptionHtml(current.body, deps) });
         if (r.action === "updated") results.push("description");
       }
       return results.length ? { action: "updated", fields: results } : ignored("nothing to mirror in this edit");
@@ -475,12 +475,25 @@ async function applyCreateState(deps: MirrorDeps, issue: any, settings: MirrorSe
   if (r.ok) fields.state = r.stateId;
 }
 
+/**
+ * E2E-3: Plane v1.4.2 parses `description_html` with lxml (`plane/api/serializers/issue.py`), which refuses an empty or
+ * whitespace-only document, so `""` is answered 400 "Invalid HTML passed". An empty GitHub body is sent as Plane's own
+ * empty document instead, the `Issue.description_html` model default.
+ */
+export const PLANE_EMPTY_DESCRIPTION = "<p></p>";
+
+/** A GitHub issue body (null, empty or markdown) as `description_html` Plane accepts. */
+async function planeDescriptionHtml(body: unknown, deps: MirrorDeps): Promise<string> {
+  const html = await textToHtml(String(body ?? ""), proseContext(deps));
+  return html.trim() ? html : PLANE_EMPTY_DESCRIPTION;
+}
+
 async function createPlaneItem(payload: any, deps: MirrorDeps): Promise<MirrorResult> {
   const { mapping, db } = deps;
   const issue = payload.issue;
   const slug = mapping.workspaceSlug;
   const projectId = mapping.planeProjectId;
-  const fields: Record<string, unknown> = { name: String(issue.title ?? ""), description_html: await textToHtml(String(issue.body ?? ""), proseContext(deps)) };
+  const fields: Record<string, unknown> = { name: String(issue.title ?? ""), description_html: await planeDescriptionHtml(issue.body, deps) };
 
   if (deps.plane.plan) return planPlaneCreate(payload, deps, fields);
 

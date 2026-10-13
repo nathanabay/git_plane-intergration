@@ -1,0 +1,45 @@
+{
+  "runId": "2610131602-a074",
+  "startedAt": "2026-10-13T16:02:54.404Z",
+  "finishedAt": "2026-10-13T16:03:22.255Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S44"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S44",
+      "title": "Changed PR problem report is edited in place",
+      "status": "PASS",
+      "seconds": 27.8,
+      "evidence": [
+        {
+          "label": "mapping reportProblems",
+          "value": "true"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131602-a074-s44\",\"sha\":\"6d540c29bbb9d56e9576860275a586e3276d2172\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/76"
+        },
+        {
+          "label": "report edited",
+          "value": "{\"id\":6149749231,\"before\":\"GITSY-900172148\",\"after\":\"GITSY-900172149\",\"body\":\"Git sync could not complete this action:\\n\\n- ` GITSY-900172149 does not match a work item in the linked Plane workspace, so this pull request is not linked to it. `\\n\\n<!-- git-sync-problem:d7a079c4d8516b9d848808ed2a5897fbe27eeb4e2978c4b60283d05ed0041991 -->\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

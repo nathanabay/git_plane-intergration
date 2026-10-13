@@ -39,6 +39,20 @@ test("validate: mapping bodies — required on create, partial on patch", () => 
   throws(() => parseMappingInput(null, false), ValidationError);
 });
 
+test("E2E-1: reportProblems accepts only booleans and keeps omitted fields absent", () => {
+  const create = { ghRepoId: 1, ghRepoFullName: "a/b", planeProjectId: "p" };
+  for (const reportProblems of [true, false]) {
+    deepStrictEqual(parseMappingInput({ ...create, reportProblems }, false), { ...create, reportProblems });
+    deepStrictEqual(parseMappingInput({ reportProblems }, true), { reportProblems });
+  }
+  for (const reportProblems of [null, "true", "false", 0, 1, [], {}]) {
+    throws(() => parseMappingInput({ ...create, reportProblems }, false), ValidationError);
+    throws(() => parseMappingInput({ reportProblems }, true), ValidationError);
+  }
+  deepStrictEqual(parseMappingInput(create, false), create);
+  deepStrictEqual(parseMappingInput({ linkbackComments: false }, true), { linkbackComments: false });
+});
+
 test("validate: conflict policies, user links and GitHub App input", () => {
   deepStrictEqual(parseConflictPolicies({ state: "source_of_truth:plane" }), { state: "source_of_truth:plane" });
   throws(() => parseConflictPolicies({ state: "x" }), ValidationError);

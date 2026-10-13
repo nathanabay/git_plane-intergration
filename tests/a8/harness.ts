@@ -38,7 +38,8 @@ export interface PlaneIssueFake { id: string; project: string; state?: string | 
 export interface Harness {
   db: PGlite;
   ctx: AppContext;
-  plane: { calls: PlaneCall[]; createdIssueIds: string[]; issues: Map<string, PlaneIssueFake>; writes(): PlaneCall[] };
+  /** `deleteIssue` removes a created work item the way Plane's soft delete does: its external-id lookup is 404 too (E2E-2). */
+  plane: { calls: PlaneCall[]; createdIssueIds: string[]; issues: Map<string, PlaneIssueFake>; writes(): PlaneCall[]; deleteIssue(id: string): void };
   gh: { calls: GhCall[]; writes(): GhCall[]; respond(match: RegExp, reply: (params: any) => unknown): void };
   feed(job: InboundJob): Promise<InboundOutcome>;
   mapping(opts?: { slug?: string; repoId?: number; projectId?: string; direction?: "bidirectional" | "github_to_plane"; linkback?: boolean; smartCommits?: boolean; rules?: string; policies?: Record<string, string>; installationId?: number | null }): Promise<number>;
@@ -146,7 +147,11 @@ export async function makeHarness(over: { requireVerified?: boolean; serviceUser
 
   return {
     db, ctx,
-    plane: { calls: planeCalls, createdIssueIds, issues, writes: () => planeCalls.filter((c) => c.method !== "GET") },
+    plane: { calls: planeCalls, createdIssueIds, issues, writes: () => planeCalls.filter((c) => c.method !== "GET"),
+      deleteIssue: (id) => {
+        for (const [key, item] of createdByIntent) if (item.id === id) createdByIntent.delete(key);
+        for (const [key, item] of issues) if (item.id === id) issues.delete(key);
+      } },
     gh: { calls: ghCalls, writes: () => ghCalls.filter((c) => !c.route.startsWith("GET ")), respond: (re, fn) => { responders.unshift([re, fn]); } },
     feed: (job) => processInbound(job, deps),
     async mapping(o = {}) {

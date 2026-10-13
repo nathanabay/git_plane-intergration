@@ -5,13 +5,18 @@ import {
 } from "../db/ledgers.ts";
 import type { SyncLinkRow } from "../db/schema.ts";
 import type { InboundJob } from "../queue/index.ts";
-import { PlaneApiError } from "./plane.ts";
+import { PlaneApiError, planeCreatedItem } from "./plane.ts";
 import type { PlaneActivity, PlaneClient, PlaneProject } from "./plane.ts";
 
-/** The reads the sweep makes. All are GETs: the sweep never writes to Plane or GitHub (pitfall 4). */
-export type ReconcilePlane = Pick<PlaneClient, "getIssue" | "getProject" | "listIssueIds" | "listIssueActivities">;
+/**
+ * The reads the sweep makes. All are GETs: the sweep never writes to Plane or GitHub (pitfall 4).
+ * `findIssueByExternalId` is optional only for older test fakes; the production client always has it.
+ */
+export type ReconcilePlane = Pick<PlaneClient, "getIssue" | "getProject" | "listIssueIds" | "listIssueActivities">
+  & Partial<Pick<PlaneClient, "findIssueByExternalId">>;
 
-type Verdict = "visible" | "archived" | "deleted" | "unknown";
+/** `present`: the item exists and is neither archived nor deleted, only hidden from the detail view (triage, draft). */
+type Verdict = "visible" | "archived" | "deleted" | "present" | "unknown";
 
 const notFound = (err: unknown) => err instanceof PlaneApiError && err.status === 404;
 
@@ -25,7 +30,9 @@ const notFound = (err: unknown) => err instanceof PlaneApiError && err.status ==
  * A2: Plane answers 404 for an archived item and for every item of an archived project, as well as for a
  * deleted item. A 404 is therefore classified before anything happens: an archived project, or an
  * `archived_at` activity, marks the link archived (it stays active and is never reported); a `deleted`
- * activity orphans it; anything else orphans it only when an earlier sweep saw the same 404.
+ * activity orphans it. When the activity log says neither (E2E-2: an archive that bypassed Plane's activity task
+ * leaves no row), an item git-sync created is looked up by its external id, which still finds an archived item
+ * and no longer finds a deleted one. Anything else orphans it only when an earlier sweep saw the same 404.
  *
  * An orphaned link stops further checks. An unreachable issue is never closed or moved; `onOrphan` lets
  * the caller tell people.
@@ -71,7 +78,8 @@ export async function reconcileOnce(deps: { db: Db; plane: ReconcilePlane; batch
           } catch (err) {
             if (!notFound(err)) throw err;
             // Already known archived and still hidden: one read per sweep, not three.
-            const verdict = link.plane_archived_at ? "archived" : await classifyMissing(deps.plane, link, projectOnce);
+            const verdict = link.plane_archived_at ? "archived" : await classifyMissing(deps.db, deps.plane, link, projectOnce);
+            if (verdict === "present") { await markLinkChecked(deps.db, link.id); continue; }
             if (verdict === "archived") {
               await markLinkArchived(deps.db, link.id);
               if (!link.plane_archived_at) {
@@ -97,7 +105,7 @@ export async function reconcileOnce(deps: { db: Db; plane: ReconcilePlane; batch
   return out;
 }
 
-async function classifyMissing(plane: ReconcilePlane, link: SyncLinkRow, project: () => Promise<PlaneProject | null>): Promise<Verdict> {
+async function classifyMissing(db: Db, plane: ReconcilePlane, link: SyncLinkRow, project: () => Promise<PlaneProject | null>): Promise<Verdict> {
   const p = await project();
   if (p && p.archived_at) return "archived";
   if (!p) return "unknown"; // the project is gone or no longer visible to the service user
@@ -105,10 +113,26 @@ async function classifyMissing(plane: ReconcilePlane, link: SyncLinkRow, project
   try {
     activities = await plane.listIssueActivities(link.plane_workspace_slug, link.plane_project_id, link.plane_issue_id);
   } catch (err) {
-    if (notFound(err)) return "unknown";
+    if (notFound(err)) return byExternalId(db, plane, link);
     throw err;
   }
-  return verdictFromActivities(activities);
+  const verdict = verdictFromActivities(activities);
+  return verdict === "unknown" ? byExternalId(db, plane, link) : verdict;
+}
+
+/**
+ * E2E-2: Plane v1.4.2 has no v1 archived-items read, but its list lookup by external id reads `Issue.objects`:
+ * an archived item comes back with `archived_at`, a deleted one is 404. Only items git-sync created carry an
+ * external id; for any other item this has no evidence and the two-sweep rule decides.
+ */
+async function byExternalId(db: Db, plane: ReconcilePlane, link: SyncLinkRow): Promise<Verdict> {
+  if (!plane.findIssueByExternalId) return "unknown";
+  const created = await planeCreatedItem(db, link.plane_issue_id, link.plane_project_id);
+  if (!created) return "unknown";
+  const item = await plane.findIssueByExternalId(link.plane_workspace_slug, link.plane_project_id, created.externalSource, created.externalId);
+  if (!item) return "deleted";
+  if (item.id !== link.plane_issue_id) return "unknown"; // the id names another item: no evidence about this one
+  return item.archived_at ? "archived" : "present";
 }
 
 /** Newest first: the latest of a `deleted` row or an `archived_at` row says what happened to the item. */

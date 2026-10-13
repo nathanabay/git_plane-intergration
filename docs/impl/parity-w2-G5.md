@@ -258,3 +258,39 @@ Final results (all exit 0, no failed/cancelled/skipped tests):
 The original workspace and instance failures were reproduced under the same caps. The first workspace fix run reached 23/24; its remaining audit row-set assertion was corrected as classified above, then the complete file passed 24/24. All other authorized files passed on their updated run. The extra auth test is the S2 identity-change control; none of the original tests was removed or skipped. Tests outside these six files, typechecking and standalone builds were not run in this pass. Existing SSR tests invoke their own component bundling only inside the sandbox.
 
 `git diff --check` for the six edited test files and this report is clean. No production source changes in this pass, no shared-harness edits, no staging, commits or push. Earlier wave reports' “tests unrun” statements remain historical; only the six files above are now validated by this test phase.
+
+
+## E2E-1 — N2 mapping report toggle
+
+Acceptance gates before implementation: accept strict boolean `reportProblems` on POST/PATCH; persist through the existing parity writer in the mapping transaction; return the boolean on mapping reads/updates; provide the requested form checkbox, off for new mappings and initialized from existing mappings; preserve omissions and unrelated parity fields; add parser/API/rendered-form regressions; typecheck first, then run only affected UI files with the driver's caps and Guidance sandbox. This is a real missing UI/API implementation, as recorded in `docs/impl/e2e-results.md`.
+
+
+Implemented the missing path in `src/ui/validate.ts`, `src/ui/api.ts`, `src/ui/client/types.ts`, `src/ui/client/mapping-form.ts` and the mapping form in `Workspace.tsx`. The driver's new request explicitly authorizes this narrow dialog edit; existing state pickers were not changed.
+
+- `reportProblems` accepts only a boolean on mapping POST/PATCH. Omission is preserved in parsed input. The mapping DTO always exposes the boolean.
+- Both shared create/update handlers call G4's existing `updateMappingParity` with the supplied flag on the same transaction connection as the mapping write. New mappings without a flag retain migration 010's default false. Updates omitting the flag preserve it, including combined state-setting writes. No schema, parity writer or report engine changes were needed.
+- MappingForm has “Report problems as comments on GitHub and Plane”, controlled by boolean state. New forms start off; existing forms reflect the stored value. Its value is sent through `mappingFormBody` for both create and save, and resets off after a successful Add mapping. Untouched Smart Commit settings and autolinks keep their existing omission/preservation behavior.
+
+Added regressions to `tests/ui/client.test.ts` (strict booleans and omission), `tests/ui/workspace.test.ts` (default false, POST true, PATCH false/true, GET/response/database round-trip, unchanged open/closed states and branch template, unrelated update preserving the flag, malformed values, member/cross-site/foreign-workspace refusal), and `tests/ui/parity-g5.test.ts` (both form payload values and actual rendered checkbox off/on/off with an enabled input). Updated the exact mapping DTO expectation to include the default flag. G12's existing rendered-form/autolink regression is also an affected file and is rerun.
+
+Context7 evidence: `/reactjs/react.dev`, resolved through the find-docs skill before querying docs, [controlled input reference](https://react.dev/reference/react-dom/components/input). A checkbox uses boolean `checked` and an `onChange` that updates state from `event.target.checked`, rather than a text `value`. No new GitHub or Plane HTTP behavior is introduced here; the background N2 report implementation and its API documentation remain as previously verified.
+
+Guidance Mode self-review against the requested Cloudflare companions:
+
+- **WEB-PROTOCOL-AND-AUTH — Ordinary CSRF; Account linking and identity collision:** report configuration keeps the existing authenticated workspace-admin/instance-admin wrappers, S2 binding and Origin/JSON checks. Repository/project/installation authority verification still runs for settings-only saves. The new API regression verifies member and foreign-origin refusal. [Checklist](/home/claudeuser/.claude/skills/security-audit/WEB-PROTOCOL-AND-AUTH.md).
+- **DATA-ISOLATION-AND-LIFECYCLE — Missing tenant or owner enforcement; Migration default and ownership confusion:** row selection stays workspace-scoped, and the parity writer receives only a validated boolean after the current row is locked in the existing transaction. The ID-only parity helper cannot act on a foreign row through this route. Default-off, omission preservation, foreign-workspace denial and preservation of other parity settings are covered. [Checklist](/home/claudeuser/.claude/skills/security-audit/DATA-ISOLATION-AND-LIFECYCLE.md).
+- **CLIENT-SIDE — DOM-based XSS; Client-side navigation confusion:** the added input is a native controlled checkbox with a fixed JSX text label, no HTML escape hatch, dynamic navigation or credential storage. Enabling the setting stores opt-in configuration; this API does not itself post a comment. [Checklist](/home/claudeuser/.claude/skills/security-audit/CLIENT-SIDE.md).
+
+**Typecheck first:** passed (`83 project files`) with the scoped UI/main/four affected-test files. It ran inside the same network-disabled, empty-environment, read-only Guidance sandbox described above, with an additional ephemeral 32 MiB compiler cache over `node_modules/.cache` and an inner 60-second compiler timeout. No tests ran before that typecheck. Affected tests then run individually with `timeout 300 env NODE_OPTIONS=--max-old-space-size=1024 node --test --test-concurrency=1 --test-timeout=60000 <file>` under the previously recorded per-file sandbox limits.
+
+Final E2E-1 validation: typecheck passed first (83 project files), then all four affected UI files passed, each with exit 0 and no failed, skipped or cancelled tests:
+
+| File | Passed |
+|---|---:|
+| `tests/ui/client.test.ts` | 10 |
+| `tests/ui/workspace.test.ts` | 25 |
+| `tests/ui/parity-g5.test.ts` | 10 |
+| `tests/ui/audit-g5.test.ts` | 14 |
+| **Total** | **59** |
+
+The existing client build smoke test and SSR component bundles ran only as part of those authorized tests inside the sandbox. No other tests or standalone build ran. `git diff --check` for all files edited in this pass is clean. No staging, commit or push. The deployed end-to-end scenario itself belongs to the driver; no deployment or external API action was performed in this pass.

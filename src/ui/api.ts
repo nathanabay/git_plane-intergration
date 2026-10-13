@@ -277,6 +277,7 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
     smartCommitsEnabled: r.smart_commits_enabled as boolean,
     linkbackComments: r.linkback_enabled as boolean,
     autolinks: r.autolinks_enabled as boolean,
+    reportProblems: Boolean(r.report_problems),
     openStateId: (r.open_state_id ?? null) as string | null,
     closedStateId: (r.closed_state_id ?? null) as string | null,
   });
@@ -455,8 +456,8 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
         [slug, input.ghRepoId, input.ghRepoFullName, input.planeProjectId, input.syncDirection ?? "bidirectional",
           input.smartCommitsEnabled ?? smartDefault, input.linkbackComments ?? true, input.autolinks ?? false, installationId]);
       const mappingId = Number(rows[0].id);
-      if (input.openStateId !== undefined || input.closedStateId !== undefined) {
-        await updateMappingParity(conn, mappingId, { openStateId: input.openStateId, closedStateId: input.closedStateId });
+      if (input.openStateId !== undefined || input.closedStateId !== undefined || input.reportProblems !== undefined) {
+        await updateMappingParity(conn, mappingId, { openStateId: input.openStateId, closedStateId: input.closedStateId, reportProblems: input.reportProblems });
       }
       return mappingId;
     });
@@ -512,8 +513,8 @@ export function createConfigRoutes(deps: ConfigApiDeps): Route[] {
       const { rows } = await conn.query(
         `UPDATE repo_mappings SET ${sets.join(", ")} WHERE id = $${values.length - 1} AND workspace_slug = $${values.length} RETURNING *`, values);
       if (!rows[0]) throw new HttpError(404, "Mapping not found");
-      if (statePatch.openStateId !== undefined || statePatch.closedStateId !== undefined) {
-        await updateMappingParity(conn, Number(params.id), statePatch);
+      if (statePatch.openStateId !== undefined || statePatch.closedStateId !== undefined || input.reportProblems !== undefined) {
+        await updateMappingParity(conn, Number(params.id), { ...statePatch, reportProblems: input.reportProblems });
         return (await conn.query("SELECT * FROM repo_mappings WHERE id = $1 AND workspace_slug = $2", [Number(params.id), slug])).rows[0]!;
       }
       return rows[0];

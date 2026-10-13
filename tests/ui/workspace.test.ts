@@ -58,7 +58,45 @@ test("mappings: list returns camelCase DTOs with numeric ids", async () => {
   const list = await (await h.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).json() as any[];
   const m = list.find((x) => x.id === id);
   deepStrictEqual(m, { id, workspaceSlug: "acme", ghRepoId: 555, ghRepoFullName: "acme/web", planeProjectId: "p1",
-    syncDirection: "bidirectional", smartCommitsEnabled: true, linkbackComments: true, autolinks: false, openStateId: null, closedStateId: null });
+    syncDirection: "bidirectional", smartCommitsEnabled: true, linkbackComments: true, autolinks: false, reportProblems: false, openStateId: null, closedStateId: null });
+});
+
+test("E2E-1: reporting defaults off, persists create and toggle, preserves omissions and remains workspace/admin/CSRF protected", async () => {
+  const v = await mappingHarness();
+  try {
+    const create = async (body: unknown) => {
+      const response = await v.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body });
+      strictEqual(response.status, 201, await response.clone().text());
+      return (await response.json() as { id: number }).id;
+    };
+    const off = await create(MAPPING);
+    const enabled = await create({ ...MAPPING, planeProjectId: "p2", reportProblems: true, openStateId: null, closedStateId: null });
+    const list = await (await v.call("GET", "/workspaces/acme/mappings", { cookie: ADM })).json() as any[];
+    strictEqual(list.find((row) => row.id === off).reportProblems, false);
+    strictEqual(list.find((row) => row.id === enabled).reportProblems, true);
+    const path = `/workspaces/acme/mappings/${enabled}`;
+    const stored = async () => (await v.db.query<any>("SELECT report_problems, open_state_id, closed_state_id, branch_template FROM repo_mappings WHERE id = $1", [enabled])).rows[0];
+    strictEqual((await stored()).report_problems, true);
+    const disabled = await v.call("PATCH", path, { cookie: ADM, body: { reportProblems: false } });
+    strictEqual(disabled.status, 200); strictEqual((await disabled.json() as any).reportProblems, false); strictEqual((await stored()).report_problems, false);
+    await v.db.query("UPDATE repo_mappings SET open_state_id = 'open', closed_state_id = 'closed', branch_template = 'feature/{key}' WHERE id = $1", [enabled]);
+    const restored = await v.call("PATCH", path, { cookie: ADM, body: { reportProblems: true } });
+    strictEqual(restored.status, 200); const dto = await restored.json() as any;
+    strictEqual(dto.reportProblems, true); strictEqual(dto.openStateId, "open"); strictEqual(dto.closedStateId, "closed");
+    const preserved = { report_problems: true, open_state_id: "open", closed_state_id: "closed", branch_template: "feature/{key}" };
+    deepStrictEqual(await stored(), preserved);
+    const unrelated = await v.call("PATCH", path, { cookie: ADM, body: { smartCommitsEnabled: false } });
+    strictEqual(unrelated.status, 200); strictEqual((await unrelated.json() as any).reportProblems, true); deepStrictEqual(await stored(), preserved);
+    for (const reportProblems of [null, "true", 1]) {
+      strictEqual((await v.call("PATCH", path, { cookie: ADM, body: { reportProblems } })).status, 422);
+      strictEqual((await v.call("POST", "/workspaces/acme/mappings", { cookie: ADM, body: { ...MAPPING, planeProjectId: "bad", reportProblems } })).status, 422);
+    }
+    strictEqual((await v.call("PATCH", path, { cookie: MEM, body: { reportProblems: false } })).status, 403);
+    strictEqual((await v.call("PATCH", path, { cookie: ADM, origin: "https://foreign.test", body: { reportProblems: false } })).status, 403);
+    v.plane.roles["u-adm"]!.other = 20;
+    strictEqual((await v.call("PATCH", `/workspaces/other/mappings/${enabled}`, { cookie: ADM, body: { reportProblems: false } })).status, 404);
+    deepStrictEqual(await stored(), preserved); strictEqual(await v.count("repo_mappings"), 2);
+  } finally { await v.close(); }
 });
 
 test("mappings: duplicates are 409", async () => {

@@ -1,0 +1,41 @@
+{
+  "runId": "2610131521-5836",
+  "startedAt": "2026-10-13T15:21:13.342Z",
+  "finishedAt": "2026-10-13T15:21:27.727Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S07"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S07",
+      "title": "Forged Plane signature → 401",
+      "status": "PASS",
+      "seconds": 14.4,
+      "evidence": [
+        {
+          "label": "Plane signature random",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        },
+        {
+          "label": "Plane signature absent",
+          "value": "401 {\"error\":\"Missing signature\"}"
+        },
+        {
+          "label": "Plane signature sha256= prefixed",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

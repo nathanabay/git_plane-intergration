@@ -1,0 +1,45 @@
+{
+  "runId": "2610131602-d14f",
+  "startedAt": "2026-10-13T16:02:36.093Z",
+  "finishedAt": "2026-10-13T16:02:54.246Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S42"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S42",
+      "title": "Unknown PR key posts one bot problem report",
+      "status": "PASS",
+      "seconds": 18.2,
+      "evidence": [
+        {
+          "label": "mapping reportProblems",
+          "value": "true"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131602-d14f-s42\",\"sha\":\"d373dc591fe020f9c371b3456637207ed1afd50e\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/75"
+        },
+        {
+          "label": "PR problem report",
+          "value": "{\"id\":6149742427,\"key\":\"GITSY-900184655\",\"body\":\"Git sync could not complete this action:\\n\\n- ` GITSY-900184655 does not match a work item in the linked Plane workspace, so this pull request is not linked to it. `\\n\\n<!-- git-sync-problem:9292d272eb4fc6594836d6a0a3af5feb542038209c4b2124224dfbb5dbf8b75e -->\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

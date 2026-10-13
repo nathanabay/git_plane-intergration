@@ -1,0 +1,45 @@
+{
+  "runId": "2610131520-e22b",
+  "startedAt": "2026-10-13T15:20:36.190Z",
+  "finishedAt": "2026-10-13T15:21:01.345Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S05"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S05",
+      "title": "Forged GitHub signature → 401, nothing stored",
+      "status": "PASS",
+      "seconds": 25.2,
+      "evidence": [
+        {
+          "label": "random sha256",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        },
+        {
+          "label": "sha1 scheme",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        },
+        {
+          "label": "truncated",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        },
+        {
+          "label": "not hex",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

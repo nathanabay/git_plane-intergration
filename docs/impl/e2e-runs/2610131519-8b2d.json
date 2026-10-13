@@ -1,0 +1,37 @@
+{
+  "runId": "2610131519-8b2d",
+  "startedAt": "2026-10-13T15:19:04.569Z",
+  "finishedAt": "2026-10-13T15:19:06.771Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S03"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S03",
+      "title": "Workspace health card data",
+      "status": "PASS",
+      "seconds": 2.2,
+      "evidence": [
+        {
+          "label": "mapping",
+          "value": "#1: lastGithub 2026-10-13T15:14:05.441Z, lastPlane 2026-10-13T15:14:00.951Z, failures24h 1, rateLimitedUntil null"
+        },
+        {
+          "label": "setup",
+          "value": "{\"rules\":\"custom\",\"policies\":\"defaults\",\"membersLinked\":1,\"membersTotal\":2,\"appEventsVerified\":true}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

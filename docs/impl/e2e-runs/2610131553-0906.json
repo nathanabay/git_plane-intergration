@@ -1,0 +1,37 @@
+{
+  "runId": "2610131553-0906",
+  "startedAt": "2026-10-13T15:53:26.074Z",
+  "finishedAt": "2026-10-13T15:53:45.833Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S26"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S26",
+      "title": "An issue without the `plane` label is not mirrored",
+      "status": "PASS",
+      "seconds": 19.8,
+      "evidence": [
+        {
+          "label": "GitHub issue",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/68"
+        },
+        {
+          "label": "delivery processed",
+          "value": "3ae633d2-c71e-11f1-9a48-a64576695157: handled"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

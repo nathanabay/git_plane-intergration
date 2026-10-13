@@ -67,6 +67,21 @@ export function buildStatus(runs: { conclusion?: string | null }[]): BuildStatus
   return "pending";
 }
 
+/** Context7 /websites/github_en_rest, /rest/commits/statuses: the combined state covers the latest
+ * status of every context. No statuses is pending, never a passing build. */
+export function commitStatusBuildStatus(combined: { state?: unknown; total_count?: unknown }): BuildStatus {
+  const count = combined?.total_count;
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)
+    throw new Error("Invalid combined GitHub status count");
+  if (count === 0) return "pending";
+  switch (combined.state) {
+    case "success": return "pass";
+    case "failure": return "fail";
+    case "pending": return "pending";
+    default: throw new Error("Invalid combined GitHub status state");
+  }
+}
+
 export interface Preview { name: string; url: string }
 
 const PROVIDERS: [suffix: string, name: string][] = [

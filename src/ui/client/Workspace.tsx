@@ -120,6 +120,7 @@ export function MappingForm({ slug, existing, onSaved }: { slug: string; existin
   const defaults = useLoad(() => existing ? Promise.resolve({ smartCommitsDefault: existing.smartCommitsEnabled })
     : api<{ smartCommitsDefault: boolean }>("GET", `${ws(slug)}/defaults`), [slug, existing?.id]);
   const [linkback, setLinkback] = useState(existing?.linkbackComments ?? true);
+  const [reportProblems, setReportProblems] = useState(existing?.reportProblems ?? false);
   // C4: per-mapping open/closed Plane states (state ids); empty means the project default.
   const stored = existing as (Mapping & { openStateId?: string | null; closedStateId?: string | null }) | undefined;
   const [openState, setOpenState] = useState(stored?.openStateId ?? "");
@@ -134,7 +135,7 @@ export function MappingForm({ slug, existing, onSaved }: { slug: string; existin
     e.preventDefault();
     const body = mappingFormBody({
       ghRepoId: Number(repoId), ghRepoFullName: repoName.trim(), planeProjectId: project.trim(), syncDirection: direction,
-      linkbackComments: linkback,
+      linkbackComments: linkback, reportProblems,
     }, smart);
     const withStates = { ...body, openStateId: openState || null, closedStateId: closedState || null };
     let savedId: number | undefined;
@@ -143,7 +144,7 @@ export function MappingForm({ slug, existing, onSaved }: { slug: string; existin
       savedId = saved.id;
     });
     if (ok) {
-      if (!existing) { setRepoName(""); setRepoId(""); setProject(""); setSmart(undefined); setOpenState(""); setClosedState(""); defaults.reload(); }
+      if (!existing) { setRepoName(""); setRepoId(""); setProject(""); setSmart(undefined); setOpenState(""); setClosedState(""); setReportProblems(false); defaults.reload(); }
       onSaved(savedId);
     }
   };
@@ -187,6 +188,7 @@ export function MappingForm({ slug, existing, onSaved }: { slug: string; existin
       <ErrorNote error={defaults.error} />
       {defaults.error ? <button type="button" onClick={defaults.reload}>Reload defaults</button> : null}
       <label className="check"><input type="checkbox" checked={linkback} onChange={(e) => setLinkback(e.target.checked)} /><span>Post link-back comments on GitHub</span></label>
+      <label className="check"><input type="checkbox" checked={reportProblems} onChange={(e) => setReportProblems(e.target.checked)} /><span>Report problems as comments on GitHub and Plane</span></label>
       <label className="check"><input type="checkbox" checked={existing?.autolinks ?? false} disabled /><span>GitHub autolink references (unavailable)</span></label>
       <button type="submit" disabled={saver.busy || sameState || (!existing && defaults.data === null) || !projects.data || !repositories.data?.repositories.some((repo) => repo.id === Number(repoId))}>{existing ? "Save changes" : "Add mapping"}</button>
       <SaveStatus saver={saver} />

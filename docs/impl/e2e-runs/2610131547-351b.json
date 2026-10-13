@@ -1,0 +1,41 @@
+{
+  "runId": "2610131547-351b",
+  "startedAt": "2026-10-13T15:47:06.528Z",
+  "finishedAt": "2026-10-13T15:47:35.641Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S14"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S14",
+      "title": "GitHub issue with `plane` → Plane item: mention, issue links, table, code literal, one cross-link each side",
+      "status": "PASS",
+      "seconds": 29.1,
+      "evidence": [
+        {
+          "label": "GitHub #45 → GITSY-55",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/45"
+        },
+        {
+          "label": "description_html",
+          "value": "<div><p>Mention <mention-component entity_identifier=\"274ce27e-5a9c-40b3-bd8d-b48ee67f6e8d\" entity_name=\"user_mention\"></mention-component> and refs <a href=\"https://github.com/nathanabay/gitsync-test/issues/1\" rel=\"noopener noreferrer\">nathanabay/gitsync-test#1</a> and <a href=\"https://github.com/nathanabay/gitsync-test/issues/1\" rel=\"noopener noreferrer\">nathanabay/gitsync-test#1</a>.</p><table><thead><tr><th>col a</th><th>col b</th></tr></thead><tbody><tr><td>e2e-cell-1</td><td>e2e-cell-2</td></tr></tbody></table><pre language=\"js\"><code>const literal = \"@nathanabay #1 &lt;b&gt;bold&lt;/b&gt;\";\n</code></pre></div>"
+        },
+        {
+          "label": "cross-links",
+          "value": "{\"planeLinksToIssue\":1,\"mirroredFrom\":1,\"ghLinkback\":1}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

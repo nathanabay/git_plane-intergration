@@ -1,0 +1,49 @@
+{
+  "runId": "2610131549-d440",
+  "startedAt": "2026-10-13T15:49:39.493Z",
+  "finishedAt": "2026-10-13T15:50:16.756Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S20"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S20",
+      "title": "Labels added and removed, both ways",
+      "status": "PASS",
+      "seconds": 37.3,
+      "evidence": [
+        {
+          "label": "GitHub #58 → GITSY-68",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/58"
+        },
+        {
+          "label": "GitHub → Plane add",
+          "value": "e2e-label-a"
+        },
+        {
+          "label": "GitHub → Plane remove",
+          "value": "e2e-label-a"
+        },
+        {
+          "label": "Plane → GitHub add",
+          "value": "e2e-label-b"
+        },
+        {
+          "label": "Plane → GitHub remove",
+          "value": "e2e-label-b"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

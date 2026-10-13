@@ -1,0 +1,49 @@
+{
+  "runId": "2610131601-aef9",
+  "startedAt": "2026-10-13T16:01:55.031Z",
+  "finishedAt": "2026-10-13T16:02:16.800Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S33"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S33",
+      "title": "Closed unmerged PR follows configured lifecycle rule",
+      "status": "PASS",
+      "seconds": 21.8,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-81",
+          "value": "09ea6b5b-fcfa-4aac-8919-aa529ac93591"
+        },
+        {
+          "label": "scoped rule API",
+          "value": "{\"status\":200,\"data\":{\"version\":5}}"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131601-aef9-s33\",\"sha\":\"32880615ca316f184e228278c2243598597ab4ea\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/73"
+        },
+        {
+          "label": "closed rule",
+          "value": "{\"version\":5,\"status\":\"DECLINED\",\"state\":\"09e74b66-4008-4c76-a562-3746c47066fe\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

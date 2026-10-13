@@ -27,6 +27,13 @@ const form = { ghRepoId: 555, ghRepoFullName: "acme/web", planeProjectId: "p1", 
 const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } });
 const states: PlaneState[] = [{ id: "s-start", name: "In progress", group: "started" }, { id: "s-done", name: "Done", group: "completed" }];
 
+test("E2E-1: mapping form body submits both report toggle values while preserving untouched Smart Commits", () => {
+  for (const reportProblems of [true, false]) {
+    deepStrictEqual(mappingFormBody({ ...form, reportProblems }, undefined), { ...form, reportProblems });
+  }
+  deepStrictEqual(mappingFormBody({ ...form, reportProblems: true }, false), { ...form, reportProblems: true, smartCommitsEnabled: false });
+});
+
 // C3: retain workspace-admin mapping creation, using the viewer's own token and approved installation.
 async function mappingHarness() {
   const h = await setup([], undefined, undefined, {
@@ -259,9 +266,15 @@ test("N4/N6: actual components render named pickers, shared state controls, vers
     const audit = render(ui.AuditDetail, { entry });
     ok(audit.includes("<details><summary>Show raw</summary>")); ok(!audit.includes("<details open")); ok(audit.includes("raw delivery"));
     strictEqual(ui.auditKindLabel(entry.kind), "Webhook received");
-    const existing: Mapping = { id: 1, workspaceSlug: "acme", ...MAPPING, syncDirection: "bidirectional", autolinks: true };
+    const existing: Mapping = { id: 1, workspaceSlug: "acme", ...MAPPING, syncDirection: "bidirectional", autolinks: true, reportProblems: true };
     const mapping = render(ui.MappingForm, { slug: "acme", existing, onSaved() {} });
     ok(mapping.includes('disabled="" checked=""')); ok(!mapping.includes('placeholder="project id"'));
+    const reportInput = (html: string) => html.match(/(<input[^>]*\/>)(?=<span>Report problems as comments on GitHub and Plane<\/span>)/)?.[1];
+    ok(reportInput(mapping)?.includes('checked=""')); ok(!reportInput(mapping)?.includes('disabled=""'));
+    const fresh = render(ui.MappingForm, { slug: "acme", onSaved() {} });
+    ok(reportInput(fresh)); ok(!reportInput(fresh)!.includes('checked=""')); ok(!reportInput(fresh)!.includes('disabled=""'));
+    const off = render(ui.MappingForm, { slug: "acme", existing: { ...existing, reportProblems: false }, onSaved() {} });
+    ok(reportInput(off)); ok(!reportInput(off)!.includes('checked=""'));
     const links = render(ui.LinkForm, { slug: "acme", onSaved() {} });
     ok(links.includes('aria-label="Plane member"')); ok(!links.includes("Plane user id"));
     const dry = render(ui.DryRunPanel, { slug: "acme", id: 1 });

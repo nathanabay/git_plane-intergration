@@ -1,0 +1,49 @@
+{
+  "runId": "2610131546-711b",
+  "startedAt": "2026-10-13T15:46:29.142Z",
+  "finishedAt": "2026-10-13T15:46:44.173Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S43"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S43",
+      "title": "Bad Smart Commit posts one commit problem report",
+      "status": "PASS",
+      "seconds": 15,
+      "evidence": [
+        {
+          "label": "mapping reportProblems",
+          "value": "true"
+        },
+        {
+          "label": "Plane item GITSY-53",
+          "value": "64a1bc46-5ca3-4a8b-a77b-6aabf905b75b"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e-2610131546-711b-s43\",\"sha\":\"f6cae024908224402e307c6daf0909ac01d9b82c\"}"
+        },
+        {
+          "label": "Smart Commit source",
+          "value": "{\"key\":\"GITSY-53\",\"sha\":\"f6cae024908224402e307c6daf0909ac01d9b82c\",\"command\":\"#nosuchstate-2610131546-711b\"}"
+        },
+        {
+          "label": "commit report",
+          "value": "{\"id\":204744934,\"sha\":\"f6cae024908224402e307c6daf0909ac01d9b82c\",\"body\":\"Git sync could not complete this action:\\n\\n- ` GITSY-53: #nosuchstate-2610131546-711b matches no Plane state. `\\n\\n<!-- git-sync-problem:e9f4ba32078e11d95287a7d5913bd1583635b88477ac12985c202de8653045a6 -->\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

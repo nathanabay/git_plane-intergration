@@ -99,11 +99,12 @@ export interface MappingInput {
   smartCommitsEnabled: boolean;
   linkbackComments: boolean;
   autolinks: boolean;
+  reportProblems: boolean;
   openStateId: string | null;
   closedStateId: string | null;
 }
 
-const MAPPING_KEYS = ["ghRepoId", "ghRepoFullName", "planeProjectId", "syncDirection", "smartCommitsEnabled", "linkbackComments", "autolinks", "openStateId", "closedStateId"];
+const MAPPING_KEYS = ["ghRepoId", "ghRepoFullName", "planeProjectId", "syncDirection", "smartCommitsEnabled", "linkbackComments", "autolinks", "reportProblems", "openStateId", "closedStateId"];
 
 /** Validates a mapping body. `partial` (PATCH) requires at least one field; otherwise the three identity fields are required. */
 export function parseMappingInput(raw: unknown, partial: boolean): Partial<MappingInput> {
@@ -137,6 +138,7 @@ export function parseMappingInput(raw: unknown, partial: boolean): Partial<Mappi
   if (has("smartCommitsEnabled")) out.smartCommitsEnabled = bool(body.smartCommitsEnabled, "smartCommitsEnabled");
   if (has("linkbackComments")) out.linkbackComments = bool(body.linkbackComments, "linkbackComments");
   if (has("autolinks")) out.autolinks = bool(body.autolinks, "autolinks");
+  if (has("reportProblems")) out.reportProblems = bool(body.reportProblems, "reportProblems");
   for (const key of ["openStateId", "closedStateId"] as const) {
     if (!has(key)) continue;
     if (body[key] === null || body[key] === "") { out[key] = null; continue; }

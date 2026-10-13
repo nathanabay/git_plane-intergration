@@ -1,0 +1,1300 @@
+{
+  "runId": "2610131635-9c1b",
+  "startedAt": "2026-10-13T16:35:31.664Z",
+  "finishedAt": "2026-10-13T16:50:25.831Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": null,
+  "keep": false,
+  "counts": {
+    "PASS": 53,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S01",
+      "title": "Health endpoint answers 200 without a session",
+      "status": "PASS",
+      "seconds": 0.1,
+      "evidence": [
+        {
+          "label": "GET /git-sync/healthz",
+          "value": "200 {\"status\":\"ok\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S02",
+      "title": "Setup checklist: items and statuses (instance admin)",
+      "status": "PASS",
+      "seconds": 1.2,
+      "evidence": [
+        {
+          "label": "checks",
+          "value": "credentials=pass, github_permissions=fail, github_events=pass, github_delivery=pass, plane_delivery=pass, plane_rate_limit=unknown"
+        },
+        {
+          "label": "App permissions missing",
+          "value": "members"
+        },
+        {
+          "label": "setup-check with web session",
+          "value": "401"
+        }
+      ],
+      "log": [
+        "credentials: pass — App credentials",
+        "github_permissions: fail — App permissions",
+        "github_events: pass — App webhook events",
+        "github_delivery: pass — Signed GitHub deliveries",
+        "plane_delivery: pass — Plane deliveries",
+        "plane_rate_limit: unknown — Plane request rate"
+      ],
+      "cleaned": true
+    },
+    {
+      "id": "S03",
+      "title": "Workspace health card data",
+      "status": "PASS",
+      "seconds": 2,
+      "evidence": [
+        {
+          "label": "mapping",
+          "value": "#1: lastGithub 2026-10-13T16:11:28.940Z, lastPlane 2026-10-13T16:02:25.959Z, failures24h 24, rateLimitedUntil null"
+        },
+        {
+          "label": "setup",
+          "value": "{\"rules\":\"custom\",\"policies\":\"defaults\",\"membersLinked\":1,\"membersTotal\":2,\"appEventsVerified\":true}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S04",
+      "title": "Instance health (God mode)",
+      "status": "PASS",
+      "seconds": 0.4,
+      "evidence": [
+        {
+          "label": "instance health",
+          "value": "{\"database\":true,\"githubAppConfigured\":true,\"githubAppCredentials\":{\"source\":\"database\",\"decryptOk\":true},\"mappings\":1,\"lastActivityAt\":\"2026-10-13T16:11:28.940Z\",\"failuresLast24h\":24}"
+        },
+        {
+          "label": "disabled mappings",
+          "value": "0"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S05",
+      "title": "Forged GitHub signature → 401, nothing stored",
+      "status": "PASS",
+      "seconds": 18.7,
+      "evidence": [
+        {
+          "label": "random sha256",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        },
+        {
+          "label": "sha1 scheme",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        },
+        {
+          "label": "truncated",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        },
+        {
+          "label": "not hex",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S06",
+      "title": "Missing GitHub signature → 401",
+      "status": "PASS",
+      "seconds": 10.3,
+      "evidence": [
+        {
+          "label": "signature absent",
+          "value": "401 {\"error\":\"Missing signature\"}"
+        },
+        {
+          "label": "signature empty",
+          "value": "401 {\"error\":\"Missing signature\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S07",
+      "title": "Forged Plane signature → 401",
+      "status": "PASS",
+      "seconds": 13.6,
+      "evidence": [
+        {
+          "label": "Plane signature random",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        },
+        {
+          "label": "Plane signature absent",
+          "value": "401 {\"error\":\"Missing signature\"}"
+        },
+        {
+          "label": "Plane signature sha256= prefixed",
+          "value": "401 {\"error\":\"Invalid signature\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S08",
+      "title": "Oversized webhook body → 413 (proxy limit and the service's own 25 MiB limit)",
+      "status": "PASS",
+      "seconds": 1,
+      "evidence": [
+        {
+          "label": "6 MiB via proxy",
+          "value": "413"
+        },
+        {
+          "label": "direct githubDeclared",
+          "value": "socket ECONNRESET "
+        },
+        {
+          "label": "direct githubChunked",
+          "value": "413 {\"error\":\"Payload Too Large\"}"
+        },
+        {
+          "label": "direct planeDeclared",
+          "value": "413 {\"error\":\"Payload Too Large\"}"
+        },
+        {
+          "label": "512 KiB forged",
+          "value": "401"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S09",
+      "title": "Config API without a session → 401",
+      "status": "PASS",
+      "seconds": 0.1,
+      "evidence": [
+        {
+          "label": "anonymous",
+          "value": "/workspaces/gitsync-test/mappings=401, /workspaces/gitsync-test/health=401, /workspaces/gitsync-test/mappings/1/rules=401, /workspaces/gitsync-test/audit=401, /workspaces/gitsync-test/github/account=401, /instance/health=401, /instance/setup-check=401, /instance/github-app=401, /instance/disabled-mappings=401"
+        },
+        {
+          "label": "forged cookies",
+          "value": "401,401,401"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S10",
+      "title": "Cross-origin and non-JSON writes → 403 / 415, nothing written",
+      "status": "PASS",
+      "seconds": 0.7,
+      "evidence": [
+        {
+          "label": "evil origin",
+          "value": "403"
+        },
+        {
+          "label": "origin null",
+          "value": "403"
+        },
+        {
+          "label": "lookalike origin",
+          "value": "403"
+        },
+        {
+          "label": "no origin",
+          "value": "403"
+        },
+        {
+          "label": "text/plain",
+          "value": "415"
+        },
+        {
+          "label": "form",
+          "value": "415"
+        },
+        {
+          "label": "multipart",
+          "value": "415"
+        },
+        {
+          "label": "anonymous cross-site DELETE",
+          "value": "403"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S11",
+      "title": "S1 traversal in a rule's create_issue project → 422, nothing stored",
+      "status": "PASS",
+      "seconds": 1.6,
+      "evidence": [
+        {
+          "label": "422 for",
+          "value": "../../victim-ws/projects/972d93a8-6889-46b8-9b47-93f9e7546afb | %2e%2e/%2e%2e/victim-ws/projects/972d93a8-6889-46b8-9b47-93f9e7546afb | %2E%2E%2F%2E%2E%2Fvictim-ws | 972d93a8-6889-46b8-9b47-93f9e7546afb/.. | .. | GITSY/../x"
+        },
+        {
+          "label": "message",
+          "value": "Rule at index 0: create_issue project must be a Plane project UUID or identifier"
+        },
+        {
+          "label": "dry-run",
+          "value": "422"
+        },
+        {
+          "label": "dry-run with a valid identifier",
+          "value": "200 {\"dryRun\":true,\"trigger\":\"pull_request.merged\",\"matched\":{\"index\":0,\"name\":\"e2e-2610131635-9c1b-traversal\"},\"actions\":[{\"type\":\"create_issue\",\"project\":\"GITSY\","
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S12",
+      "title": "A non-admin cannot reach admin routes; an admin cannot reach another workspace",
+      "status": "PASS",
+      "seconds": 20.8,
+      "evidence": [
+        {
+          "label": "member",
+          "value": "403,403,403,403,403,403,401,401,200"
+        },
+        {
+          "label": "member own-account route (allowed)",
+          "value": "200"
+        },
+        {
+          "label": "admin on other workspace / instance / encoded slugs",
+          "value": "403,403,403,403,401,404,404"
+        }
+      ],
+      "log": [
+        "other workspace e2e-2610131635-9c1b (fd6c6d42-b773-4d08-bdd8-b5fb3ee218f9)"
+      ],
+      "cleaned": true
+    },
+    {
+      "id": "S13",
+      "title": "Static file path traversal is refused",
+      "status": "PASS",
+      "seconds": 1,
+      "evidence": [
+        {
+          "label": "via proxy",
+          "value": "/git-sync/ui/../../package.json → 200; /git-sync/ui/..%2F..%2Fpackage.json → 200; /git-sync/ui/%2e%2e/%2e%2e/package.json → 200; /git-sync/ui/assets/..%2f..%2f..%2fsrc%2findex.ts → 200; /git-sync/ui/..%5c..%5cpackage.json → 404; /git-sync/ui/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd → 400; /git-sync/ui/....//....//package.json → 404; /git-sync/ui/assets/%252e%252e%252fpackage.json → 404; /git-sync/ui/%00.js → 400"
+        },
+        {
+          "label": "direct to service",
+          "value": "/git-sync/ui/../../package.json → 400; /git-sync/ui/..%2F..%2Fpackage.json → 404; /git-sync/ui/%2e%2e/%2e%2e/package.json → 400; /git-sync/ui/assets/..%2f..%2f..%2fsrc%2findex.ts → 404; /git-sync/ui/..%5c..%5cpackage.json → 404; /git-sync/ui/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd → 404; /git-sync/ui/....//....//package.json → 404; /git-sync/ui/assets/%252e%252e%252fpackage.json → 404; /git-sync/ui/%00.js → 400"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S14",
+      "title": "GitHub issue with `plane` → Plane item: mention, issue links, table, code literal, one cross-link each side",
+      "status": "PASS",
+      "seconds": 28.1,
+      "evidence": [
+        {
+          "label": "GitHub #77 → GITSY-83",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/77"
+        },
+        {
+          "label": "description_html",
+          "value": "<div><p>Mention <mention-component entity_identifier=\"274ce27e-5a9c-40b3-bd8d-b48ee67f6e8d\" entity_name=\"user_mention\"></mention-component> and refs <a href=\"https://github.com/nathanabay/gitsync-test/issues/1\" rel=\"noopener noreferrer\">nathanabay/gitsync-test#1</a> and <a href=\"https://github.com/nathanabay/gitsync-test/issues/1\" rel=\"noopener noreferrer\">nathanabay/gitsync-test#1</a>.</p><table><thead><tr><th>col a</th><th>col b</th></tr></thead><tbody><tr><td>e2e-cell-1</td><td>e2e-cell-2</td></tr></tbody></table><pre language=\"js\"><code>const literal = \"@nathanabay #1 &lt;b&gt;bold&lt;/b&gt;\";\n</code></pre></div>"
+        },
+        {
+          "label": "cross-links",
+          "value": "{\"planeLinksToIssue\":1,\"mirroredFrom\":1,\"ghLinkback\":1}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S15",
+      "title": "Plane item with `github` label → GitHub issue, cross-linked",
+      "status": "PASS",
+      "seconds": 27.1,
+      "evidence": [
+        {
+          "label": "GITSY-84 → GitHub #78",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/78"
+        },
+        {
+          "label": "GitHub issue",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/78 by gitsync-test-nathanabay[bot], labels plane"
+        },
+        {
+          "label": "cross-links",
+          "value": "{\"planeLinkToIssue\":1,\"ghLinkback\":1,\"mirroredTo\":1}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S16",
+      "title": "GitHub title edit → Plane",
+      "status": "PASS",
+      "seconds": 16.6,
+      "evidence": [
+        {
+          "label": "GitHub #79 → GITSY-85",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/79"
+        },
+        {
+          "label": "Plane title",
+          "value": "[e2e 2610131635-9c1b] S16 after"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S17",
+      "title": "GitHub description edit → Plane",
+      "status": "PASS",
+      "seconds": 17,
+      "evidence": [
+        {
+          "label": "GitHub #80 → GITSY-86",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/80"
+        },
+        {
+          "label": "description_html",
+          "value": "<p>edited body <strong>e2e-2610131635-9c1b-S17-ntdse</strong></p>"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S18",
+      "title": "Plane title edit is not applied to GitHub (source_of_truth: github)",
+      "status": "PASS",
+      "seconds": 26.9,
+      "evidence": [
+        {
+          "label": "GitHub #81 → GITSY-87",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/81"
+        },
+        {
+          "label": "Plane delivery outcome",
+          "value": "handled"
+        },
+        {
+          "label": "GitHub title",
+          "value": "[e2e 2610131635-9c1b] S18 GitHub title"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S19",
+      "title": "GitHub assignee (linked user) → Plane assignee, and unassign",
+      "status": "PASS",
+      "seconds": 22.4,
+      "evidence": [
+        {
+          "label": "GitHub #82 → GITSY-88",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/82"
+        },
+        {
+          "label": "assigned",
+          "value": "nathanabay → Plane user 274ce27e-5a9c-40b3-bd8d-b48ee67f6e8d"
+        },
+        {
+          "label": "unassigned",
+          "value": "Plane assignees no longer include the linked user"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S20",
+      "title": "Labels added and removed, both ways",
+      "status": "PASS",
+      "seconds": 33.9,
+      "evidence": [
+        {
+          "label": "GitHub #83 → GITSY-89",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/83"
+        },
+        {
+          "label": "GitHub → Plane add",
+          "value": "e2e-label-a"
+        },
+        {
+          "label": "GitHub → Plane remove",
+          "value": "e2e-label-a"
+        },
+        {
+          "label": "Plane → GitHub add",
+          "value": "e2e-label-b"
+        },
+        {
+          "label": "Plane → GitHub remove",
+          "value": "e2e-label-b"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S21",
+      "title": "GitHub comment → Plane, attributed",
+      "status": "PASS",
+      "seconds": 32.9,
+      "evidence": [
+        {
+          "label": "GitHub #84 → GITSY-90",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/84"
+        },
+        {
+          "label": "Plane comment",
+          "value": "<p><strong>nathanabay</strong> commented on <a href=\"https://github.com/nathanabay/gitsync-test/issues/84#issuecomment-6150434755\">GitHub</a>:</p><p>A comment from GitHub e2e-2610131635-9c1b-S21-u95fr</p>"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S22",
+      "title": "Plane comment → GitHub, posted as the linked user",
+      "status": "PASS",
+      "seconds": 33.2,
+      "evidence": [
+        {
+          "label": "GitHub #85 → GITSY-91",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/85"
+        },
+        {
+          "label": "GitHub comment",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/85#issuecomment-6150444988 by nathanabay (User)"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S23",
+      "title": "GitHub close and reopen → Plane completed / unstarted",
+      "status": "PASS",
+      "seconds": 37.5,
+      "evidence": [
+        {
+          "label": "GitHub #86 → GITSY-92",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/86"
+        },
+        {
+          "label": "closed",
+          "value": "Plane state group completed"
+        },
+        {
+          "label": "reopened",
+          "value": "Plane state group unstarted"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S24",
+      "title": "Plane cancelled → GitHub closed as not planned",
+      "status": "PASS",
+      "seconds": 27.1,
+      "evidence": [
+        {
+          "label": "GitHub #87 → GITSY-93",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/87"
+        },
+        {
+          "label": "GitHub",
+          "value": "closed / not_planned"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S25",
+      "title": "Two rapid GitHub title edits → the final value wins",
+      "status": "PASS",
+      "seconds": 53.5,
+      "evidence": [
+        {
+          "label": "GitHub #88 → GITSY-94",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/88"
+        },
+        {
+          "label": "edits sent within",
+          "value": "1282 ms"
+        },
+        {
+          "label": "final",
+          "value": "[e2e 2610131635-9c1b] S25 v2"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S26",
+      "title": "An issue without the `plane` label is not mirrored",
+      "status": "PASS",
+      "seconds": 18.3,
+      "evidence": [
+        {
+          "label": "GitHub issue",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/89"
+        },
+        {
+          "label": "delivery processed",
+          "value": "1aeccb2a-c725-11f1-9baa-06dda223063a: handled"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S27",
+      "title": "Echo safety: outbound writes and comments settle (no loop)",
+      "status": "PASS",
+      "seconds": 49.2,
+      "evidence": [
+        {
+          "label": "GitHub #90 → GITSY-95",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/90"
+        },
+        {
+          "label": "settled",
+          "value": "{\"githubWrites\":2,\"planeWrites\":2,\"githubComments\":2,\"planeComments\":2,\"title\":\"[e2e 2610131635-9c1b] S27 echo edited\"}"
+        },
+        {
+          "label": "echo deliveries dropped",
+          "value": "5"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S28",
+      "title": "Development panel data and rendered branch template",
+      "status": "PASS",
+      "seconds": 2.1,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-96",
+          "value": "b550c756-5db8-401a-bdaa-e483878941a5"
+        },
+        {
+          "label": "Development panel",
+          "value": "{\"key\":\"GITSY-96\",\"title\":\"[e2e 2610131635-9c1b] S28\",\"prStatus\":null,\"prs\":[],\"builds\":[],\"deployments\":[],\"previews\":[],\"branches\":[],\"repos\":[{\"mappingId\":1,\"repo\":\"nathanabay/gitsync-test\",\"branchName\":\"GITSY-96-e2e-2610131635-9c1b-s28\",\"branchUrl\":\"https://github.com/nathanabay/gitsync-test/tree/GITSY-96-e2e-2610131635-9c1b-s28\"}],\"canCreateBranch\":true}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S29",
+      "title": "Create branch from panel is real and idempotent",
+      "status": "PASS",
+      "seconds": 9,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-97",
+          "value": "718416da-b7b1-46a1-ba09-b70470a12651"
+        },
+        {
+          "label": "branch creation",
+          "value": "{\"first\":{\"created\":true,\"branch\":\"GITSY-97-e2e-2610131635-9c1b-s29\",\"url\":\"https://github.com/nathanabay/gitsync-test/tree/GITSY-97-e2e-2610131635-9c1b-s29\"},\"second\":{\"created\":false,\"branch\":\"GITSY-97-e2e-2610131635-9c1b-s29\",\"url\":\"https://github.com/nathanabay/gitsync-test/tree/GITSY-97-e2e-2610131635-9c1b-s29\"},\"sha\":\"606c35ef62db252fcb0c941e9d6066d26423a88d\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S30",
+      "title": "Pushed key branch links item and starts work",
+      "status": "PASS",
+      "seconds": 8.5,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-98",
+          "value": "5a9fbd04-f3f0-4fb9-bf83-6d304636dd8c"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s30-GITSY-98\",\"sha\":\"5479640c82f706b807cac47487eff803faa3ab29\"}"
+        },
+        {
+          "label": "branch links and state",
+          "value": "{\"branches\":[{\"category\":\"Branch\",\"text\":\"e2e_2610131635-9c1b-s30-GITSY-98\",\"url\":\"https://github.com/nathanabay/gitsync-test/tree/e2e_2610131635-9c1b-s30-GITSY-98\"}],\"state\":\"67bf71af-9767-4214-af12-e3139f0c504e\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S31",
+      "title": "Draft closing PR starts work with one linkback",
+      "status": "PASS",
+      "seconds": 10.6,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-99",
+          "value": "45e9644d-c3d8-4257-8464-cf402311a34d"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s31\",\"sha\":\"4d6055d49b2ffa49ef7005e3c1cd822842010a4e\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/91"
+        },
+        {
+          "label": "draft PR linkback",
+          "value": "{\"id\":6150517853,\"body\":\"Linked Plane work item:\\n- GITSY-99: http://100.85.50.109:8090/gitsync-test/projects/972d93a8-6889-46b8-9b47-93f9e7546afb/issues/45e9644d-c3d8-4257-8464-cf402311a34d\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S32",
+      "title": "Ready draft then merge completes item and rollup",
+      "status": "PASS",
+      "seconds": 32.4,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-100",
+          "value": "b8b4c319-6d81-46ee-aa31-2db2caf37dfe"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s32\",\"sha\":\"0ab022f68c2ed042f03cc8e3ceeb0c32cc135f78\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/92"
+        },
+        {
+          "label": "merge and completed rollup",
+          "value": "{\"sha\":\"1776cf6ba6edab92bb55fe333edf85a6330855c9\",\"status\":\"MERGED\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S33",
+      "title": "Closed unmerged PR follows configured lifecycle rule",
+      "status": "PASS",
+      "seconds": 16.9,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-101",
+          "value": "8ee853b9-39a4-4355-9605-ebf84e1f27f0"
+        },
+        {
+          "label": "scoped rule API",
+          "value": "{\"status\":200,\"data\":{\"version\":7}}"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s33\",\"sha\":\"b1d59e6758ea3effb4b25ac93633b7eda1622150\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/93"
+        },
+        {
+          "label": "closed rule",
+          "value": "{\"version\":7,\"status\":\"DECLINED\",\"state\":\"09e74b66-4008-4c76-a562-3746c47066fe\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S34",
+      "title": "Ref KEY links without a state change",
+      "status": "PASS",
+      "seconds": 14.5,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-102",
+          "value": "6202e9de-af90-43f9-b2d7-5dbb220703ed"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s34\",\"sha\":\"01352977625b27beed100176bef5e739bb0f21ff\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/94"
+        },
+        {
+          "label": "Ref semantics",
+          "value": "{\"tier\":\"non_closing\",\"before\":\"d6bf6264-32ea-431c-a310-7e0fdc1f601d\",\"after\":\"d6bf6264-32ea-431c-a310-7e0fdc1f601d\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S35",
+      "title": "Skip and ignore override a closing reference",
+      "status": "PASS",
+      "seconds": 33.2,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-103",
+          "value": "82fa7b80-6497-4125-ad42-148da063a958"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s35-skip\",\"sha\":\"a06f0f749c574e927122ce0bf9f61479cb9bbbac\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/95"
+        },
+        {
+          "label": "skip no link",
+          "value": "{\"number\":95,\"key\":\"GITSY-103\"}"
+        },
+        {
+          "label": "Plane item GITSY-104",
+          "value": "87931fe3-ea25-49c0-b5b4-f2ef4e61d710"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s35-ignore\",\"sha\":\"9d84152b934ae34100dbe219fcd4db48b3d21bec\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/96"
+        },
+        {
+          "label": "ignore no link",
+          "value": "{\"number\":96,\"key\":\"GITSY-104\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S36",
+      "title": "Project NEW directive creates exactly one linked item",
+      "status": "PASS",
+      "seconds": 14.5,
+      "evidence": [
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s36\",\"sha\":\"c6df2e3bf3997ccc25db3f9c7659695a58f8f2c0\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/97"
+        },
+        {
+          "label": "NEW item",
+          "value": "{\"id\":\"11237bd3-7429-4dcc-892d-0f55c5139e8b\",\"key\":\"GITSY-105\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S37",
+      "title": "User commit status produces CI rollup on linked item",
+      "status": "PASS",
+      "seconds": 27.3,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-106",
+          "value": "8d1b7079-0284-4f6c-8768-4f3f3890df18"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s37\",\"sha\":\"dbe0d76929f703df5b4c69f1ec7cfb86b3661551\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/98"
+        },
+        {
+          "label": "processed user status",
+          "value": "{\"statusId\":56246185749,\"sha\":\"dbe0d76929f703df5b4c69f1ec7cfb86b3661551\",\"deliveryId\":\"9c906f38-c725-11f1-9a3b-b56b1241aa62\",\"audit\":1489}"
+        },
+        {
+          "label": "panel after status",
+          "value": "{\"key\":\"GITSY-106\",\"title\":\"[e2e 2610131635-9c1b] S37\",\"prStatus\":\"OPEN\",\"prs\":[{\"title\":\"#98 [e2e 2610131635-9c1b] Fixes GITSY-106\",\"url\":\"https://github.com/nathanabay/gitsync-test/pull/98\",\"status\":\"OPEN\",\"review\":\"REVIEW\"}],\"builds\":[{\"category\":\"CI\",\"text\":\"Commit statuses · pass\",\"url\":\"https://github.com/nathanabay/gitsync-test/commit/dbe0d76929f703df5b4c69f1ec7cfb86b3661551\"}],\"deployments\":[],\"previews\":[],\"branches\":[],\"repos\":[{\"mappingId\":1,\"repo\":\"nathanabay/gitsync-test\",\"branchName\":\"GITSY-106-e2e-2610131635-9c1b-s37\",\"branchUrl\":\"https://github.com/nathanabay/gitsync-test/tree/GITSY-106-e2e-2610131635-9c1b-s37\"}],\"canCreateBranch\":true}"
+        },
+        {
+          "label": "CI rollup",
+          "value": "{\"context\":\"e2e/2610131635-9c1b/S37\",\"sha\":\"dbe0d76929f703df5b4c69f1ec7cfb86b3661551\",\"builds\":[{\"category\":\"CI\",\"text\":\"Commit statuses · pass\",\"url\":\"https://github.com/nathanabay/gitsync-test/commit/dbe0d76929f703df5b4c69f1ec7cfb86b3661551\"}]}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S38",
+      "title": "Smart Commit comment is attributed and linked to commit",
+      "status": "PASS",
+      "seconds": 7.6,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-107",
+          "value": "425d7232-24ae-463a-ba5e-5c5728c96e68"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s38\",\"sha\":\"1e213d87ea45c5c3c401f217c7fff34b5f224c07\"}"
+        },
+        {
+          "label": "Smart Commit source",
+          "value": "{\"key\":\"GITSY-107\",\"sha\":\"1e213d87ea45c5c3c401f217c7fff34b5f224c07\",\"command\":\"#comment [e2e 2610131635-9c1b] S38 comment payload\"}"
+        },
+        {
+          "label": "Smart Commit comment",
+          "value": "{\"id\":\"adb92c45-c8f0-41fa-9a72-147ee9a53c42\",\"html\":\"<p>[e2e 2610131635-9c1b] S38 comment payload</p><p><small>via <a href=\\\"https://github.com/nathanabay/gitsync-test/commit/1e213d87ea45c5c3c401f217c7fff34b5f224c07\\\">1e213d8</a> by nathanabay</small></p>\",\"audit\":1504}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S39",
+      "title": "Smart Commit done transition completes linked item",
+      "status": "PASS",
+      "seconds": 7.4,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-108",
+          "value": "625f32c3-80dc-4062-830b-0f3decc39ef7"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s39\",\"sha\":\"43defa7299b24f612e3717818371debb7ad7cce9\"}"
+        },
+        {
+          "label": "Smart Commit source",
+          "value": "{\"key\":\"GITSY-108\",\"sha\":\"43defa7299b24f612e3717818371debb7ad7cce9\",\"command\":\"#done\"}"
+        },
+        {
+          "label": "done command",
+          "value": "{\"sha\":\"43defa7299b24f612e3717818371debb7ad7cce9\",\"state\":\"164e607d-c48d-45e8-a646-b99ceef52e22\",\"audit\":1521}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S40",
+      "title": "Smart Commit executes once on real push redelivery",
+      "status": "PASS",
+      "seconds": 14.3,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-109",
+          "value": "82adbab4-3cfc-44f3-ae06-dddbd683f736"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s40\",\"sha\":\"3b333399e4031cb94c59de47894c81eed9fe98cf\"}"
+        },
+        {
+          "label": "Smart Commit source",
+          "value": "{\"key\":\"GITSY-109\",\"sha\":\"3b333399e4031cb94c59de47894c81eed9fe98cf\",\"command\":\"#comment [e2e 2610131635-9c1b] S40 once only\"}"
+        },
+        {
+          "label": "selected App delivery",
+          "value": "{\"id\":\"3848097454832566272\",\"guid\":\"b1f24d60-c725-11f1-92af-b0ecc4d0be43\",\"event\":\"push\"}"
+        },
+        {
+          "label": "App redelivery and backend duplicate",
+          "value": "{\"status\":202,\"duplicate\":{\"jobId\":\"github-b1f24d60-c725-11f1-92af-b0ecc4d0be43\",\"streamId\":\"1791910022955-0\"}}"
+        },
+        {
+          "label": "real redelivery",
+          "value": "{\"id\":\"3848097454832566272\",\"guid\":\"b1f24d60-c725-11f1-92af-b0ecc4d0be43\",\"event\":\"push\",\"jobId\":\"github-b1f24d60-c725-11f1-92af-b0ecc4d0be43\",\"streamId\":\"1791910022955-0\"}"
+        },
+        {
+          "label": "once-only comment",
+          "value": "{\"id\":\"f8c0786f-b595-4ed3-9f9b-3ed0f20bbd4b\",\"step\":\"sc:3b333399e4031cb94c59de47894c81eed9fe98cf:0:GITSY-109:comment\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S41",
+      "title": "Unknown Smart Commit transition is rejected and audited",
+      "status": "PASS",
+      "seconds": 8.1,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-110",
+          "value": "a003fbae-e582-48a3-9377-a83df66b5206"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s41\",\"sha\":\"c12d08b8ebaf715ea115dcc9a9834767daf7b9e6\"}"
+        },
+        {
+          "label": "Smart Commit source",
+          "value": "{\"key\":\"GITSY-110\",\"sha\":\"c12d08b8ebaf715ea115dcc9a9834767daf7b9e6\",\"command\":\"#nosuchstate-2610131635-9c1b\"}"
+        },
+        {
+          "label": "unknown transition audit",
+          "value": "{\"id\":1551,\"error\":\"GITSY-110: transition #nosuchstate-2610131635-9c1b matches no state in project 972d93a8-6889-46b8-9b47-93f9e7546afb\",\"detail\":{\"key\":\"GITSY-110\",\"sha\":\"c12d08b8ebaf715ea115dcc9a9834767daf7b9e6\",\"repoId\":1415216350,\"issueId\":\"a003fbae-e582-48a3-9377-a83df66b5206\",\"projectId\":\"972d93a8-6889-46b8-9b47-93f9e7546afb\",\"transition\":\"nosuchstate-2610131635-9c1b\"}}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S42",
+      "title": "Unknown PR key posts one bot problem report",
+      "status": "PASS",
+      "seconds": 16.5,
+      "evidence": [
+        {
+          "label": "mapping reportProblems",
+          "value": "true"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s42\",\"sha\":\"8e78ded2f46d2941feacd1f2abb2a4a2b2ca691f\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/99"
+        },
+        {
+          "label": "PR problem report",
+          "value": "{\"id\":6150574974,\"key\":\"GITSY-903513371\",\"body\":\"Git sync could not complete this action:\\n\\n- ` GITSY-903513371 does not match a work item in the linked Plane workspace, so this pull request is not linked to it. `\\n\\n<!-- git-sync-problem:fef4f6ee3a8ab2a808a15521d7bc49b6a8332b17275e52aa78fc297b7e1d66c2 -->\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S43",
+      "title": "Bad Smart Commit posts one commit problem report",
+      "status": "PASS",
+      "seconds": 10.5,
+      "evidence": [
+        {
+          "label": "mapping reportProblems",
+          "value": "true"
+        },
+        {
+          "label": "Plane item GITSY-111",
+          "value": "405e75b2-346f-4bb0-9380-bbc2ac2ddbfa"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s43\",\"sha\":\"58d1646fd63388db637853a3c5b37bb439801947\"}"
+        },
+        {
+          "label": "Smart Commit source",
+          "value": "{\"key\":\"GITSY-111\",\"sha\":\"58d1646fd63388db637853a3c5b37bb439801947\",\"command\":\"#nosuchstate-2610131635-9c1b\"}"
+        },
+        {
+          "label": "commit report",
+          "value": "{\"id\":204754912,\"sha\":\"58d1646fd63388db637853a3c5b37bb439801947\",\"body\":\"Git sync could not complete this action:\\n\\n- ` GITSY-111: #nosuchstate-2610131635-9c1b matches no Plane state. `\\n\\n<!-- git-sync-problem:46e2d149bd03cce32dfe01720ec5cb6a4b370c4a10462b0db7b3c2310e95d4ad -->\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S44",
+      "title": "Changed PR problem report is edited in place",
+      "status": "PASS",
+      "seconds": 21.2,
+      "evidence": [
+        {
+          "label": "mapping reportProblems",
+          "value": "true"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s44\",\"sha\":\"4334cb83474bf763b5efdfc8f438b6dd72f27931\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/100"
+        },
+        {
+          "label": "report edited",
+          "value": "{\"id\":6150582428,\"before\":\"GITSY-903513371\",\"after\":\"GITSY-903513372\",\"body\":\"Git sync could not complete this action:\\n\\n- ` GITSY-903513372 does not match a work item in the linked Plane workspace, so this pull request is not linked to it. `\\n\\n<!-- git-sync-problem:94ea28cb4fba4d8bc3f15fc58d69db4f4783f958aab0c097236fa66acc2bbe23 -->\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S45",
+      "title": "Reports disabled suppress both PR and commit notices",
+      "status": "PASS",
+      "seconds": 20.6,
+      "evidence": [
+        {
+          "label": "mapping reportProblems",
+          "value": "false"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s45\",\"sha\":\"ca490631bd6402e5782766c78770f7dd5ffab2f7\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/101"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s45-commit\",\"sha\":\"11b08d6d0c4d595e99dfa55d43614d70c4130b16\"}"
+        },
+        {
+          "label": "report opt-out",
+          "value": "{\"pr\":101,\"sha\":\"11b08d6d0c4d595e99dfa55d43614d70c4130b16\",\"rejectionAudit\":1610}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S46",
+      "title": "Real issue-comment redelivery has no second mirror effect",
+      "status": "PASS",
+      "seconds": 18.4,
+      "evidence": [
+        {
+          "label": "GitHub issue #102",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/102"
+        },
+        {
+          "label": "mirror fixture",
+          "value": "{\"issue\":102,\"item\":\"e9f5759a-8e51-4c85-b0e2-ead297fbd50b\"}"
+        },
+        {
+          "label": "selected App delivery",
+          "value": "{\"id\":\"3848097660548440064\",\"guid\":\"ead98f80-c725-11f1-9edf-782ecc44dc73\",\"event\":\"issue_comment\"}"
+        },
+        {
+          "label": "App redelivery and backend duplicate",
+          "value": "{\"status\":202,\"duplicate\":{\"jobId\":\"github-ead98f80-c725-11f1-9edf-782ecc44dc73\",\"streamId\":\"1791910117813-0\"}}"
+        },
+        {
+          "label": "real redelivery",
+          "value": "{\"id\":\"3848097660548440064\",\"guid\":\"ead98f80-c725-11f1-9edf-782ecc44dc73\",\"event\":\"issue_comment\",\"jobId\":\"github-ead98f80-c725-11f1-9edf-782ecc44dc73\",\"streamId\":\"1791910117813-0\"}"
+        },
+        {
+          "label": "mirrored comment deduplication",
+          "value": "{\"githubComment\":6150594400,\"planeComment\":\"b002e226-154a-4c6e-a33f-b15a2ec103b6\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S47",
+      "title": "Deleted item is orphaned on first sweep and GitHub remains untouched",
+      "status": "PASS",
+      "seconds": 14.8,
+      "evidence": [
+        {
+          "label": "GitHub issue #103",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/103"
+        },
+        {
+          "label": "mirror fixture",
+          "value": "{\"issue\":103,\"item\":\"581f54fa-0e62-42b1-a4c9-21f31fa318c6\"}"
+        },
+        {
+          "label": "first deletion sweep",
+          "value": "{\"activity\":[{\"id\":\"60e1d826-b919-4e0e-a2eb-9014e2955dfc\",\"verb\":\"deleted\",\"field\":\"issue\"}],\"first\":{\"result\":{\"checked\":1,\"orphaned\":1,\"archived\":0,\"errors\":0},\"links\":[{\"id\":92,\"status\":\"orphaned\",\"plane_archived_at\":null,\"missing_since\":null}]},\"githubState\":\"open\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S48",
+      "title": "Archived mirror stays active across two sweeps",
+      "status": "PASS",
+      "seconds": 23,
+      "evidence": [
+        {
+          "label": "GitHub issue #104",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/104"
+        },
+        {
+          "label": "mirror fixture",
+          "value": "{\"issue\":104,\"item\":\"43085c13-3552-445c-8735-f0cd0031537f\"}"
+        },
+        {
+          "label": "two archive sweeps",
+          "value": "{\"first\":{\"result\":{\"checked\":1,\"orphaned\":0,\"archived\":1,\"errors\":0},\"links\":[{\"id\":93,\"status\":\"active\",\"plane_archived_at\":\"2026-10-13T16:49:10.540Z\",\"missing_since\":null}]},\"second\":{\"result\":{\"checked\":1,\"orphaned\":0,\"archived\":1,\"errors\":0},\"links\":[{\"id\":93,\"status\":\"active\",\"plane_archived_at\":\"2026-10-13T16:49:10.540Z\",\"missing_since\":null}]}}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S49",
+      "title": "Backfill restores an existing PR reference",
+      "status": "PASS",
+      "seconds": 15.6,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-115",
+          "value": "8863df67-daf3-4053-a78d-debcf3174583"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e_2610131635-9c1b-s49\",\"sha\":\"814609162576b9c186c2813b69861af01cd900dd\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/105"
+        },
+        {
+          "label": "backfill restored reference",
+          "value": "{\"pr\":105,\"key\":\"GITSY-115\",\"beforeId\":94,\"afterId\":95,\"pages\":[{\"linked\":1,\"unresolved\":0,\"pullRequests\":1,\"issues\":0}]}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S50",
+      "title": "God-mode GitHub Sync page and sidebar render",
+      "status": "PASS",
+      "seconds": 6.8,
+      "evidence": [
+        {
+          "label": "screenshot",
+          "value": "/home/claudeuser/orca/workspaces/git_plane-intergration/seal/docs/impl/e2e-runs/2610131635-9c1b/s50.png"
+        },
+        {
+          "label": "rendered DOM",
+          "value": "{\"status\":200,\"found\":{\"GitHub Sync\":true,\"GitHub App\":true,\"Workspace GitHub App installations\":true},\"frames\":[{\"title\":\"GitHub Sync Admin Configuration\",\"src\":\"/git-sync/ui/admin\",\"width\":1110,\"height\":836,\"viewportHeight\":900}],\"finalUrl\":\"http://100.85.50.109:8090/god-mode/git-sync/\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S51",
+      "title": "Workspace GitHub Sync settings render at full height",
+      "status": "PASS",
+      "seconds": 6.2,
+      "evidence": [
+        {
+          "label": "screenshot",
+          "value": "/home/claudeuser/orca/workspaces/git_plane-intergration/seal/docs/impl/e2e-runs/2610131635-9c1b/s51.png"
+        },
+        {
+          "label": "rendered DOM",
+          "value": "{\"status\":200,\"found\":{\"GitHub Sync\":true,\"Repositories\":true,\"nathanabay/gitsync-test\":true},\"frames\":[{\"title\":\"GitHub Sync Workspace Configuration\",\"src\":\"/git-sync/ui/workspaces/gitsync-test\",\"width\":900,\"height\":772,\"viewportHeight\":900}],\"finalUrl\":\"http://100.85.50.109:8090/gitsync-test/settings/git-sync/\"}"
+        },
+        {
+          "label": "full-height iframe",
+          "value": "{\"title\":\"GitHub Sync Workspace Configuration\",\"src\":\"/git-sync/ui/workspaces/gitsync-test\",\"width\":900,\"height\":772,\"viewportHeight\":900}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S52",
+      "title": "Development panel renders inside work-item sidebar",
+      "status": "PASS",
+      "seconds": 8.4,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-116",
+          "value": "a69b206e-8783-4489-b7ee-0064822d68e1"
+        },
+        {
+          "label": "screenshot",
+          "value": "/home/claudeuser/orca/workspaces/git_plane-intergration/seal/docs/impl/e2e-runs/2610131635-9c1b/s52.png"
+        },
+        {
+          "label": "rendered DOM",
+          "value": "{\"status\":200,\"found\":{\"GITSY-116\":true,\"Development\":true,\"Start work\":true,\"nathanabay/gitsync-test\":true,\"Create branch\":true},\"frames\":[{\"title\":\"Development\",\"src\":\"/git-sync/ui/workspaces/gitsync-test/projects/972d93a8-6889-46b8-9b47-93f9e7546afb/work-items/a69b206e-8783-4489-b7ee-0064822d68e1/development\",\"width\":335,\"height\":384,\"viewportHeight\":900}],\"finalUrl\":\"http://100.85.50.109:8090/gitsync-test/browse/GITSY-116\"}"
+        },
+        {
+          "label": "work-item Development",
+          "value": "{\"key\":\"GITSY-116\",\"frame\":{\"title\":\"Development\",\"src\":\"/git-sync/ui/workspaces/gitsync-test/projects/972d93a8-6889-46b8-9b47-93f9e7546afb/work-items/a69b206e-8783-4489-b7ee-0064822d68e1/development\",\"width\":335,\"height\":384,\"viewportHeight\":900}}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    },
+    {
+      "id": "S60",
+      "title": "A GitHub issue with an empty body is mirrored, and clearing the body mirrors",
+      "status": "PASS",
+      "seconds": 30.7,
+      "evidence": [
+        {
+          "label": "GitHub #106 → GITSY-117",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/106"
+        },
+        {
+          "label": "cleared body",
+          "value": "Plane description cleared"
+        },
+        {
+          "label": "GitHub issue without body",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/107"
+        },
+        {
+          "label": "mirrored",
+          "value": "cff602c2-b790-410c-9e79-2a13124d62cf"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

@@ -351,6 +351,29 @@ export class PlaneClient {
    * The item's newest activity rows. v1.4.2 keeps activities when an item is deleted (DO_NOTHING) and
    * records `field: "archived_at"` on archive and restore, so they tell an archived item from a deleted one.
    */
+  /**
+   * E2E-2: the work item git-sync created under this external id, archived or not; null when Plane has none (or it
+   * was deleted). v1.4.2's list view answers an `external_source` + `external_id` query with the single item from
+   * `Issue.objects`, which hides soft-deleted rows but not archived ones (the detail view uses `issue_objects`, which
+   * hides both), and a miss is 404 "The requested resource does not exist.".
+   */
+  async findIssueByExternalId(slug: string, projectId: string, externalSource: string, externalId: string): Promise<PlaneExternalItem | null> {
+    const q = new URLSearchParams({ external_source: externalSource, external_id: externalId });
+    let item: PlaneExternalItem;
+    try {
+      item = await this.request<PlaneExternalItem>("GET", `${planeItemsPath(slug, projectId)}?${q}`);
+    } catch (err) {
+      if (err instanceof PlaneApiError && err.status === 404) return null;
+      throw err;
+    }
+    // Anything but the exact item (a page, another id) is not evidence about this one.
+    if (!item || typeof item !== "object" || Array.isArray(item) || typeof item.id !== "string" || !item.id
+      || item.external_id !== externalId || item.external_source !== externalSource) {
+      throw new PlaneApiError(502, {}, "Plane external-id lookup returned an unexpected body");
+    }
+    return item;
+  }
+
   async listIssueActivities(slug: string, projectId: string, issueId: string, perPage = 50): Promise<PlaneActivity[]> {
     const q = new URLSearchParams({ per_page: String(perPage), order_by: "-created_at" });
     const res = await this.request<PlanePage<PlaneActivity> | PlaneActivity[]>("GET", `${planeItemsPath(slug, projectId, issueId)}activities/?${q}`);
@@ -359,6 +382,22 @@ export class PlaneClient {
 }
 
 export interface PlaneProject { id?: string; archived_at?: string | null }
+export interface PlaneExternalItem { id: string; archived_at?: string | null; external_id?: string | null; external_source?: string | null }
+
+/** The `external_source` on every work item and comment git-sync creates; its `external_id` is the outbox intent id. */
+export const PLANE_EXTERNAL_SOURCE = "gitsync";
+
+/** E2E-2: remembers the external id of a work item git-sync created (migration 012). */
+export async function recordPlaneCreatedItem(db: Db, item: { planeIssueId: string; planeProjectId: string; externalSource: string; externalId: string }): Promise<void> {
+  await db.query(`INSERT INTO plane_created_items (plane_issue_id, plane_project_id, external_source, external_id) VALUES ($1, $2, $3, $4)
+    ON CONFLICT (plane_issue_id) DO NOTHING`, [item.planeIssueId, item.planeProjectId, item.externalSource, item.externalId]);
+}
+
+export async function planeCreatedItem(db: Db, planeIssueId: string, planeProjectId: string): Promise<{ externalSource: string; externalId: string } | null> {
+  const row = (await db.query<{ external_source: string; external_id: string }>(
+    "SELECT external_source, external_id FROM plane_created_items WHERE plane_issue_id = $1 AND plane_project_id = $2", [planeIssueId, planeProjectId])).rows[0];
+  return row ? { externalSource: row.external_source, externalId: row.external_id } : null;
+}
 export interface PlaneActivity { verb?: string | null; field?: string | null; new_value?: string | null; created_at?: string }
 interface PlanePage<T> { results?: T[]; next_cursor?: string | null; next_page_results?: boolean; total_pages?: number }
 /** Contract 3: a list read either returns everything (`complete: true`) or says it did not. */
@@ -522,7 +561,7 @@ export class PlaneWritePath {
       if (write.kind === "create_issue") {
         // v1.4.2 returns one object (not a page) for this external-id lookup; absence is 404.
         try {
-          existing = await this.#client.request("GET", `${path}?${new URLSearchParams({ external_source: "gitsync", external_id: intentId })}`, undefined, requestOptions);
+          existing = await this.#client.request("GET", `${path}?${new URLSearchParams({ external_source: PLANE_EXTERNAL_SOURCE, external_id: intentId })}`, undefined, requestOptions);
         } catch (err) { if (!(err instanceof PlaneApiError) || err.status !== 404) throw err; }
       } else {
         const comments = await this.#client.listAll<{ id?: unknown; external_id?: unknown; external_source?: unknown }>(path, requestOptions);
@@ -532,7 +571,7 @@ export class PlaneWritePath {
         if (!existing || typeof existing.id !== "string" || !existing.id || existing.external_id !== intentId || existing.external_source !== "gitsync") {
           throw new PlaneApiError(502, {}, "Plane intent lookup returned an invalid or mismatched object");
         }
-        await this.#recordCreated(existing.id);
+        await this.#recordCreated(existing.id, write, intentId);
         return { ok: true, id: existing.id };
       }
     }
@@ -557,7 +596,7 @@ export class PlaneWritePath {
         created = { id: body.id };
       }
       if (!created || typeof created.id !== "string" || !created.id) throw new PlaneApiError(502, {}, "Plane create response has no id");
-      await this.#recordCreated(created.id);
+      await this.#recordCreated(created.id, write, intentId);
       return { ok: true, id: created.id };
     } finally {
       for (const marker of markers) {
@@ -567,9 +606,13 @@ export class PlaneWritePath {
     }
   }
 
-  async #recordCreated(id: string | undefined): Promise<void> {
+  async #recordCreated(id: string | undefined, write: Extract<PlaneWrite, { kind: "create_issue" | "add_comment" }>, intentId: string | undefined): Promise<void> {
     if (!id) return;
     try { await recordAppliedOps(this.#db, [{ opHash: opHash("plane", id, "created", null), direction: "to_plane" }]); }
     catch { console.error("Plane create succeeded but its echo-ledger bookkeeping failed"); }
+    if (write.kind !== "create_issue" || !intentId) return;
+    // E2E-2: reconcile tells an archived item from a deleted one through this pair (see findIssueByExternalId).
+    try { await recordPlaneCreatedItem(this.#db, { planeIssueId: id, planeProjectId: write.projectId, externalSource: PLANE_EXTERNAL_SOURCE, externalId: intentId }); }
+    catch { console.error("Plane create succeeded but its external-id bookkeeping failed"); }
   }
 }

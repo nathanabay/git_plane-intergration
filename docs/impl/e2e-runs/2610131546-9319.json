@@ -1,0 +1,37 @@
+{
+  "runId": "2610131546-9319",
+  "startedAt": "2026-10-13T15:46:07.986Z",
+  "finishedAt": "2026-10-13T15:46:17.813Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S06"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S06",
+      "title": "Missing GitHub signature → 401",
+      "status": "PASS",
+      "seconds": 9.8,
+      "evidence": [
+        {
+          "label": "signature absent",
+          "value": "401 {\"error\":\"Missing signature\"}"
+        },
+        {
+          "label": "signature empty",
+          "value": "401 {\"error\":\"Missing signature\"}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

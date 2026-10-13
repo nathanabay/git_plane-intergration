@@ -1,9 +1,9 @@
 import { problemReportsEnabled, reportPlaneProblem } from "../github/problems.ts";
-// Build and deployment rollups (spec §7.4): check runs and deployments reach the work items of the PRs they belong to.
+// Build and deployment rollups (spec §7.4): commit statuses, check runs and deployments reach linked PR work items.
 import { classifyGithubError } from "../github/errors.ts";
 import { githubRepositoryWebUrl, readGithubCollection } from "../github/pr-automation.ts";
 import { appendAudit } from "../db/ledgers.ts";
-import { buildStatus, categorisedTitle, detectPreviews, upsertRollupLink } from "../sync/dev-info.ts";
+import { buildStatus, categorisedTitle, commitStatusBuildStatus, detectPreviews, upsertRollupLink } from "../sync/dev-info.ts";
 import type { RollupTarget } from "../sync/dev-info.ts";
 import type { InboundJob } from "../queue/index.ts";
 import { actorTokenFor, installationFor, withObjectLock } from "./context.ts";
@@ -61,7 +61,7 @@ export async function handleChecks(ctx: AppContext, job: InboundJob): Promise<vo
   }
 }
 
-/** A commit status changed (GitHub `status` event): CI can have just made an approved PR ready (F7). */
+/** A commit status changed: update the CI link, then reevaluate approved-PR readiness (F7). */
 export async function handleCommitStatus(ctx: AppContext, job: InboundJob): Promise<void> {
   const p: any = job.payload;
   const repoId = Number(p?.repository?.id);
@@ -74,9 +74,46 @@ export async function handleCommitStatus(ctx: AppContext, job: InboundJob): Prom
     const installationId = await installationFor(ctx, mapping, p);
     await deliveryScope.run(mappingScope(mapping, job), async () => {
       const octokit = await ctx.ghClient.installationOctokit(installationId);
+      await commitStatusBuild(ctx, job, mapping, octokit);
       await readiness(ctx, job, mapping, octokit, p?.sha, p?.state === "success");
     });
   }
+}
+
+/** E2E-5. Context7 /websites/github_en: status has root sha/state/context/target_url and a bounded
+ * branches array, not check_run/check_suite or PR numbers. Branches cannot establish PR authority. */
+async function commitStatusBuild(ctx: AppContext, job: InboundJob, mapping: Mapping, octokit: any): Promise<void> {
+  const p: any = job.payload;
+  const sha: unknown = p?.sha;
+  if (typeof sha !== "string" || !sha || typeof p?.context !== "string"
+    || !["pending", "success", "failure", "error"].includes(p?.state)) return;
+  // Serialize the current read and write registration: delayed deliveries read today's aggregate,
+  // instead of overwriting a failure with the success contained in an older signed payload.
+  await withObjectLock(ctx.db, `commit-status:${mapping.ghRepoId}:${sha}`, async () => {
+    const prs = await currentPullsForSha(ctx, mapping, octokit, sha);
+    const withTargets: { pr: any; targets: RollupTarget[] }[] = [];
+    for (const pr of prs) {
+      const targets = await linkedTargets(ctx, mapping, pr.number);
+      if (targets.length) withTargets.push({ pr, targets });
+    }
+    if (!withTargets.length) return;
+    // Context7 /websites/github_en_rest, /rest/commits/statuses: state is computed over every
+    // context, even when the response's statuses array is paginated. Do not reduce that array.
+    const combined = (await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/status",
+      { owner: mapping.owner, repo: mapping.repo, ref: sha })).data;
+    const status = commitStatusBuildStatus(combined);
+    const repoUrl = await githubRepositoryWebUrl(octokit,
+      { owner: mapping.owner, repo: mapping.repo, id: mapping.ghRepoId }, p.repository, ctx.config.GITHUB_API_BASE_URL);
+    for (const { pr, targets } of withTargets) {
+      // One link aggregates all commit-status contexts; check-run aggregates keep their own key.
+      // target_url describes one context and may already be the PR link (the real S37 payload).
+      // The commit URL shows the aggregate without replacing that PR link or trusting a CI href.
+      await putLink(ctx, job, targets, `commit-status:${mapping.ghRepoId}:${pr.number}`, {
+        title: categorisedTitle("CI", `Commit statuses · ${status}`),
+        url: `${repoUrl}/commit/${encodeURIComponent(sha)}`,
+      }, true);
+    }
+  });
 }
 
 /** The association endpoint returns introducing PRs, not every open PR at this head. */

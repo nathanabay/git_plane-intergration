@@ -1,0 +1,37 @@
+{
+  "runId": "2610131550-a957",
+  "startedAt": "2026-10-13T15:50:16.877Z",
+  "finishedAt": "2026-10-13T15:50:50.467Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S21"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S21",
+      "title": "GitHub comment → Plane, attributed",
+      "status": "PASS",
+      "seconds": 33.6,
+      "evidence": [
+        {
+          "label": "GitHub #60 → GITSY-70",
+          "value": "https://github.com/nathanabay/gitsync-test/issues/60"
+        },
+        {
+          "label": "Plane comment",
+          "value": "<p><strong>nathanabay</strong> commented on <a href=\"https://github.com/nathanabay/gitsync-test/issues/60#issuecomment-6149503532\">GitHub</a>:</p><p>A comment from GitHub e2e-2610131550-a957-S21-495b3</p>"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

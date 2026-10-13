@@ -1,0 +1,43 @@
+{
+  "runId": "2610131546-fd7c",
+  "startedAt": "2026-10-13T15:46:40.683Z",
+  "finishedAt": "2026-10-13T15:47:03.662Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S12"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S12",
+      "title": "A non-admin cannot reach admin routes; an admin cannot reach another workspace",
+      "status": "PASS",
+      "seconds": 23,
+      "evidence": [
+        {
+          "label": "member",
+          "value": "403,403,403,403,403,403,401,401,200"
+        },
+        {
+          "label": "member own-account route (allowed)",
+          "value": "200"
+        },
+        {
+          "label": "admin on other workspace / instance / encoded slugs",
+          "value": "403,403,403,403,401,404,404"
+        }
+      ],
+      "log": [
+        "other workspace e2e-2610131546-fd7c (c253fc18-413a-4b2f-96eb-141865ebf8c2)"
+      ],
+      "cleaned": true
+    }
+  ]
+}

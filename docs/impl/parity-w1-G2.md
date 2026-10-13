@@ -143,3 +143,43 @@ timeout 300 env NODE_OPTIONS=--max-old-space-size=1024 node --test --test-concur
 | `tests/writers/service.test.ts` | 1 passed, 0 failed; exit 0 | 10.7 s |
 
 All **101 tests passed**. The first assigned runs reproduced the fixture failures; the parity fixture needed a second correction to supply its closing reference tier, and its final full-file rerun passed. No other test files, builds, staging, commits or pushes were run.
+
+## E2E-4 — S34 non-closing references
+
+Acceptance gates, corrected by the driver against design §6: reproduce the real S34 title/body/branch input, retain explicit magic-word tiers without duplicate bare promotion, check every reference source and body suppression directives, and preserve non-closing workflow advancement while skipping its final merge state. Relation links alone have no state changes. Validate with affected capped unit files and a scoped typecheck; leave live e2e verification to the driver.
+
+The real code defect was duplicate classification: `scan()` emitted an explicit `non_closing` reference for `Ref GITSY-82`, then emitted the exact same occurrence again as a bare title `closing` reference. The strongest-tier rule selected the duplicate. The earlier instruction that non-closing references were link-only was corrected by the driver. [Design §6](../superpowers/specs/2026-10-10-plane-github-sync-design.md) requires them to advance through workflow states and skip only the final merge state; the original executor behavior was correct.
+
+`src/parse/references.ts` now records the positions of keys classified by magic words and excludes those exact occurrences from the bare scan. Separate occurrences and independent sources still compete by the documented strongest-tier rule. The branch path shares classification with the other sources while preserving case-insensitive bare closing keys. Title bare keys remain closing; body/commit bare keys remain relation. Body `skip KEY` / `ignore KEY` still suppress the identifier across branch, title, body and commits; title/branch occurrences of these words do not become suppression overrides. Public signatures, configured-word escaping, identifier normalization, source tie-breaking and creation directives are unchanged.
+
+`src/github/pr-automation.ts` has been restored: relation references never change state; non-closing references advance on non-merge events and are excluded from merge-state changes; closing references retain merge gating on all linked PRs. The original non-closing review-advancement test is restored exactly. The parser fix remains intact.
+
+Regressions in `tests/parse/references.test.ts` reproduce S34 (`e2e_run-s34`, `Ref GITSY-82`, bare body `GITSY-82`) and cover every default magic word/tier/source, mixed-case lists, independent bare/closing occurrences, cross-source precedence, skip/ignore overrides, literal configured phrases, normalized sequences and 256 independently classified occurrences. `tests/github/pr-automation.test.ts` feeds the parsed S34 tier into the actual executor and checks opened/ready/review workflow writes, no merged-state write or extra lookup, and an additive development link. Existing closing-merge and relation no-state regressions remain.
+
+Context7 was resolved with `npx ctx7@latest library` and queried with `docs` for each library fact used: `/websites/github_en_rest` documents PR title, body and head-branch inputs ([Pull requests REST](https://docs.github.com/en/rest/pulls/pulls)); `/websites/nodejs_latest-v24_x_api` documents strict/deep assertions and test contexts ([Node assert](https://nodejs.org/docs/latest-v24.x/api/assert.html), [Node test](https://nodejs.org/docs/latest-v24.x/api/test.html)). Reference tiers, strongest-source precedence and lifecycle permissions are this application's policy, established from the parser brief and the latest driver requirement, not GitHub or Plane API behavior. No provider endpoint or Plane schema changed.
+
+Guidance Mode review: [ATTACK-CLASSES — access control](/home/claudeuser/.claude/skills/security-audit/ATTACK-CLASSES.md:39) was rechecked against the actual business rule: non-closing workflow advancement is intended, with the final merge-state gate preserved. The earlier report's characterization of that advancement as a defect is withdrawn. [PROTOCOLS-RPC — envelope/payload identity](/home/claudeuser/.claude/skills/security-audit/PROTOCOLS-RPC-AND-MESSAGING.md:27) informed retaining source/occurrence identity rather than weakening strongest-tier precedence globally. [RESOURCE-EXHAUSTION — superlinear parsing/cardinality](/home/claudeuser/.claude/skills/security-audit/RESOURCE-EXHAUSTION-AND-AVAILABILITY.md:21) review found no new regex or nested per-key range search: classification uses a per-scan set of numeric match positions and constant-time membership checks. The bounded multi-occurrence test verifies classification without provider calls. Existing regex escaping and the global body suppression pass remain intact; no HTML/Markdown construction or mention enrichment changed.
+
+Initial unit validation (before the driver's policy correction):
+
+```sh
+timeout 300 env NODE_OPTIONS=--max-old-space-size=1024 node --test --test-concurrency=1 --test-timeout=60000 tests/parse/references.test.ts
+timeout 300 env NODE_OPTIONS=--max-old-space-size=1024 node --test --test-concurrency=1 --test-timeout=60000 tests/github/pr-automation.test.ts
+node scripts/typecheck.mjs src/parse/**/*.ts src/github/pr-automation.ts tests/parse/references.test.ts tests/github/pr-automation.test.ts
+```
+
+Results: parser **28 passed**, lifecycle **39 passed**, zero failures/skips; `typecheck passed (17 project files)`. Only the two affected unit files ran. No e2e suite, staging, commit or push was performed. The driver owns redeployment and the real S34 rerun.
+
+### Driver policy correction
+
+The executor gate and original review-advancement test were restored as requested. The parser-to-executor regression now proves non-closing opened/ready/review advancement and exclusion of the merged state. Context7 `/websites/nodejs_latest-v24_x_api` was resolved/queried again for strict assertion behavior; the earlier GitHub/Plane evidence remains applicable because their API behavior did not change. Reference-tier permissions follow the cited design §6 table.
+
+Final correction validation: each file ran with `timeout 300 env NODE_OPTIONS=--max-old-space-size=1024 node --test --test-concurrency=1 --test-timeout=60000 <file>`.
+
+| File | Result |
+| --- | --- |
+| `tests/a8/rule-engine.test.ts` | 22 passed, 0 failed; includes the reported non-closing workflow/merge regression |
+| `tests/github/pr-automation.test.ts` | 39 passed, 0 failed |
+| `tests/parse/references.test.ts` | 28 passed, 0 failed |
+
+All **89 tests passed**, zero skipped, all file exits 0. `node scripts/typecheck.mjs src/parse/**/*.ts src/github/pr-automation.ts tests/parse/references.test.ts tests/github/pr-automation.test.ts tests/a8/rule-engine.test.ts` returned `typecheck passed (49 project files)`. Guidance Mode review preserves the relation no-state restriction, non-closing merge exclusion, closing all-linked-PR merge gate, source classification and suppression boundaries. No e2e suite, staging, commit or push was performed.

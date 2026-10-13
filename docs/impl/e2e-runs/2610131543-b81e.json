@@ -1,0 +1,49 @@
+{
+  "runId": "2610131543-b81e",
+  "startedAt": "2026-10-13T15:43:56.791Z",
+  "finishedAt": "2026-10-13T15:44:18.623Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S45"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S45",
+      "title": "Reports disabled suppress both PR and commit notices",
+      "status": "PASS",
+      "seconds": 21.8,
+      "evidence": [
+        {
+          "label": "mapping reportProblems",
+          "value": "false"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e-2610131543-b81e-s45\",\"sha\":\"201fb89177c12610eb8ca66df218b25786051ea0\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/38"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e-2610131543-b81e-s45-commit\",\"sha\":\"521b1dd1cdb28f3be714d649a9cd1c728226c3bc\"}"
+        },
+        {
+          "label": "report opt-out",
+          "value": "{\"pr\":38,\"sha\":\"521b1dd1cdb28f3be714d649a9cd1c728226c3bc\",\"rejectionAudit\":657}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

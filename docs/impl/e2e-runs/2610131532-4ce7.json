@@ -1,0 +1,50 @@
+{
+  "runId": "2610131532-4ce7",
+  "startedAt": "2026-10-13T15:32:41.870Z",
+  "finishedAt": "2026-10-13T15:33:38.317Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S37"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 0,
+    "FAIL": 1,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S37",
+      "title": "User commit status produces CI rollup on linked item",
+      "status": "FAIL",
+      "error": "Error: timed out after 30s waiting for CI pass rollup after observed status delivery |     at waitFor (file:///home/claudeuser/orca/workspaces/git_plane-intergration/seal/scripts/e2e/lib.mjs:481:13) |     at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+      "seconds": 56.4,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-27",
+          "value": "fae74039-cd59-4578-92ef-e420b5363f32"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e-2610131532-4ce7-s37\",\"sha\":\"ee7aa78fdfb35df6755839bf62fb46389e3f5ca1\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/19"
+        },
+        {
+          "label": "processed user status",
+          "value": "{\"statusId\":56239231087,\"sha\":\"ee7aa78fdfb35df6755839bf62fb46389e3f5ca1\",\"deliveryId\":\"5b83bc84-c71b-11f1-828d-726f03905372\",\"audit\":357}"
+        },
+        {
+          "label": "panel after status",
+          "value": "{\"key\":\"GITSY-27\",\"title\":\"[e2e 2610131532-4ce7] S37\",\"prStatus\":\"OPEN\",\"prs\":[{\"title\":\"#19 [e2e 2610131532-4ce7] Fixes GITSY-27\",\"url\":\"https://github.com/nathanabay/gitsync-test/pull/19\",\"status\":\"OPEN\",\"review\":\"REVIEW\"}],\"builds\":[],\"deployments\":[],\"previews\":[],\"branches\":[],\"repos\":[{\"mappingId\":1,\"repo\":\"nathanabay/gitsync-test\",\"branchName\":\"GITSY-27-e2e-2610131532-4ce7-s37\",\"branchUrl\":\"https://github.com/nathanabay/gitsync-test/tree/GITSY-27-e2e-2610131532-4ce7-s37\"}],\"canCreateBranch\":true}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "runId": "2610131521-8fa5",
+  "startedAt": "2026-10-13T15:21:33.160Z",
+  "finishedAt": "2026-10-13T15:21:33.532Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S09"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S09",
+      "title": "Config API without a session → 401",
+      "status": "PASS",
+      "seconds": 0.4,
+      "evidence": [
+        {
+          "label": "anonymous",
+          "value": "/workspaces/gitsync-test/mappings=401, /workspaces/gitsync-test/health=401, /workspaces/gitsync-test/mappings/1/rules=401, /workspaces/gitsync-test/audit=401, /workspaces/gitsync-test/github/account=401, /instance/health=401, /instance/setup-check=401, /instance/github-app=401, /instance/disabled-mappings=401"
+        },
+        {
+          "label": "forged cookies",
+          "value": "401,401,401"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}

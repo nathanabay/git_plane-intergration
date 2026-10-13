@@ -1,0 +1,45 @@
+{
+  "runId": "2610131550-2edd",
+  "startedAt": "2026-10-13T15:50:58.467Z",
+  "finishedAt": "2026-10-13T15:51:16.461Z",
+  "planeUrl": "http://100.85.50.109:8090",
+  "repo": "nathanabay/gitsync-test",
+  "only": [
+    "S49"
+  ],
+  "keep": false,
+  "counts": {
+    "PASS": 1,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "knownFails": 0,
+  "results": [
+    {
+      "id": "S49",
+      "title": "Backfill restores an existing PR reference",
+      "status": "PASS",
+      "seconds": 18,
+      "evidence": [
+        {
+          "label": "Plane item GITSY-73",
+          "value": "3405e7a5-b869-4ed2-ad0b-aa0b1a43cb2d"
+        },
+        {
+          "label": "branch and commit",
+          "value": "{\"branch\":\"e2e-2610131550-2edd-s49\",\"sha\":\"12b3e7db548962b2b5ad5dae889eb0e46129b2e7\"}"
+        },
+        {
+          "label": "PR",
+          "value": "https://github.com/nathanabay/gitsync-test/pull/64"
+        },
+        {
+          "label": "backfill restored reference",
+          "value": "{\"pr\":64,\"key\":\"GITSY-73\",\"beforeId\":58,\"afterId\":59,\"pages\":[{\"linked\":1,\"unresolved\":1,\"pullRequests\":1,\"issues\":1}]}"
+        }
+      ],
+      "log": [],
+      "cleaned": true
+    }
+  ]
+}
