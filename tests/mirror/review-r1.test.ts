@@ -78,7 +78,7 @@ test("F3: real backfill of issue #5 mentioning WEB-12 cannot edit or close its r
   await onGithubIssue({ action: "closed", repository: { id: 555 }, issue }, deps);
   await onPlaneIssue(planeEvent("state", [], [], { state: { group: "completed" } }), deps);
   deepStrictEqual(plane.writes.map((w) => w.kind === "update_issue" ? w.fields : null), [{ name: issue.title }, { state: "s-done" }]);
-  deepStrictEqual(github.writes.map((w) => w.fields), [{ state: "closed" }]);
+  deepStrictEqual(github.writes.map((w) => w.fields), [{ state: "closed", state_reason: "completed" }]);
 });
 
 for (const field of ["labels", "label_ids"]) {

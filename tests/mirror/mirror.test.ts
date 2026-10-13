@@ -187,7 +187,8 @@ test("plane→github: the `github` label creates a labelled GitHub issue, links 
   strictEqual(create.kind, "create_issue");
   strictEqual(create.title, "Plane title");
   deepStrictEqual(create.labels, ["plane", "ui"]);
-  ok(create.body.startsWith("Hi there") && create.body.includes("Mirrored from Plane"));
+  // C6: Plane's <b> becomes Markdown bold (the converter keeps formatting instead of flattening it).
+  ok(create.body.startsWith("Hi **there**") && create.body.includes("Mirrored from Plane"), create.body);
   const link = (await db.query<any>(`SELECT * FROM sync_links WHERE plane_issue_id = 'pi-1'`)).rows[0];
   strictEqual(Number(link.gh_number), create.title ? 901 : 0);
   strictEqual(link.created_by, "label_sync");
@@ -208,9 +209,10 @@ test("plane→github: with the GitHub-wins default a Plane title edit is not app
   await linked(db, 41);
   strictEqual((await onPlaneIssue(planeJob("issue", "update", {}, { field: "name" }), deps)).action, "ignored");
   await onPlaneIssue(planeJob("issue", "update", { state: { id: "s-done", group: "completed" } }, { field: "state" }), deps);
-  deepStrictEqual(github.writes.map((w) => [w.kind, w.fields]), [["update_issue", { state: "closed" }]]);
+  // C4: a completed-group state closes the issue as completed (GitHub's `state_reason`).
+  deepStrictEqual(github.writes.map((w) => [w.kind, w.fields]), [["update_issue", { state: "closed", state_reason: "completed" }]]);
   await onPlaneIssue(planeJob("issue", "update", { state: { id: "s-prog", group: "started" } }, { field: "state" }), deps);
-  strictEqual(github.writes[1].fields.state, "open");
+  deepStrictEqual(github.writes[1].fields, { state: "open", state_reason: "reopened" });
 });
 
 test("plane→github: a source_of_truth:plane title and description are applied", async () => {
@@ -219,7 +221,8 @@ test("plane→github: a source_of_truth:plane title and description are applied"
   await db.query(`INSERT INTO conflict_policies (mapping_id, field, policy) VALUES (1, 'title', 'source_of_truth:plane'), (1, 'description', 'last_write_wins')`);
   await onPlaneIssue(planeJob("issue", "update", {}, { field: "name" }), deps);
   await onPlaneIssue(planeJob("issue", "update", {}, { field: "description_html" }), deps);
-  deepStrictEqual(github.writes.map((w) => w.fields), [{ title: "Plane title" }, { body: "Hi there" }]);
+  // C6: the description is converted to Markdown, so Plane's <b> arrives as **bold**.
+  deepStrictEqual(github.writes.map((w) => w.fields), [{ title: "Plane title" }, { body: "Hi **there**" }]);
   strictEqual(github.writes[0].number, 41);
 });
 

@@ -43,13 +43,13 @@ async function fixture(t: TestContext) {
       const method = String(init.method), body = init.body ? JSON.parse(String(init.body)) : null;
       planeCalls.push({ method, path, body });
       const json = (status: number, data: unknown) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
-      if (method === "GET" && /\/issues\/$/.test(path) && parsed.searchParams.has("external_id")) {
+      if (method === "GET" && /\/work-items\/$/.test(path) && parsed.searchParams.has("external_id")) {
         const existing = [...issues.values()].find((i) => i.external_id === parsed.searchParams.get("external_id") && i.external_source === parsed.searchParams.get("external_source"));
         return existing ? json(200, existing) : json(404, { error: "Not found" });
       }
       if (method === "GET" && /\/comments\/$/.test(path)) return json(200, { results: comments.get(path) ?? [], next_page_results: false });
       if (method === "GET") return json(200, { results: [], next_page_results: false });
-      if (method === "POST" && /\/issues\/$/.test(path)) {
+      if (method === "POST" && /\/work-items\/$/.test(path)) {
         const id = `partner-${++objectId}`;
         const issue = { id, ...body };
         createdIssueIds.push(id); issues.set(id, issue);
@@ -258,7 +258,7 @@ test("prev F5: create assignees resolve by GitHub ID despite rename, login reuse
     { id: 202, login: "other-login" }, { id: 101, login: "renamed" }, { login: "old-login" }];
   strictEqual((await onGithubIssue(payload, deps)).action, "created");
   await drain();
-  const create = h.plane.writes().find((w) => w.method === "POST" && /\/issues\/$/.test(w.path));
+  const create = h.plane.writes().find((w) => w.method === "POST" && /\/work-items\/$/.test(w.path));
   ok(create);
   deepStrictEqual(create.body.assignees, ["user-original"]);
 });

@@ -21,7 +21,8 @@ const prJob = () => ghJob("pull_request", prPayload("opened", {}, { body: "QLL-N
 async function fixture(t: TestContext, kind: "mirror" | "pr" = "mirror", maxAttempts = 1) {
   const h = await makeHarness();
   t.after(() => h.close());
-  await h.mapping({ smartCommits: false, rules: `- when: ${kind === "mirror" ? "issue.labeled" : "pull_request.opened"}\n  then: [{comment: original-rule}]\n` });
+  // C5 gates the GitHub cross-link comment by linkback; the mirror cases exercise that comment, so linkback is on for them.
+  await h.mapping({ smartCommits: false, linkback: kind === "mirror", rules: `- when: ${kind === "mirror" ? "issue.labeled" : "pull_request.opened"}\n  then: [{comment: original-rule}]\n` });
   const controls = { failGithubComment: false, failResume: false, resumeCalls: 0 };
   const rawPlane = h.ctx.plane, rawGithub = h.ctx.github;
   const outbox = createOrderedOutbox({ db: h.db, plane: rawPlane as any,
@@ -114,7 +115,7 @@ for (const kind of ["mirror", "pr"] as const) {
         if (lost && unavailable) throw new PlaneApiError(503, {}, "recovery lookup unavailable");
       }
       const result = await request<T>(...args);
-      if (!lost && method === "POST" && /\/issues\/$/.test(path)) { lost = true; throw new Error("response lost after commit"); }
+      if (!lost && method === "POST" && /\/work-items\/$/.test(path)) { lost = true; throw new Error("response lost after commit"); }
       return result;
     };
     await h.feed(job);
@@ -178,6 +179,15 @@ test("F2: a saved create result survives failure during local linking and re-opt
   deepStrictEqual((await query<any>("SELECT id, result FROM outbound_writes WHERE write->>'kind' = 'create_issue'")).rows[0], saved);
 });
 
+/**
+ * Reconcile A2: one unexplained 404 only marks a link missing ("awaiting_confirmation"); the next sweep that agrees
+ * orphans it (`not_found_twice`). Confirmation therefore takes two sweeps here, and the first must not orphan.
+ */
+async function confirmOrphan(h: Awaited<ReturnType<typeof makeHarness>>): Promise<void> {
+  strictEqual((await reconcileOnce({ db: h.db, plane: h.ctx.planeClient })).orphaned, 0, "a single 404 is not yet a confirmed orphan");
+  strictEqual((await reconcileOnce({ db: h.db, plane: h.ctx.planeClient })).orphaned, 1);
+}
+
 test("F2: successful but unlinked workflow cannot advance; confirmed orphan can get a replacement", async (t) => {
   const { h, drain } = await fixture(t);
   const key = "create:gh:ws:555#41:p-qll";
@@ -188,7 +198,7 @@ test("F2: successful but unlinked workflow cannot advance; confirmed orphan can 
   await h.db.query<any>(`INSERT INTO sync_links (plane_workspace_slug, plane_project_id, plane_issue_id, gh_repo_id,
     gh_number, gh_kind, tier, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
   [link.plane_workspace_slug, link.plane_project_id, link.plane_issue_id, link.gh_repo_id, link.gh_number, link.gh_kind, link.tier, link.created_by]);
-  strictEqual((await reconcileOnce({ db: h.db, plane: h.ctx.planeClient })).orphaned, 1);
+  await confirmOrphan(h);
   await h.feed(mirrorJob()); await drain();
   strictEqual(h.plane.createdIssueIds.length, 2);
 });
@@ -211,7 +221,7 @@ test("F2: confirmed orphan of a saved partner permits replacement even when its 
   await h.feed(mirrorJob());
   while ((await next())?.side === "plane") await execute();
   controls.failGithubComment = true; await rejects(execute());
-  strictEqual((await reconcileOnce({ db: h.db, plane: h.ctx.planeClient })).orphaned, 1);
+  await confirmOrphan(h);
   controls.failGithubComment = false;
   await h.feed(mirrorJob()); await drain();
   strictEqual(h.plane.createdIssueIds.length, 2);

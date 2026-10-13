@@ -12,7 +12,9 @@ import type { InboundJob } from "../queue/index.ts";
 import type { SecretString } from "../auth/identity.ts";
 import type { Db } from "../db/migrate.ts";
 import { appendAudit, upsertSyncLink } from "../db/ledgers.ts";
-import { escapeHtml, htmlToText, safeUrl, textToHtml } from "../github/html.ts";
+import { escapeHtml, safeUrl } from "../github/html.ts";
+import { htmlToText, textToHtml } from "./text.ts";
+import type { TextContext } from "./text.ts";
 import { resolveStateTarget } from "../github/pr-automation.ts";
 import type { StateRef } from "../github/pr-automation.ts";
 import { CONFLICT_FIELDS, DEFAULT_CONFLICT_POLICIES } from "../ui/validate.ts";
@@ -35,7 +37,9 @@ export function shouldApply(input: { field: MirrorField; from: Side; policy: Con
   // github_to_plane: GitHub is authoritative, so nothing from Plane is ever applied.
   if (input.direction === "github_to_plane" && input.from === "plane") return false;
   switch (input.policy) {
-    case "last_write_wins": return true; // events arrive in order, so the latest applied change wins
+    // Neither side delivers in occurrence order, so the reducers mirror the partner's current value (`freshest`),
+    // never an older delivered snapshot: whichever change was made last is what both sides end with.
+    case "last_write_wins": return true;
     case "source_of_truth:github": return input.from === "github";
     case "source_of_truth:plane": return input.from === "plane";
   }
@@ -50,6 +54,14 @@ export interface MirrorMapping {
   installationId: number;
   owner: string;
   repo: string;
+  /**
+   * C5: post the cross-link comment on GitHub and the Plane link. When the caller leaves it out, the mirror
+   * reads the mapping's `linkback_enabled` column; a missing row counts as on (the column defaults to true).
+   */
+  linkbackEnabled?: boolean;
+  /** C4: the Plane states a reopened and a closed GitHub issue map to. Unset means the mapping row decides. */
+  openStateId?: string | null;
+  closedStateId?: string | null;
 }
 
 export interface MirrorDeps {
@@ -67,10 +79,63 @@ export interface MirrorDeps {
   listStates?(projectId: string): Promise<StateRef[]>;
   planeIssueUrl?(slug: string, projectId: string, issueId: string): string;
   /**
+   * The GitHub web origin (C8: `https://github.com`, `https://<sub>.ghe.com` or the GHES base URL), used to build the
+   * Plane link to an issue the mirror created. GitHub → Plane links use the delivered `html_url` instead.
+   */
+  githubWebOrigin?: string;
+  /**
+   * C6: a Plane user's display name, for a mention of someone with no linked GitHub account (Plane → GitHub).
+   * Plane v1.4.2's mention-component carries only the user id. Without it such a mention reads "Unknown user".
+   */
+  planeUserDisplayName?(planeUserId: string): Promise<string | null>;
+  /**
    * The project's labels (`GET …/projects/{pid}/labels/`). Plane's label activity carries label UUIDs, and a
    * removed label is no longer in the webhook's expanded `data.labels`, so ids are resolved here when needed.
    */
   labelNames?(slug: string, projectId: string): Promise<{ id: string; name: string }[]>;
+  /**
+   * The GitHub issue as it is now (`GET /repos/{owner}/{repo}/issues/{issue_number}`), or null when it is gone.
+   * GitHub may deliver webhooks out of order, so snapshot fields are taken from this read when it is newer.
+   */
+  currentGithubIssue?(number: number): Promise<any | null>;
+  /** The Plane work item as it is now (`planeClient.getIssue`), or null when it is gone. Plane deliveries are unordered too. */
+  currentPlaneIssue?(issueId: string): Promise<any | null>;
+}
+
+/**
+ * A Plane display name as literal GitHub Markdown (security-audit ATTACK-CLASSES "Injection", second-order use: a
+ * name typed in Plane is rendered by GitHub). `@` becomes the full-width `＠` (U+FF20), so a name cannot mention or
+ * notify a user or `@org/team` (Context7 /websites/github_en: typing `@` plus a user or team name notifies them);
+ * Markdown punctuation is backslash-escaped so it cannot open a link, image or emphasis; line breaks are flattened and
+ * the length is capped.
+ */
+export function markdownLiteral(name: string): string {
+  return name.replace(/[\r\n\t]+/g, " ").trim().slice(0, 100).replace(/@/g, "\uFF20").replace(/[\\`*_{}\[\]()<>#+!|~]/g, (c) => `\\${c}`) || "Someone";
+}
+
+/**
+ * C6/C7: the context for G2's prose converter (src/sync/text.ts). GitHub → Plane: `@login` of a user linked in this
+ * workspace becomes Plane's `<mention-component entity_identifier=… entity_name="user_mention">`, an unlinked login a
+ * link to its profile, and `#123`, `owner/repo#123` and issue URLs links on the configured GitHub host (C8). Plane →
+ * GitHub: a mention becomes `@login`, or the display name for someone unlinked. Code spans and blocks are left alone.
+ * The writers hash the converted value, so the echo of a mirrored write is recognised and a round trip cannot loop.
+ */
+function proseContext(deps: MirrorDeps): TextContext {
+  return {
+    webOrigin: deps.githubWebOrigin ?? "https://github.com",
+    owner: deps.mapping.owner,
+    repo: deps.mapping.repo,
+    planeUserForGithubLogin: async (login) => {
+      const id = await deps.users.planeUserIdForGithubLogin(login);
+      return id ? { id } : null;
+    },
+    githubUserForPlaneId: async (planeUserId) => {
+      const login = await deps.users.githubLoginForPlaneUserId?.(planeUserId) ?? null;
+      if (login) return { login };
+      const displayName = await deps.planeUserDisplayName?.(planeUserId) ?? null;
+      return displayName ? { displayName: markdownLiteral(displayName) } : null;
+    },
+  };
 }
 
 export interface MirrorResult { action: "created" | "updated" | "ignored" | "deferred"; reason?: string; fields?: MirrorField[] }
@@ -152,6 +217,68 @@ export async function nextCreateGeneration(db: Db, key: string): Promise<string 
   return `${key}:generation:${last.sequence}`;
 }
 
+interface MirrorSettings { linkback: boolean; openStateId: string | null; closedStateId: string | null }
+
+const stateIdOf = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+
+/**
+ * The mapping's linkback toggle and chosen open/closed states (C4, C5). Values on the mapping win; otherwise the
+ * live row is read as JSON so the mirror keeps working on a database that predates the state columns.
+ */
+async function loadMirrorSettings(deps: MirrorDeps): Promise<MirrorSettings> {
+  const m = deps.mapping;
+  const need = m.linkbackEnabled === undefined || m.openStateId === undefined || m.closedStateId === undefined;
+  const row = need ? (await deps.db.query<{ row: Record<string, unknown> }>(
+    "SELECT to_jsonb(rm) AS row FROM repo_mappings rm WHERE rm.id = $1", [m.id])).rows[0]?.row ?? {} : {};
+  return {
+    linkback: m.linkbackEnabled ?? (row.linkback_enabled === undefined || row.linkback_enabled === null ? true : row.linkback_enabled === true),
+    openStateId: m.openStateId !== undefined ? stateIdOf(m.openStateId) : stateIdOf(row.open_state_id),
+    closedStateId: m.closedStateId !== undefined ? stateIdOf(m.closedStateId) : stateIdOf(row.closed_state_id),
+  };
+}
+
+export type MirrorStateResolution = { ok: true; stateId: string; chosen: boolean } | { ok: false; reason: string };
+
+/**
+ * C4: the Plane state for a GitHub issue that is closed (or open). The mapping's chosen state wins while it still
+ * exists in the project and is not a triage state (Plane v1.4.2 keeps triage states out of the default manager);
+ * otherwise today's default applies: the default *completed* state for closed, the default *unstarted* for open.
+ * `openFallback: false` (creates) leaves an open item in Plane's own default state when nothing was chosen.
+ */
+export function mirrorStateFor(states: StateRef[], closed: boolean, settings: Pick<MirrorSettings, "openStateId" | "closedStateId">,
+  opts: { openFallback?: boolean } = {}): MirrorStateResolution {
+  const chosen = closed ? settings.closedStateId : settings.openStateId;
+  const hit = chosen ? states.find((s) => s.id === chosen && lc(String(s.group)) !== "triage") : undefined;
+  if (hit) return { ok: true, stateId: hit.id, chosen: true };
+  if (!closed && opts.openFallback === false) return { ok: false, reason: "no open state chosen" };
+  const group = closed ? "completed" : "unstarted";
+  const r = resolveStateTarget(states, group);
+  return r.ok ? { ok: true, stateId: r.stateId, chosen: false } : { ok: false, reason: `no ${group} state in the Plane project` };
+}
+
+/** A chosen state that is gone is worth telling the admin about; the fallback state was used instead. */
+async function auditStateFallback(deps: MirrorDeps, closed: boolean, settings: MirrorSettings, r: MirrorStateResolution): Promise<void> {
+  const chosen = closed ? settings.closedStateId : settings.openStateId;
+  if (!chosen || (r.ok && r.chosen)) return;
+  await appendAudit(deps.db, { kind: "mirror_state_fallback", source: "mapping", workspaceSlug: deps.mapping.workspaceSlug, outcome: "fallback",
+    detail: { mappingId: deps.mapping.id, side: closed ? "closed" : "open", chosenStateId: chosen, usedStateId: r.ok ? r.stateId : null } });
+}
+
+/**
+ * C4, Plane → GitHub: the completed group closes as `completed`, the cancelled group as `not_planned`, any other
+ * group reopens. GitHub's `state_reason` accepts completed, not_planned, duplicate, reopened or null and is ignored
+ * unless the state changes (REST "Update an issue", Context7 /websites/github_en_rest).
+ */
+export function githubStateForGroup(group: string): { state: "open" | "closed"; state_reason: "completed" | "not_planned" | "reopened" } {
+  const g = lc(group);
+  if (g === "completed") return { state: "closed", state_reason: "completed" };
+  if (g === "cancelled") return { state: "closed", state_reason: "not_planned" };
+  return { state: "open", state_reason: "reopened" };
+}
+
+/** C5: the Plane link title for a mirrored GitHub issue. */
+const githubLinkTitle = (m: MirrorMapping, number: number | string) => `GitHub issue ${m.owner}/${m.repo}#${number}`;
+
 async function loadPolicies(db: Db, mappingId: number): Promise<Record<ConflictField, ConflictPolicy>> {
   const out = { ...DEFAULT_CONFLICT_POLICIES };
   const { rows } = await db.query<{ field: string; policy: ConflictPolicy }>(`SELECT field, policy FROM conflict_policies WHERE mapping_id = $1`, [mappingId]);
@@ -185,6 +312,25 @@ const labelNames = (labels: unknown): string[] =>
 
 const lc = (s: string) => s.toLowerCase();
 
+const stamp = (v: unknown): number | null => {
+  const t = typeof v === "string" ? Date.parse(v) : NaN;
+  return Number.isFinite(t) ? t : null;
+};
+
+/**
+ * The snapshot to mirror from: the current read when it is at least as new as the delivered one, else the delivery.
+ * Both GitHub and Plane document that deliveries can arrive in any order and a retry resends the original snapshot,
+ * so a delayed event must not write its older value over a newer one. Plane and GitHub both stamp `updated_at` on the
+ * object; a read without one, or a failed/absent read, leaves the delivered snapshot (the previous behavior).
+ */
+export function freshest(delivered: any, current: any): any {
+  if (!current || typeof current !== "object") return delivered;
+  const now = stamp(current.updated_at), then = stamp(delivered?.updated_at);
+  if (now === null || (then !== null && now < then)) return delivered;
+  // A field the read omits keeps the delivered value; the read is never a reason to blank a field.
+  return { ...delivered, ...Object.fromEntries(Object.entries(current).filter(([, v]) => v !== undefined)) };
+}
+
 // ---- GitHub → Plane ----------------------------------------------------------------------------------
 export async function onGithubIssue(payload: any, deps: MirrorDeps): Promise<MirrorResult> {
   // Pending continuations re-enter here too. Preserve delivery/replay identity while replacing
@@ -216,6 +362,8 @@ async function mirrorGithubIssue(payload: any, deps: MirrorDeps): Promise<Mirror
   const policies = await loadPolicies(db, mapping.id);
   const allowed = (field: MirrorField) => shouldApply({ field, from: "github", policy: policies[field], direction: mapping.syncDirection });
   const target = { slug: link.plane_workspace_slug, projectId: link.plane_project_id, issueId: link.plane_issue_id };
+  // Comments are additive history and keep their own identity; every other field mirrors GitHub's current value.
+  const current = payload.comment || !deps.currentGithubIssue ? issue : freshest(issue, await deps.currentGithubIssue(issue.number));
   const update = async (field: MirrorField, fields: Record<string, unknown>): Promise<MirrorResult> => {
     if (!allowed(field)) return ignored(`${field} policy keeps GitHub changes out of Plane`);
     await deps.plane.apply({ kind: "update_issue", ...target, fields });
@@ -228,7 +376,7 @@ async function mirrorGithubIssue(payload: any, deps: MirrorDeps): Promise<Mirror
     const who = escapeHtml(String(payload.comment.user?.login ?? payload.sender?.login ?? "someone"));
     const url = safeUrl(payload.comment.html_url);
     await deps.plane.apply({ kind: "add_comment", ...target,
-      commentHtml: `<p><strong>${who}</strong> commented${url ? ` on <a href="${escapeHtml(url)}">GitHub</a>` : " on GitHub"}:</p>${textToHtml(String(payload.comment.body ?? ""))}` });
+      commentHtml: `<p><strong>${who}</strong> commented${url ? ` on <a href="${escapeHtml(url)}">GitHub</a>` : " on GitHub"}:</p>${await textToHtml(String(payload.comment.body ?? ""), proseContext(deps))}` });
     return { action: "updated", fields: ["comments"] };
   }
 
@@ -237,11 +385,11 @@ async function mirrorGithubIssue(payload: any, deps: MirrorDeps): Promise<Mirror
       const changes = payload.changes ?? {};
       const results: MirrorField[] = [];
       if (changes.title !== undefined) {
-        const r = await update("title", { name: String(issue.title ?? "") });
+        const r = await update("title", { name: String(current.title ?? "") });
         if (r.action === "updated") results.push("title");
       }
       if (changes.body !== undefined) {
-        const r = await update("description", { description_html: textToHtml(String(issue.body ?? "")) });
+        const r = await update("description", { description_html: await textToHtml(String(current.body ?? ""), proseContext(deps)) });
         if (r.action === "updated") results.push("description");
       }
       return results.length ? { action: "updated", fields: results } : ignored("nothing to mirror in this edit");
@@ -250,8 +398,12 @@ async function mirrorGithubIssue(payload: any, deps: MirrorDeps): Promise<Mirror
     case "reopened": {
       if (!allowed("state")) return ignored("state policy keeps GitHub changes out of Plane");
       if (!deps.listStates) return ignored("no state lookup configured");
-      const r = resolveStateTarget(await deps.listStates(target.projectId), action === "closed" ? "completed" : "unstarted");
-      if (!r.ok) return ignored(`no ${action === "closed" ? "completed" : "unstarted"} state in the Plane project`);
+      // A delayed `closed` after a reopen (or the reverse) mirrors the issue's state now, not the action's.
+      const closed = typeof current.state === "string" ? lc(current.state) === "closed" : action === "closed";
+      const settings = await loadMirrorSettings(deps);
+      const r = mirrorStateFor(await deps.listStates(target.projectId), closed, settings);
+      await auditStateFallback(deps, closed, settings, r);
+      if (!r.ok) return ignored(r.reason);
       return update("state", { state: r.stateId });
     }
     case "labeled":
@@ -259,17 +411,17 @@ async function mirrorGithubIssue(payload: any, deps: MirrorDeps): Promise<Mirror
       if (lc(payload.label?.name ?? "") === GATE_LABELS.onGithub) return ignored("gate label");
       if (!allowed("labels")) return ignored("labels policy keeps GitHub changes out of Plane");
       if (deps.plane.plan) {
-        const { steps, labels } = planeLabelPlan(target, labelNames(issue.labels));
+        const { steps, labels } = planeLabelPlan(target, labelNames(current.labels));
         steps.push({ kind: "write", side: "plane", write: { kind: "update_issue", ...target, fields: { labels } } });
         await deps.plane.plan(undefined, steps, { target });
         return { action: "updated", fields: ["labels"] };
       }
-      return update("labels", { labels: await planeLabelIds(deps, target, labelNames(issue.labels)) });
+      return update("labels", { labels: await planeLabelIds(deps, target, labelNames(current.labels)) });
     }
     case "assigned":
     case "unassigned": {
       if (!allowed("assignees")) return ignored("assignees policy keeps GitHub changes out of Plane");
-      return update("assignees", { assignees: await planeAssigneeIds(deps, issue.assignees) });
+      return update("assignees", { assignees: await planeAssigneeIds(deps, current.assignees) });
     }
     default:
       return ignored(`action ${String(action)} is not mirrored`);
@@ -313,12 +465,22 @@ async function planeAssigneeIds(deps: MirrorDeps, assignees: unknown): Promise<s
   return ids;
 }
 
+/** C4 on create: a closed issue lands in the closed state; an open one in the chosen open state, if any. */
+async function applyCreateState(deps: MirrorDeps, issue: any, settings: MirrorSettings, fields: Record<string, unknown>): Promise<void> {
+  if (!deps.listStates) return;
+  const closed = issue.state === "closed";
+  if (!closed && !settings.openStateId) return;
+  const r = mirrorStateFor(await deps.listStates(deps.mapping.planeProjectId), closed, settings, { openFallback: false });
+  await auditStateFallback(deps, closed, settings, r);
+  if (r.ok) fields.state = r.stateId;
+}
+
 async function createPlaneItem(payload: any, deps: MirrorDeps): Promise<MirrorResult> {
   const { mapping, db } = deps;
   const issue = payload.issue;
   const slug = mapping.workspaceSlug;
   const projectId = mapping.planeProjectId;
-  const fields: Record<string, unknown> = { name: String(issue.title ?? ""), description_html: textToHtml(String(issue.body ?? "")) };
+  const fields: Record<string, unknown> = { name: String(issue.title ?? ""), description_html: await textToHtml(String(issue.body ?? ""), proseContext(deps)) };
 
   if (deps.plane.plan) return planPlaneCreate(payload, deps, fields);
 
@@ -328,10 +490,8 @@ async function createPlaneItem(payload: any, deps: MirrorDeps): Promise<MirrorRe
   if (labels.length) fields.labels = labels;
   const assignees = await planeAssigneeIds(deps, issue.assignees);
   if (assignees.length) fields.assignees = assignees;
-  if (issue.state === "closed" && deps.listStates) {
-    const s = resolveStateTarget(await deps.listStates(projectId), "completed");
-    if (s.ok) fields.state = s.stateId;
-  }
+  const settings = await loadMirrorSettings(deps);
+  await applyCreateState(deps, issue, settings, fields);
 
   const created = await deps.plane.apply({ kind: "create_issue", slug, projectId, fields });
   if (!created.id) throw new Error("Plane returned no id for the new work item");
@@ -344,9 +504,13 @@ async function createPlaneItem(payload: any, deps: MirrorDeps): Promise<MirrorRe
   const planeUrl = safeUrl(deps.planeIssueUrl?.(slug, projectId, created.id));
   await deps.plane.apply({ kind: "add_comment", slug, projectId, issueId: created.id,
     commentHtml: `<p>Mirrored from GitHub issue ${ghUrl ? `<a href="${escapeHtml(ghUrl)}">${escapeHtml(`${mapping.owner}/${mapping.repo}#${issue.number}`)}</a>` : escapeHtml(`${mapping.owner}/${mapping.repo}#${issue.number}`)}.</p>` });
-  await deps.github.apply({ kind: "comment", installationId: mapping.installationId, owner: mapping.owner, repo: mapping.repo,
-    repoId: mapping.ghRepoId, number: issue.number,
-    body: planeUrl ? `Linked to Plane work item: ${planeUrl}` : `Linked to a Plane work item (${created.id}).` });
+  // C5: one Plane link and one GitHub comment per pair, only while linkback is on.
+  if (settings.linkback) {
+    if (ghUrl) await deps.plane.apply({ kind: "add_link", slug, projectId, issueId: created.id, url: ghUrl, title: githubLinkTitle(mapping, issue.number) });
+    await deps.github.apply({ kind: "comment", installationId: mapping.installationId, owner: mapping.owner, repo: mapping.repo,
+      repoId: mapping.ghRepoId, number: issue.number,
+      body: planeUrl ? `Linked to Plane work item: ${planeUrl}` : `Linked to a Plane work item (${created.id}).` });
+  }
   await appendAudit(db, { kind: "mirror_created", source: "github", workspaceSlug: slug, outcome: "applied",
     detail: { direction: "github_to_plane", ghNumber: issue.number, planeIssueId: created.id, mappingId: mapping.id } });
   return { action: "created" };
@@ -361,10 +525,8 @@ async function planPlaneCreate(payload: any, deps: MirrorDeps, fields: Record<st
   if (!generation) return ignored("creation in progress");
   const assignees = await planeAssigneeIds(deps, issue.assignees);
   if (assignees.length) fields.assignees = assignees;
-  if (issue.state === "closed" && deps.listStates) {
-    const state = resolveStateTarget(await deps.listStates(projectId), "completed");
-    if (state.ok) fields.state = state.stateId;
-  }
+  const settings = await loadMirrorSettings(deps);
+  await applyCreateState(deps, issue, settings, fields);
   const target = { slug, projectId };
   const { steps, labels } = planeLabelPlan(target, labelNames(issue.labels));
   steps.unshift({ kind: "write", side: "plane", write: { kind: "upsert_label", ...target, name: GATE_LABELS.onPlane } });
@@ -384,8 +546,14 @@ async function planPlaneCreate(payload: any, deps: MirrorDeps, fields: Record<st
     { kind: "sync_link", link },
     { kind: "write", side: "plane", write: { kind: "add_comment", ...target, issueId: id,
       commentHtml: `<p>Mirrored from GitHub issue ${ghUrl ? `<a href="${escapeHtml(ghUrl)}">${reference}</a>` : reference}.</p>` } },
-    { kind: "write", side: "github", write: { kind: "comment", installationId: mapping.installationId, owner: mapping.owner,
-      repo: mapping.repo, repoId: mapping.ghRepoId, number: issue.number, body } },
+    // C5: the cross-links are steps of this generation's plan, so a replayed delivery never adds them twice
+    // (the plan registers once per generation key) and a retried link is absorbed by Plane's duplicate-URL check.
+    ...(settings.linkback ? [
+      ...(ghUrl ? [{ kind: "write" as const, side: "plane" as const, write: { kind: "add_link", ...target, issueId: id, url: ghUrl,
+        title: githubLinkTitle(mapping, issue.number) } }] : []),
+      { kind: "write" as const, side: "github" as const, write: { kind: "comment", installationId: mapping.installationId, owner: mapping.owner,
+        repo: mapping.repo, repoId: mapping.ghRepoId, number: issue.number, body } },
+    ] : []),
     { kind: "audit", entry: { kind: "mirror_created", source: "github", workspaceSlug: slug, outcome: "applied",
       detail: { direction: "github_to_plane", ghNumber: issue.number, planeIssueId: id, mappingId: mapping.id } } },
   );
@@ -431,6 +599,23 @@ async function labelNameById(data: any, deps: MirrorDeps, wanted: string[]): Pro
 
 const refId = (v: any): string | null => (typeof v === "string" ? v : typeof v?.id === "string" ? v.id : null);
 
+/**
+ * C2 attribution (spec §12.3): a change made in Plane by a user linked in this workspace is written to GitHub as that
+ * user (`asUser`). User access tokens "attribute activity to both a user and your app"; installation tokens attribute it
+ * to the app (Context7 /websites/github_en, "Best practices for creating a GitHub App"). The write path falls back to the
+ * installation token when the user has no usable token or GitHub refuses it, so this never drops a write. Automated
+ * writes (creates, cross-links, linkback) keep the service identity.
+ */
+async function planeAuthor(deps: MirrorDeps, ...candidates: unknown[]): Promise<{ asUser?: string }> {
+  const id = candidates.map(refId).find((x): x is string => !!x);
+  if (!id) return {};
+  const linked = await deps.db.query("SELECT 1 FROM user_map WHERE workspace_slug = $1 AND plane_user_id = $2", [deps.mapping.workspaceSlug, id]);
+  return linked.rows.length ? { asUser: id } : {};
+}
+
+/** Plane activity fields whose delivery carries a whole value (not a diff), so an older one must not win. */
+const FULL_VALUE_FIELDS = new Set(["name", "description", "description_html", "state", "state_id", "assignees", "assignee_ids"]);
+
 export async function onPlaneIssue(job: { event: string; payload: any }, deps: MirrorDeps): Promise<MirrorResult> {
   const scope = deliveryScope.getStore() ?? { deliveryId: randomUUID() };
   return deliveryScope.run({ ...scope, authority: freezeMappingAuthority(deps.mapping) },
@@ -456,9 +641,10 @@ async function mirrorPlaneIssue(job: { event: string; payload: any }, deps: Mirr
     const policies = await loadPolicies(db, mapping.id);
     if (!shouldApply({ field: "comments", from: "plane", policy: policies.comments, direction: mapping.syncDirection })) return ignored("comments policy keeps Plane changes out of GitHub");
     const who = data.actor?.display_name ?? body.activity?.actor?.display_name ?? "Someone";
+    // The comment's author, not whoever triggered the delivery; the "commented in Plane" line stays for the fallback.
     await deps.github.apply({ kind: "comment", installationId: mapping.installationId, owner: mapping.owner, repo: mapping.repo,
-      repoId: mapping.ghRepoId, number: link.gh_number,
-      body: `**${String(who)}** commented in Plane:\n\n${htmlToText(String(data.comment_html ?? data.comment_stripped ?? ""))}` });
+      repoId: mapping.ghRepoId, number: link.gh_number, ...(await planeAuthor(deps, data.actor, body.activity?.actor)),
+      body: `**${markdownLiteral(String(who))}** commented in Plane:\n\n${await htmlToText(String(data.comment_html ?? data.comment_stripped ?? ""), proseContext(deps))}` });
     return { action: "updated", fields: ["comments"] };
   }
   if (job.event !== "issue") return ignored(`event ${job.event} is not mirrored`);
@@ -477,28 +663,35 @@ async function mirrorPlaneIssue(job: { event: string; payload: any }, deps: Mirr
 
   const policies = await loadPolicies(db, mapping.id);
   const allowed = (field: MirrorField) => shouldApply({ field, from: "plane", policy: policies[field], direction: mapping.syncDirection });
-  const ghTarget = { installationId: mapping.installationId, owner: mapping.owner, repo: mapping.repo, repoId: mapping.ghRepoId, number: link.gh_number };
+  // Every field edit below is the Plane user's own change, so it carries their GitHub identity when linked.
+  const ghTarget = { installationId: mapping.installationId, owner: mapping.owner, repo: mapping.repo, repoId: mapping.ghRepoId, number: link.gh_number,
+    ...(await planeAuthor(deps, body.activity?.actor)) };
   // Plane sends one delivery per changed field (§1.3); `activity.field` says which.
   const field: string = String(body.activity?.field ?? "");
+  // Full-value fields mirror the item as it is now when that is newer than this delivery (Plane's deliveries are
+  // independent tasks with no order, and a retry resends the snapshot taken when the change was queued).
+  // Label deliveries are diffs (old_value/new_value), which stay correct in any order.
+  const snapshot = FULL_VALUE_FIELDS.has(field) && deps.currentPlaneIssue ? freshest(data, await deps.currentPlaneIssue(issueId)) : data;
+  const fresher = snapshot !== data;
 
   switch (field) {
     case "name":
       if (!allowed("title")) return ignored("title policy keeps Plane changes out of GitHub");
-      await deps.github.apply({ ...ghTarget, kind: "update_issue", fields: { title: String(data.name ?? "") } });
+      await deps.github.apply({ ...ghTarget, kind: "update_issue", fields: { title: String(snapshot.name ?? "") } });
       return { action: "updated", fields: ["title"] };
     case "description":
     case "description_html":
       if (!allowed("description")) return ignored("description policy keeps Plane changes out of GitHub");
-      await deps.github.apply({ ...ghTarget, kind: "update_issue", fields: { body: htmlToText(String(data.description_html ?? "")) } });
+      await deps.github.apply({ ...ghTarget, kind: "update_issue", fields: { body: await htmlToText(String(snapshot.description_html ?? ""), proseContext(deps)) } });
       return { action: "updated", fields: ["description"] };
     case "state":
     case "state_id": {
       if (!allowed("state")) return ignored("state policy keeps Plane changes out of GitHub");
-      let group: string | undefined = typeof data.state?.group === "string" ? data.state.group : undefined;
-      const stateId = refId(data.state) ?? (typeof data.state_id === "string" ? data.state_id : null);
+      let group: string | undefined = typeof snapshot.state?.group === "string" ? snapshot.state.group : undefined;
+      const stateId = refId(snapshot.state) ?? (typeof snapshot.state_id === "string" ? snapshot.state_id : null);
       if (!group && stateId && deps.listStates) group = (await deps.listStates(mapping.planeProjectId)).find((s) => s.id === stateId)?.group;
       if (!group) return ignored("cannot tell which state group the item moved to");
-      await deps.github.apply({ ...ghTarget, kind: "update_issue", fields: { state: group === "completed" || group === "cancelled" ? "closed" : "open" } });
+      await deps.github.apply({ ...ghTarget, kind: "update_issue", fields: githubStateForGroup(group) });
       return { action: "updated", fields: ["state"] };
     }
     // Plane reports the request-body key: the API says `labels`/`assignees`, the web app `label_ids`/`assignee_ids`.
@@ -525,9 +718,10 @@ async function mirrorPlaneIssue(job: { event: string; payload: any }, deps: Mirr
     case "assignee_ids": {
       if (!allowed("assignees")) return ignored("assignees policy keeps Plane changes out of GitHub");
       if (!deps.users.githubLoginForPlaneUserId) return ignored("no Plane-to-GitHub user lookup configured");
-      // The activity is the delivered change. Prefer its array (including []) over an expanded
-      // snapshot, which may already reflect another edit when Plane serializes the delivery.
-      const planeIds = idList(Array.isArray(body.activity?.new_value) ? body.activity.new_value : data.assignees);
+      // A newer read is the item's assignee set now. Otherwise the activity is the delivered change: prefer its
+      // array (including []) over the expanded snapshot, which may already reflect another edit.
+      const planeIds = fresher ? idList(snapshot.assignees ?? snapshot.assignee_ids)
+        : idList(Array.isArray(body.activity?.new_value) ? body.activity.new_value : data.assignees);
       const logins: string[] = [];
       const seen = new Set<string>();
       for (const id of planeIds) {
@@ -551,7 +745,12 @@ async function createGithubIssue(data: any, issueId: string, names: string[], de
   const { mapping, db } = deps;
   const slug = mapping.workspaceSlug;
   const planeUrl = safeUrl(deps.planeIssueUrl?.(slug, mapping.planeProjectId, issueId));
-  const description = htmlToText(String(data.description_html ?? ""));
+  const settings = await loadMirrorSettings(deps);
+  // C5: the Plane link points at the new issue on the configured GitHub host (C8), never a hardcoded one.
+  const origin = safeUrl(deps.githubWebOrigin ?? "https://github.com")?.replace(/\/+$/, "");
+  const issuesBase = origin ? `${origin}/${mapping.owner}/${mapping.repo}/issues/` : null;
+  const linkbackBody = planeUrl ? `Linked to Plane work item: ${planeUrl}` : `Linked to a Plane work item (${issueId}).`;
+  const description = await htmlToText(String(data.description_html ?? ""), proseContext(deps));
   const footer = planeUrl ? `\n\n---\nMirrored from Plane: ${planeUrl}` : "\n\n---\nMirrored from Plane.";
   // Creating the issue with the label creates the `plane` gate label on the repository if absent.
   const labels = [GATE_LABELS.onGithub, ...names.filter((n) => lc(n) !== GATE_LABELS.onPlane)];
@@ -568,6 +767,12 @@ async function createGithubIssue(data: any, issueId: string, names: string[], de
       { kind: "sync_link", link },
       { kind: "write", side: "plane", write: { kind: "add_comment", slug, projectId: mapping.planeProjectId, issueId,
         commentHtml: resultText(`<p>Mirrored to GitHub issue ${escapeHtml(`${mapping.owner}/${mapping.repo}#`)}`, number, ".</p>") } },
+      ...(settings.linkback ? [
+        ...(issuesBase ? [{ kind: "write" as const, side: "plane" as const, write: { kind: "add_link", slug, projectId: mapping.planeProjectId, issueId,
+          url: resultText(issuesBase, number), title: resultText(githubLinkTitle(mapping, ""), number) } }] : []),
+        { kind: "write" as const, side: "github" as const, write: { kind: "comment", installationId: mapping.installationId, owner: mapping.owner,
+          repo: mapping.repo, repoId: mapping.ghRepoId, number, body: linkbackBody } },
+      ] : []),
       { kind: "audit", entry: { kind: "mirror_created", source: "plane", workspaceSlug: slug, outcome: "applied",
         detail: { direction: "plane_to_github", ghNumber: number, planeIssueId: issueId, mappingId: mapping.id } } },
     ], { pendingLink: { direction: "plane_to_github", ...link },
@@ -583,6 +788,12 @@ async function createGithubIssue(data: any, issueId: string, names: string[], de
   });
   await deps.plane.apply({ kind: "add_comment", slug, projectId: mapping.planeProjectId, issueId,
     commentHtml: `<p>Mirrored to GitHub issue ${escapeHtml(`${mapping.owner}/${mapping.repo}#${created.number}`)}.</p>` });
+  if (settings.linkback) {
+    if (issuesBase) await deps.plane.apply({ kind: "add_link", slug, projectId: mapping.planeProjectId, issueId,
+      url: `${issuesBase}${created.number}`, title: githubLinkTitle(mapping, created.number) });
+    await deps.github.apply({ kind: "comment", installationId: mapping.installationId, owner: mapping.owner, repo: mapping.repo,
+      repoId: mapping.ghRepoId, number: created.number, body: linkbackBody });
+  }
   await appendAudit(db, { kind: "mirror_created", source: "plane", workspaceSlug: slug, outcome: "applied",
     detail: { direction: "plane_to_github", ghNumber: created.number, planeIssueId: issueId, mappingId: mapping.id } });
   return { action: "created" };
