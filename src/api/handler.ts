@@ -5,10 +5,16 @@ import type { Route } from "../index.ts";
 import type { InboundJob } from "../queue/index.ts";
 
 export interface WebhookDeps {
-  planeSecret: string;
+  /** A1: several secrets are accepted while one is rotated, so no delivery signed with either is refused. */
+  planeSecret: string | readonly string[];
   /** A string, or a function read per delivery so a rotated secret applies without a restart (F6). */
   githubSecret: string | (() => Promise<string>);
   enqueue(job: InboundJob): Promise<void>;
+  /**
+   * A1: keeps a verified Plane delivery in Postgres when it cannot be queued. Plane v1.4.2 retries only
+   * transport failures, never an HTTP answer, so a 503 would lose the event for good.
+   */
+  spool?(job: InboundJob): Promise<void>;
   maxBodyBytes?: number;
 }
 
@@ -78,8 +84,12 @@ export function createWebhookRoutes(deps: WebhookDeps): Route[] {
       return;
     }
 
-    const expectedSig = createHmac("sha256", deps.planeSecret).update(body).digest("hex");
-    if (signature.length !== expectedSig.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
+    const secrets = (typeof deps.planeSecret === "string" ? [deps.planeSecret] : deps.planeSecret).filter((s) => s);
+    const signedBy = (secret: string) => {
+      const expectedSig = createHmac("sha256", secret).update(body).digest("hex");
+      return signature.length === expectedSig.length && timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig));
+    };
+    if (!secrets.some(signedBy)) {
       res.writeHead(401, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Invalid signature" }));
       return;
@@ -100,17 +110,21 @@ export function createWebhookRoutes(deps: WebhookDeps): Route[] {
       return;
     }
 
+    const job: InboundJob = { source: "plane", deliveryId, event, receivedAt: new Date().toISOString(), payload };
     try {
-      await deps.enqueue({
-        source: "plane",
-        deliveryId,
-        event,
-        receivedAt: new Date().toISOString(),
-        payload
-      });
-    } catch (err) {
-      res.writeHead(503, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Service Unavailable" }));
+      await deps.enqueue(job);
+    } catch {
+      // 2xx only once the event is persisted somewhere: the maintenance job replays the spool (A1).
+      try {
+        if (!deps.spool) throw new Error("no spool");
+        await deps.spool(job);
+      } catch {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Service Unavailable" }));
+        return;
+      }
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ queued: false, spooled: true }));
       return;
     }
 

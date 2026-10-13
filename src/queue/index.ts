@@ -17,6 +17,8 @@ export interface InboundJob {
   event: string;
   receivedAt: string;
   payload: unknown;
+  /** Queue-only state for bounded deferred retries, never part of the signed payload. */
+  _rateLimitAttempts?: number;
 }
 
 export interface Queues {

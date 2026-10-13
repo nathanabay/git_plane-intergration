@@ -11,6 +11,67 @@ import { PlaneApiError, PlaneWritePath, TriageWriteRejected, UnknownPlaneState, 
 import type { PlaneWrite } from "../sync/plane.ts";
 import { QUEUE_NAMES } from "./index.ts";
 import type { InboundJob } from "./index.ts";
+import { classifyGithubError, GithubRateLimitError, githubErrorStatus, rememberGithubRateLimit } from "../github/errors.ts";
+import { createHash } from "node:crypto";
+import { normalizeValue } from "../sync/ophash.ts";
+
+const PLANE_CONTENT_TTL_MS = 5 * 60_000;
+
+/** A Plane comment has a durable object ID; transport delivery UUIDs change on retry. */
+export function planeCommentIdentity(job: InboundJob): string | null {
+  const p = job.payload as any;
+  if (job.source !== "plane" || job.event !== "issue_comment" || !["create", "created"].includes(p?.action)
+    || typeof p?.data?.id !== "string" || !p.data.id) return null;
+  const ref = (v: any) => typeof v === "string" ? v : typeof v?.id === "string" ? v.id : null;
+  const identity = { workspace: p.workspace_id ?? p.workspace_slug ?? ref(p.data.workspace),
+    project: ref(p.data.project), issue: ref(p.data.issue), comment: p.data.id };
+  return `plane-comment-${createHash("sha256").update(normalizeValue(identity)).digest("hex")}`;
+}
+
+async function claimPlaneComment(db: Db, identity: string): Promise<boolean> {
+  const rows = await db.query(`INSERT INTO webhook_deliveries (source, delivery_id) VALUES ('plane', $1)
+    ON CONFLICT (source, delivery_id) DO UPDATE SET received_at = now()
+    WHERE webhook_deliveries.received_at < now() - ($2 * interval '1 millisecond') RETURNING delivery_id`,
+  [`content:${identity}`, PLANE_CONTENT_TTL_MS]);
+  return rows.rows.length > 0;
+}
+
+export interface DeferredJob {
+  data: any;
+  token?: string;
+  attemptsMade: number;
+  opts: { attempts?: number };
+  updateData(data: any): Promise<void>;
+  moveToDelayed(timestamp: number, token?: string): Promise<void>;
+}
+
+/** Used by all workers: postpone at an absolute server deadline without occupying a worker. */
+export async function processQueueJob<T>(job: DeferredJob, work: () => Promise<T>,
+  opts: { outbound?: boolean; token?: string; now?: () => number; db?: Db } = {}): Promise<T> {
+  const now = opts.now ?? Date.now;
+  try { return await work(); }
+  catch (err) {
+    if (err instanceof OrderedWriteDeferredError) {
+      await job.moveToDelayed(err.retryAt ?? now() + err.retryAfterMs, opts.token ?? job.token);
+      throw new DelayedError();
+    }
+    const count = Number(job.data?._rateLimitAttempts ?? 0);
+    const classified = classifyGithubError(err, { now: now(), attempt: count });
+    if (classified.kind === "rate_limited") {
+      const attempts = count + ((err as { requestMade?: unknown } | null)?.requestMade === false ? 0 : 1);
+      if (attempts >= (job.opts.attempts ?? (opts.outbound ? 30 : 10)))
+        throw new UnrecoverableError("rate-limit retry budget exhausted");
+      if (err instanceof GithubRateLimitError && err.key)
+        await rememberGithubRateLimit(opts.db, err.key, classified.retryAt, false);
+      await job.updateData({ ...job.data, _rateLimitAttempts: attempts });
+      await job.moveToDelayed(classified.retryAt, opts.token ?? job.token);
+      throw new DelayedError();
+    }
+    if (opts.outbound && isPermanentWriteError(err, job.attemptsMade))
+      throw new UnrecoverableError(err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+}
 
 /** A creation echo may have arrived before its id was recorded; retry shortly instead of treating it as a human event (F13). */
 export class CreateInFlightError extends Error {
@@ -91,15 +152,26 @@ export async function processInbound(
     await auditDelivery(job, deps, "duplicate");
     return "duplicate";
   }
+  // A new transport ID is not a new comment. Keep a stable reducer identity for durable writes
+  // even beyond the short content-claim TTL; explicit audit replay bypasses this admission filter.
+  const commentIdentity = planeCommentIdentity(job);
+  const replay = Boolean(job.writeDeliveryId && job.writeDeliveryId !== job.deliveryId);
+  const auditJob = commentIdentity && !replay ? { ...job, writeDeliveryId: commentIdentity } : job;
+  let claimedComment = false;
   let outcome: InboundOutcome;
   try {
-    outcome = await classifyAndHandle(job, deps);
+    if (commentIdentity && !replay) {
+      claimedComment = await claimPlaneComment(deps.db, commentIdentity);
+      if (!claimedComment) { await auditDelivery(job, deps, "duplicate"); return "duplicate"; }
+    }
+    outcome = await classifyAndHandle(commentIdentity && !replay ? { ...job, deliveryId: commentIdentity } : job, deps);
   } catch (err) {
+    if (claimedComment) await forgetDelivery(deps.db, "plane", `content:${commentIdentity}`);
     await forgetDelivery(deps.db, job.source, job.deliveryId); // let BullMQ's retry process it
     const isFinal = attemptInfo ? (attemptInfo.attemptsMade >= attemptInfo.maxAttempts || attemptInfo.attemptsMade + 1 >= attemptInfo.maxAttempts) : true;
-    if (isFinal && !(job as any)._auditedFinal) {
+    if (isFinal && classifyGithubError(err).kind !== "rate_limited" && !(job as any)._auditedFinal) {
       (job as any)._auditedFinal = true;
-      await auditDelivery(job, deps, "failed", err instanceof Error ? err.message : String(err));
+      await auditDelivery(auditJob, deps, "failed", err instanceof Error ? err.message : String(err));
     }
     throw err;
   }
@@ -112,7 +184,7 @@ export async function processInbound(
   } catch {
     // best-effort cleanup
   }
-  await auditDelivery(job, deps, outcome);
+  await auditDelivery(auditJob, deps, outcome);
   return outcome;
 }
 
@@ -184,16 +256,13 @@ export function isPermanentWriteError(err: unknown, attemptsMade = 0): boolean {
   if (err instanceof TriageWriteRejected || (err instanceof Error && err.name === "TriageWriteRejected")) return true;
   if (err instanceof UnknownPlaneState || (err instanceof Error && err.name === "UnknownPlaneState")) return true;
   if (err instanceof Error && /unknown Plane state id/.test(err.message)) return true;
-  const e = err as { status?: number; response?: { status?: number; headers?: Record<string, unknown> } } | null;
-  const status = err instanceof PlaneApiError ? err.status : e?.status ?? e?.response?.status;
+  const status = err instanceof PlaneApiError ? err.status : githubErrorStatus(err);
   if (typeof status !== "number" || status < 400 || status >= 500 || status === 408 || status === 429) return false;
   // 401 (e.g. credential rotation) is retriable for bounded attempts (up to 5 attempts) to ride out rotation (F13)
   if (status === 401) {
     return attemptsMade >= 5;
   }
-  const h = e?.response?.headers ?? {};
-  const rateLimited = status === 403 && (h["retry-after"] !== undefined || h["x-ratelimit-remaining"] === "0");
-  return !rateLimited;
+  return classifyGithubError(err).kind !== "rate_limited";
 }
 
 /** 5 s doubling to a 10 minute ceiling: with 30 attempts an outage of several hours is ridden out (§4, F9). */
@@ -239,21 +308,7 @@ export function startWorkers(opts: {
     }
   };
   const make = <T>(name: string, fn: (job: Job<T>, token?: string) => Promise<unknown>, extra: Record<string, unknown> = {}, outbound = false) => {
-    const process = outbound
-      ? async (job: Job<T>, token?: string) => {
-          try {
-            return await fn(job, token);
-          } catch (err) {
-            if (err instanceof OrderedWriteDeferredError || (err instanceof Error && err.name === "OrderedWriteDeferredError")) {
-              const retryAfter = (err as any).retryAfterMs ?? 100;
-              await job.moveToDelayed(Date.now() + retryAfter, token ?? job.token);
-              throw new DelayedError();
-            }
-            if (isPermanentWriteError(err, job.attemptsMade)) throw new UnrecoverableError(err instanceof Error ? err.message : String(err));
-            throw err;
-          }
-        }
-      : (job: Job<T>) => fn(job);
+    const process = (job: Job<T>, token?: string) => processQueueJob(job, () => fn(job, token), { outbound, token, db: opts.inbound.db });
     const w = new Worker<T>(name, process, { ...base, concurrency: 1, ...extra });
     w.on("error", (err) => console.error(`worker ${name} error: ${err.message}`));
     w.on("failed", (job, err) => {
