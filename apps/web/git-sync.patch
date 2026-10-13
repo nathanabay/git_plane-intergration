@@ -76,6 +76,25 @@ index 452d214..0bacf0a 100644
 +    ])
 +  ])
 +];
+diff --git a/apps/web/core/components/issues/issue-detail/sidebar.tsx b/apps/web/core/components/issues/issue-detail/sidebar.tsx
+index 8077c4e..2a6a5a7 100644
+--- a/apps/web/core/components/issues/issue-detail/sidebar.tsx
++++ b/apps/web/core/components/issues/issue-detail/sidebar.tsx
+@@ -249,6 +249,14 @@ export const IssueDetailsSidebar = observer(function IssueDetailsSidebar(props:
+               />
+             </SidebarPropertyListItem>
+           </div>
++          {/* git-sync: Development panel, served by the git-sync service on Plane's origin. */}
++          <iframe
++            src={`/git-sync/ui/workspaces/${encodeURIComponent(workspaceSlug)}/projects/${encodeURIComponent(projectId)}/work-items/${encodeURIComponent(issueId)}/development`}
++            title="Development"
++            allow="clipboard-write"
++            className="mb-4 w-full border-none"
++            style={{ height: "24rem" }}
++          />
+         </div>
+       </div>
+     </>
 diff --git a/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx b/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx
 index dbc9306..3592c90 100644
 --- a/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx
