@@ -153,7 +153,7 @@ export async function upsertSyncLink(db: Db, link: { planeWorkspaceSlug: string,
     INSERT INTO sync_links (plane_workspace_slug, plane_project_id, plane_issue_id, gh_repo_id, gh_number, gh_kind, tier, created_by, status)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active')
     ON CONFLICT (plane_issue_id, gh_repo_id, gh_number)
-    DO UPDATE SET status = 'active', orphaned_at = NULL, tier = EXCLUDED.tier, created_by = EXCLUDED.created_by
+    DO UPDATE SET status = 'active', orphaned_at = NULL, missing_since = NULL, tier = EXCLUDED.tier, created_by = EXCLUDED.created_by
     RETURNING id
   `, [link.planeWorkspaceSlug, link.planeProjectId, link.planeIssueId, link.ghRepoId, link.ghNumber, link.ghKind, link.tier, link.createdBy]);
   return res.rows[0].id;
@@ -181,8 +181,87 @@ export async function appendAudit(db: Db, entry: { kind: string, source?: string
   return res.rows[0].id;
 }
 
+/** The Plane item answered: it is visible, so neither archived nor missing (A2). */
 export async function markLinkChecked(db: Db, id: string | number): Promise<void> {
-  await db.query(`UPDATE sync_links SET last_checked_at = NOW() WHERE id = $1`, [id]);
+  await db.query(`UPDATE sync_links SET last_checked_at = NOW(), plane_archived_at = NULL, missing_since = NULL WHERE id = $1`, [id]);
+}
+
+/** A2: the item or its project is archived in Plane. The link stays active and keeps being checked. */
+export async function markLinkArchived(db: Db, id: string | number): Promise<void> {
+  await db.query(`UPDATE sync_links SET last_checked_at = NOW(), plane_archived_at = COALESCE(plane_archived_at, NOW()), missing_since = NULL WHERE id = $1`, [id]);
+}
+
+/**
+ * A2: an unexplained 404. Returns when it was first seen: `null` means this sweep is the first to see it,
+ * so the caller must wait for a later sweep to agree before orphaning.
+ */
+export async function markLinkMissing(db: Db, id: string | number): Promise<Date | null> {
+  const res = await db.query<{ previous: string | Date | null }>(`
+    UPDATE sync_links l SET missing_since = COALESCE(l.missing_since, NOW()), last_checked_at = NOW()
+    FROM (SELECT id, missing_since AS previous FROM sync_links WHERE id = $1) prior
+    WHERE l.id = prior.id
+    RETURNING prior.previous
+  `, [id]);
+  const previous = res.rows[0]?.previous;
+  return previous ? new Date(previous) : null;
+}
+
+// ---- Plane ingress spool and health (A1) -----------------------------------------------------------------
+export interface SpooledDelivery { id: string | number; source: "plane" | "github"; delivery_id: string; event: string; received_at: string | Date; payload: unknown; attempts: number }
+
+/** Keeps a verified delivery that could not be queued. A repeat of the same delivery id is a no-op. */
+export async function spoolInbound(db: Db, job: { source: "plane" | "github"; deliveryId: string; event: string; receivedAt: string; payload: unknown }): Promise<void> {
+  await db.query(`
+    INSERT INTO inbound_spool (source, delivery_id, event, received_at, payload) VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (source, delivery_id) DO NOTHING
+  `, [job.source, job.deliveryId, job.event, job.receivedAt, JSON.stringify(job.payload ?? null)]);
+}
+
+export async function listSpooled(db: Db, limit: number): Promise<SpooledDelivery[]> {
+  return (await db.query<SpooledDelivery>(`SELECT * FROM inbound_spool ORDER BY id ASC LIMIT $1`, [limit])).rows;
+}
+
+export async function deleteSpooled(db: Db, id: string | number): Promise<void> {
+  await db.query(`DELETE FROM inbound_spool WHERE id = $1`, [id]);
+}
+
+export async function markSpoolFailed(db: Db, id: string | number, error: string): Promise<void> {
+  await db.query(`UPDATE inbound_spool SET attempts = attempts + 1, last_error = $2 WHERE id = $1`, [id, error.slice(0, 500)]);
+}
+
+/** When the newest delivery from `source` was taken off the queue, or null if none is on record. */
+export async function lastDeliveryAt(db: Db, source: "plane" | "github"): Promise<Date | null> {
+  const res = await db.query<{ at: string | Date | null }>(`SELECT max(received_at) AS at FROM webhook_deliveries WHERE source = $1`, [source]);
+  const at = res.rows[0]?.at;
+  return at ? new Date(at) : null;
+}
+
+export interface IngressHealth { silentSince: Date | null; latestChangeAt: Date | null; lastDeliveryAt: Date | null; checkedAt: Date }
+
+export async function readIngressHealth(db: Db, source: "plane" | "github"): Promise<IngressHealth | null> {
+  const r = (await db.query<any>(`SELECT * FROM ingress_health WHERE source = $1`, [source])).rows[0];
+  if (!r) return null;
+  const d = (v: unknown) => (v ? new Date(v as string) : null);
+  return { silentSince: d(r.silent_since), latestChangeAt: d(r.latest_change_at), lastDeliveryAt: d(r.last_delivery_at), checkedAt: new Date(r.checked_at) };
+}
+
+/** Records one health check. Returns the previous `silent_since`, so the caller can alert on a change. */
+export async function writeIngressHealth(db: Db, source: "plane" | "github", h: { silent: boolean; latestChangeAt: Date | null; lastDeliveryAt: Date | null }): Promise<Date | null> {
+  const previous = (await readIngressHealth(db, source))?.silentSince ?? null;
+  await db.query(`
+    INSERT INTO ingress_health (source, silent_since, latest_change_at, last_delivery_at, checked_at)
+    VALUES ($1, CASE WHEN $2::boolean THEN NOW() ELSE NULL END, $3, $4, NOW())
+    ON CONFLICT (source) DO UPDATE SET
+      silent_since = CASE WHEN $2::boolean THEN COALESCE(ingress_health.silent_since, NOW()) ELSE NULL END,
+      latest_change_at = EXCLUDED.latest_change_at, last_delivery_at = EXCLUDED.last_delivery_at, checked_at = NOW()
+  `, [source, h.silent, h.latestChangeAt, h.lastDeliveryAt]);
+  return previous;
+}
+
+/** Distinct Plane projects that have a repository mapping, for the ingress health check. */
+export async function listMappedPlaneProjects(db: Db): Promise<{ workspaceSlug: string; projectId: string }[]> {
+  const res = await db.query<{ workspace_slug: string; plane_project_id: string }>(`SELECT DISTINCT workspace_slug, plane_project_id FROM repo_mappings ORDER BY workspace_slug, plane_project_id`);
+  return res.rows.map((r) => ({ workspaceSlug: r.workspace_slug, projectId: r.plane_project_id }));
 }
 
 export async function upsertDevInfoLink(db: Db, link: { planeIssueId: string; key: string; planeLinkId: string }): Promise<void> {

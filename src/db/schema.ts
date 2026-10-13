@@ -9,6 +9,9 @@ export const TABLES = {
   userLinkTombstones: "user_link_tombstones",
   userLinkLocks: "user_link_locks",
   githubCredentialState: "github_credential_state",
+  inboundSpool: "inbound_spool",
+  ingressHealth: "ingress_health",
+  oauthStates: "oauth_states",
 } as const;
 
 export interface SyncLinkRow {
@@ -24,4 +27,8 @@ export interface SyncLinkRow {
   status: "active" | "orphaned";
   orphaned_at: string | Date | null;
   last_checked_at: string | Date | null;
+  /** A2: set while the Plane item (or its project) is archived; the link stays active. */
+  plane_archived_at?: string | Date | null;
+  /** A2: first sweep that got an unexplained 404; a second sweep that agrees orphans the link. */
+  missing_since?: string | Date | null;
 }
