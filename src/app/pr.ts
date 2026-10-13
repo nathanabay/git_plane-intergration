@@ -1,11 +1,14 @@
 // Pull requests (spec §6, §7.1, §7.4): parse references, link the work items, run the lifecycle rules,
 // keep the PR rollup link on every linked item, and say so on the GitHub side if linkback is on.
 import { appendAudit, upsertSyncLink } from "../db/ledgers.ts";
-import { checkPrReadiness, resolveStateTarget, prEventToRuleEvent } from "../github/pr-automation.ts";
-import type { LinkedIssue } from "../github/pr-automation.ts";
+import { classifyGithubError } from "../github/errors.ts";
+import { problemReportsEnabled, reportGithubProblem } from "../github/problems.ts";
+import { checkPrReadiness, readPrReviews, resolveStateTarget, prEventToRuleEvent, shouldReevaluatePrReadiness } from "../github/pr-automation.ts";
+import type { LinkedIssue, OctokitRequest } from "../github/pr-automation.ts";
 import { parseReferences, resolveReferences } from "../parse/references.ts";
 import type { IssueRef } from "../parse/references.ts";
-import { createPlanRoot, nextCreateGeneration } from "../sync/mirror.ts";
+import { createPlanRoot, freshest, nextCreateGeneration } from "../sync/mirror.ts";
+import { planeItemsPath, planeWorkspacePath } from "../sync/plane.ts";
 import { prRollupKey, prRollupTitle, upsertRollupLink } from "../sync/dev-info.ts";
 import type { RollupTarget } from "../sync/dev-info.ts";
 import type { InboundJob } from "../queue/index.ts";
@@ -43,15 +46,65 @@ async function otherPrStates(ctx: AppContext, issueId: string, thisRepoId: numbe
   return out;
 }
 
-async function reviewsOf(ctx: AppContext, mapping: Mapping, payload: any, number: number): Promise<{ state: string; user?: { login?: string } | null }[] | undefined> {
+type Review = { state: string; user?: { login?: string } | null };
+
+/**
+ * Every review of a PR, in GitHub's chronological order (audit G6/G16), through the same complete reader readiness
+ * uses (`readPrReviews`). The latest decisions are on the last page, so a partial read stays `complete: false`; a
+ * malformed page throws. Callers must not treat either as the whole set.
+ */
+export async function listPrReviews(octokit: OctokitRequest, repo: { owner: string; repo: string }, number: number): Promise<{ items: Review[]; complete: boolean }> {
+  const read = await readPrReviews(octokit, repo, number);
+  return { items: read.items.map((r) => ({ state: String(r.state ?? ""), user: r.user ?? null })), complete: read.complete };
+}
+
+/** The review list for the rollup, or undefined when it cannot be read completely: the rollup then reads REVIEW, not a stale decision. */
+async function reviewsOf(ctx: AppContext, mapping: Mapping, payload: any, number: number): Promise<Review[] | undefined> {
   try {
     const octokit = await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, payload));
-    const res = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", { owner: mapping.owner, repo: mapping.repo, pull_number: number, per_page: 100 });
-    return Array.isArray(res.data) ? res.data : undefined;
+    const read = await listPrReviews(octokit, { owner: mapping.owner, repo: mapping.repo }, number);
+    return read.complete ? read.items : undefined;
   } catch {
-    return undefined; // the rollup then reads REVIEW rather than failing the delivery
+    return undefined; // the rollup is refreshed by the PR's next delivery; it never fails this one after its rules ran
   }
 }
+
+/**
+ * The PR as GitHub reports it now, when that read is at least as new as the delivery (audit G10: GitHub may deliver
+ * webhooks out of order). Read before the delivery changes anything, so a throttled or failed read retries it whole.
+ * A PR the App can no longer see keeps the delivered snapshot.
+ */
+async function currentPrOf(ctx: AppContext, mapping: Mapping, payload: any): Promise<{ pr: any; fresh: boolean }> {
+  const delivered = payload.pull_request;
+  let read: unknown = null;
+  try {
+    const octokit = await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, payload));
+    read = (await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", { owner: mapping.owner, repo: mapping.repo, pull_number: delivered.number })).data;
+  } catch (err) {
+    const kind = classifyGithubError(err).kind;
+    if (kind !== "not_found" && kind !== "permission") throw err;
+  }
+  const pr = freshest(delivered, read);
+  return { pr, fresh: pr !== delivered };
+}
+
+/**
+ * A lifecycle trigger the PR's current state contradicts is an older delivery arriving late (a `closed` after the
+ * reopen, an `opened` after the merge): applying it would move the work item backwards. A merge is final.
+ */
+export function staleLifecycle(trigger: string, now: any): boolean {
+  const state = prStateOf(now);
+  switch (trigger) {
+    case "pull_request.merged": return false;
+    case "pull_request.closed_unmerged": return state !== "closed_unmerged";
+    case "pull_request.drafted": return state !== "open" || now?.draft !== true;
+    case "pull_request.opened": return state !== "open" || now?.draft === true;
+    default: return state !== "open"; // reopened, review requested, approved, changes requested
+  }
+}
+
+/** Approvals and stage changes after which an already-approved, green PR can become ready (audit G15); shared with G2's callers. */
+const readinessEvent = (job: InboundJob): boolean => shouldReevaluatePrReadiness(job.event, job.payload);
 
 /** `{ID}-NEW` in a PR body (§6): a new work item in that project, linked, in the started group. */
 async function createRequested(ctx: AppContext, mapping: Mapping, job: InboundJob, identifiers: string[]): Promise<LinkedItem[]> {
@@ -59,7 +112,7 @@ async function createRequested(ctx: AppContext, mapping: Mapping, job: InboundJo
   const pr = p.pull_request;
   const out: LinkedItem[] = [];
   if (identifiers.length === 0) return out;
-  const projects = await ctx.planeClient.listAll<{ id: string; identifier: string }>(`/workspaces/${mapping.workspaceSlug}/projects/`);
+  const projects = await ctx.planeClient.listAll<{ id: string; identifier: string }>(planeWorkspacePath(mapping.workspaceSlug, "projects"));
   for (const identifier of identifiers) {
     const project = projects.find((x) => x.identifier?.toUpperCase() === identifier);
     if (!project) {
@@ -229,10 +282,38 @@ async function deferPendingPr(ctx: AppContext, mapping: Mapping, job: InboundJob
   return { owned, pending: pending.rows.length > 0, identifiers };
 }
 
+/**
+ * N2: keys in the PR that name no work item are reported on the PR itself, behind the mapping's "Report problems" toggle,
+ * and only when the delivery's sender is a GitHub account linked in this workspace.
+ * Only a 404 is reported: Plane's identifier endpoint answers 404 when the project exists but the sequence does not, and
+ * 403 for an unknown project (or one the service cannot see), which is how stray tokens such as `UTF-8` resolve.
+ * G2's helper keeps one comment per PR (stable key `pr-unresolved:<number>`, marked and found by the App bot), registers
+ * a new intent only when the message set changes, and edits that comment in place; it runs under the PR's frozen authority.
+ */
+async function reportUnresolvedKeys(ctx: AppContext, mapping: Mapping, prNumber: number, unknown: IssueRef[], statuses: Record<string, number>, sender: any): Promise<void> {
+  const missing = [...new Set(unknown.filter((u) => statuses[u.identifier] === 404).map((u) => u.identifier))];
+  if (!missing.length) return;
+  // Only for someone linked in this workspace (by stable GitHub id). The 404-only report would otherwise let anyone who
+  // can open a PR on a public repository learn which Plane project keys and item numbers exist (security-audit
+  // ATTACK-CLASSES "Feature abuse and data leakage": enumeration through side effects).
+  if (!Number.isSafeInteger(sender?.id)) return;
+  const linked = await ctx.db.query("SELECT 1 FROM user_map WHERE workspace_slug = $1 AND gh_id = $2", [mapping.workspaceSlug, sender.id]);
+  if (!linked.rows.length) return;
+  const scoped = deliveryScope.getStore()?.authority;
+  const authority = scoped?.mappingId === String(mapping.id) ? scoped : freezeMappingAuthority(mapping);
+  if (!(await problemReportsEnabled(ctx.db, authority))) return;
+  if (!ctx.github.plan) throw new Error("problem reports require the durable GitHub outbox");
+  await reportGithubProblem({ enabled: true, authority, plan: ctx.github.plan }, {
+    owner: mapping.owner, repo: mapping.repo, key: `pr-unresolved:${prNumber}`, target: { kind: "issue", number: prNumber },
+    messages: missing.map((id) => `${id} does not match a work item in the linked Plane workspace, so this pull request is not linked to it.`),
+  });
+}
+
 async function handleForMapping(ctx: AppContext, mapping: Mapping, job: InboundJob): Promise<void> {
   const p: any = job.payload;
   const pr = p.pull_request;
   const slug = mapping.workspaceSlug;
+  const now = await currentPrOf(ctx, mapping, p);
   const deferred = await deferPendingPr(ctx, mapping, job);
   const parsed = parseReferences({
     ...(typeof pr.head?.ref === "string" ? { branch: pr.head.ref } : {}),
@@ -243,6 +324,7 @@ async function handleForMapping(ctx: AppContext, mapping: Mapping, job: InboundJ
   const { found, unknown, statuses } = await resolveReferences(ctx.planeClient, slug, parsed.refs);
   if (unknown.length) {
     await appendAudit(ctx.db, { kind: "reference_unresolved", source: "github", deliveryId: job.deliveryId, workspaceSlug: slug, detail: { repoId: mapping.ghRepoId, number: pr.number, identifiers: unknown.map((u) => u.identifier), statuses }, outcome: "ignored" });
+    await reportUnresolvedKeys(ctx, mapping, pr.number, unknown, statuses, p.sender);
   }
 
   const items: LinkedItem[] = [];
@@ -273,23 +355,30 @@ async function handleForMapping(ctx: AppContext, mapping: Mapping, job: InboundJ
   // F7/F8: readiness is judged from GitHub and targets the PR's stored links, so it does not depend on this delivery naming
   // an item. It runs after the delivery's own lifecycle rules (`pull_request.approved` included): when both points are in
   // the table the ready state must be the one the item ends in.
-  const approval = job.event === "pull_request_review" && p.action === "submitted" && String(p.review?.state ?? "").toLowerCase() === "approved";
+  // An approval, or a stage change (ready for review, reopened) of a PR that may already be approved and green; judged
+  // on the PR as it is now, so a late `ready_for_review` after the PR went back to draft does not fire.
   const readyAfter = async () => {
-    if (approval && !deferred.pending) await fireReadyForMerge(ctx, mapping, job, await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, p)), pr);
+    if (readinessEvent(job) && !deferred.pending) await fireReadyForMerge(ctx, mapping, job, await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, p)), now.pr);
   };
   if (items.length === 0) { await readyAfter(); return; }
 
-  await completeItems(ctx, mapping, job, items.filter((it) => !deferred.owned.has(it.issueId)), fresh.filter((it) => !deferred.owned.has(it.issueId)), readyAfter);
+  await completeItems(ctx, mapping, job, now, items.filter((it) => !deferred.owned.has(it.issueId)), fresh.filter((it) => !deferred.owned.has(it.issueId)), readyAfter);
 }
 
 /** Lifecycle rules for the given items, then (optionally) readiness, the PR rollup link and the linkback comment (§7.1, §7.4). */
-async function completeItems(ctx: AppContext, mapping: Mapping, job: InboundJob, items: LinkedItem[], fresh: LinkedItem[], afterRules?: () => Promise<void>): Promise<void> {
+async function completeItems(ctx: AppContext, mapping: Mapping, job: InboundJob, now: { pr: any; fresh: boolean }, items: LinkedItem[], fresh: LinkedItem[], afterRules?: () => Promise<void>): Promise<void> {
   const p: any = job.payload;
   const pr = p.pull_request;
   const slug = mapping.workspaceSlug;
   // ---- lifecycle rules ---------------------------------------------------------------------------
   const ruleEvent = prEventToRuleEvent(job.event, p);
-  if (ruleEvent) {
+  const stale = ruleEvent !== null && now.fresh && staleLifecycle(ruleEvent.trigger, now.pr);
+  if (ruleEvent && stale) {
+    await appendAudit(ctx.db, { kind: "rule_match", source: "github", deliveryId: job.deliveryId, workspaceSlug: slug,
+      detail: { trigger: ruleEvent.trigger, number: pr.number, current: prStateOf(now.pr), draft: now.pr?.draft === true }, outcome: "ignored",
+      error: "the pull request has changed since this delivery; an older lifecycle event does not move the work item back" });
+  }
+  if (ruleEvent && !stale) {
     const merged = ruleEvent.trigger === "pull_request.merged";
     const issues: LinkedIssue[] = [];
     for (const it of items) {
@@ -301,12 +390,14 @@ async function completeItems(ctx: AppContext, mapping: Mapping, job: InboundJob,
   await afterRules?.();
 
   // ---- development information (§7.4) ------------------------------------------------------------
-  const reviews = prStateOf(pr) === "open" ? await reviewsOf(ctx, mapping, p, pr.number) : undefined;
-  const title = prRollupTitle({ number: pr.number, title: String(pr.title ?? ""), state: String(pr.state ?? "open"), merged: pr.merged === true, ...(reviews ? { reviews } : {}) });
+  // The rollup shows the PR as it is now, not the delivered snapshot, which may be older than the last one applied.
+  const cur = now.pr;
+  const reviews = prStateOf(cur) === "open" ? await reviewsOf(ctx, mapping, p, pr.number) : undefined;
+  const title = prRollupTitle({ number: pr.number, title: String(cur.title ?? ""), state: String(cur.state ?? "open"), merged: cur.merged === true, ...(reviews ? { reviews } : {}) });
   for (const it of items) {
     const target: RollupTarget = { slug, projectId: it.projectId, issueId: it.issueId };
     try {
-      await upsertRollupLink({ db: ctx.db, writer: ctx.plane, findLinkId: (t, url) => findLinkId(ctx, t, url) }, target, prRollupKey(mapping.ghRepoId, pr.number), { title, url: String(pr.html_url ?? "") });
+      await upsertRollupLink({ db: ctx.db, writer: ctx.plane, findLinkId: (t, url) => findLinkId(ctx, t, url) }, target, prRollupKey(mapping.ghRepoId, pr.number), { title, url: String(cur.html_url ?? pr.html_url ?? "") });
     } catch (err) {
       await appendAudit(ctx.db, { kind: "rollup_link", source: "github", deliveryId: job.deliveryId, workspaceSlug: slug, detail: { issueId: it.issueId, number: pr.number }, outcome: "failed", error: err instanceof Error ? err.message : String(err) });
     }
@@ -343,13 +434,13 @@ async function completeCreatedPr(ctx: AppContext, mapping: Mapping, request: Red
   const p: any = request.job.payload;
   const item: LinkedItem = { ref: { identifier: `${request.identifier}-NEW`, project: request.identifier, sequence: 0, tier: "closing", source: "body" }, issueId: request.issueId, projectId: request.projectId, identifier: request.identifier };
   // Empty identifier denotes a later event fenced behind the create, rather than a new linkback.
-  const pApproval = request.job.event === "pull_request_review" && p.action === "submitted" && String(p.review?.state ?? "").toLowerCase() === "approved";
-  await completeItems(ctx, mapping, request.job, [item], request.identifier ? [item] : [], async () => {
-    if (pApproval) await fireReadyForMerge(ctx, mapping, request.job, await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, p)), p.pull_request);
+  const now = await currentPrOf(ctx, mapping, p);
+  await completeItems(ctx, mapping, request.job, now, [item], request.identifier ? [item] : [], async () => {
+    if (readinessEvent(request.job)) await fireReadyForMerge(ctx, mapping, request.job, await ctx.ghClient.installationOctokit(await installationFor(ctx, mapping, p)), now.pr);
   });
 }
 
 export async function findLinkId(ctx: AppContext, t: RollupTarget, url: string): Promise<string | null> {
-  const links = await ctx.planeClient.listAll<{ id: string; url: string }>(`/workspaces/${t.slug}/projects/${t.projectId}/issues/${t.issueId}/links/`);
+  const links = await ctx.planeClient.listAll<{ id: string; url: string }>(`${planeItemsPath(t.slug, t.projectId, t.issueId)}links/`);
   return links.find((l) => l.url === url)?.id ?? null;
 }

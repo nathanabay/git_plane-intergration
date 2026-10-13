@@ -3,7 +3,7 @@ import { strictEqual, deepStrictEqual, ok, throws } from "node:assert/strict";
 import { SecretString } from "../../src/auth/identity.ts";
 import { MAX_RANGE_COMMITS, PUSH_PAYLOAD_COMMIT_LIMIT, SmartCommitLockTimeout, SmartCommitRetry, durationToMinutes, parseSmartCommits, processPush, resolveTransition } from "../../src/github/smart-commits.ts";
 import type { SmartCommitDeps } from "../../src/github/smart-commits.ts";
-import { PlaneApiError } from "../../src/sync/plane.ts";
+import { PlaneApiError, PlaneRateLimitError } from "../../src/sync/plane.ts";
 import { QLL, fakePlaneWriter, freshDb } from "./fakes.ts";
 import { deliveryScope } from "../../src/app/writers.ts";
 import { rejects } from "node:assert/strict";
@@ -245,7 +245,14 @@ test("F8: network errors, 429 and 5xx are retried; other 4xx and the triage ban 
     const { db, deps } = await setup();
     const writer = flaky({ n: 99 }, error);
     const p = push(sha("b"), "WEB-1 #comment x", OCTO);
-    if (retried) await rejects(processPush(p, { ...deps, writer }), SmartCommitRetry, error.message);
+    if (retried) {
+      const began = Date.now();
+      // Audit G4: a 429 preserves its scheduling deadline instead of a generic retry.
+      await rejects(processPush(p, { ...deps, writer }), (failure: unknown) => error instanceof PlaneApiError && error.status === 429
+        ? failure instanceof PlaneRateLimitError && failure.retryAt >= began + 60_000
+        : failure instanceof SmartCommitRetry, error.message);
+      strictEqual((await db.query("SELECT 1 FROM processed_commits")).rows.length, 0, "a retryable failure remains unclaimed");
+    }
     else {
       const out = await processPush(p, { ...deps, writer });
       strictEqual(out.failed, 1);

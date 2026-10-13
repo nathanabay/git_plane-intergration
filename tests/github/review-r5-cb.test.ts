@@ -132,6 +132,7 @@ test("F11: final successful status retries for retry-after/quota 403 and fires r
   await h.mapping({ smartCommits: false, rules: '- when: pull_request.ready_for_merge\n  then: [{ comment: "ready" }]\n' });
   await h.link("iss-1", 12, { kind: "pr", tier: "closing" });
   const head = sha("c");
+  h.gh.respond(/pulls\/\{pull_number\}$/, () => ({ number: 12, draft: false, state: "open", merged: false, head: { sha: head }, base: { ref: "main" }, labels: [] }));
   h.gh.respond(/commits\/\{commit_sha\}\/pulls$/, () => [{ number: 12, draft: false, state: "open", merged: false, head: { sha: head }, base: { ref: "main" }, labels: [] }]);
   h.gh.respond(/reviews$/, () => [{ state: "APPROVED", user: { id: 9 } }]);
   h.gh.respond(/check-suites$/, () => ({ total_count: 1, check_suites: [{ status: "completed", conclusion: "success" }] }));

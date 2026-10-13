@@ -8,6 +8,7 @@ function allLinkedPrsMerged(prs: { state: "open" | "merged" | "closed_unmerged" 
 
 import type { PlaneWrite, PlaneWriteResult } from "../sync/plane.ts";
 import { escapeHtml } from "./html.ts";
+import { classifyGithubError } from "./errors.ts";
 
 export const LIFECYCLES = [
   "branch_pushed", "drafted", "opened", "review_requested", "changes_requested", "approved",
@@ -235,10 +236,72 @@ export function isReadyForMerge(
 }
 
 export interface OctokitRequest {
-  request<T = any>(route: string, params?: Record<string, unknown>): Promise<{ data: T }>;
+  request<T = any>(route: string, params?: Record<string, unknown>): Promise<{ data: T; headers?: Record<string, unknown> }>;
 }
 
-/** Fetches reviews, check suites, and commit status for a PR from GitHub and checks readiness (F7, F9). */
+export interface GithubCollection<T> { items: T[]; complete: boolean; nextPage?: number }
+
+/** Numbered pagination with explicit completeness at a safety bound. Link and totals take precedence over page size. */
+export async function readGithubCollection<T>(
+  octokit: OctokitRequest, route: string, params: Record<string, unknown>,
+  select: (data: any) => T[], options: { maxPages?: number; startPage?: number; total?: (data: any) => unknown } = {},
+): Promise<GithubCollection<T>> {
+  const items: T[] = [];
+  const start = options.startPage ?? 1;
+  for (let page = start; page < start + (options.maxPages ?? 100); page++) {
+    const res = await octokit.request(route, { ...params, per_page: 100, page });
+    const batch = select(res.data);
+    if (!Array.isArray(batch)) throw new Error(`Invalid GitHub collection response for ${route}`);
+    items.push(...batch);
+    const headers = res.headers ?? {};
+    const link = Object.entries(headers).find(([key]) => key.toLowerCase() === "link")?.[1];
+    const total = options.total?.(res.data);
+    const remaining = typeof total === "number" && Number.isFinite(total) ? (start - 1) * 100 + items.length < total : undefined;
+    const hasNext = typeof link === "string" ? /;\s*rel=["']?next\b/.test(link)
+      : remaining ?? batch.length >= 100;
+    if (!hasNext && remaining === true) return { items, complete: false, nextPage: page + 1 };
+    if (!hasNext) return { items, complete: true };
+    // An empty page advertised as unfinished cannot advance the collection safely.
+    if (!batch.length) return { items, complete: false, nextPage: page };
+  }
+  return { items, complete: false, nextPage: start + (options.maxPages ?? 100) };
+}
+
+/** Use repository HTML URLs from verified deliveries/API responses; REST /api/v3 paths are never web paths. */
+export async function githubRepositoryWebUrl(
+  octokit: OctokitRequest, repo: { owner: string; repo: string; id: number }, delivered?: any, apiBaseUrl?: string,
+): Promise<string> {
+  const valid = (value: any): string | null => {
+    if (Number(value?.id) !== repo.id || typeof value?.html_url !== "string") return null;
+    try {
+      const url = new URL(value.html_url);
+      if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) return null;
+      if (decodeURIComponent(url.pathname).replace(/\/$/, "").toLowerCase() !== `/${repo.owner}/${repo.repo}`.toLowerCase()) return null;
+      return `${url.origin}${url.pathname.replace(/\/$/, "")}`;
+    } catch { return null; }
+  };
+  const supplied = valid(delivered);
+  if (supplied) return supplied;
+  const fetched = valid((await octokit.request("GET /repos/{owner}/{repo}", { owner: repo.owner, repo: repo.repo })).data);
+  if (fetched) return fetched;
+  const origin = apiBaseUrl ? new URL(apiBaseUrl).origin : "https://github.com";
+  return `${origin}/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`;
+}
+
+/** Reviews arrive chronologically; latest decisions must be evaluated only after a complete read. */
+export function readPrReviews(octokit: OctokitRequest, repo: { owner: string; repo: string }, prNumber: number) {
+  // A deliberate safety bound is explicit in the returned contract; page 20 has no special meaning.
+  return readGithubCollection<ReviewSummary>(octokit, "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+    { ...repo, pull_number: prNumber }, (data) => data, { maxPages: 100 });
+}
+
+/** Both lifecycle and fenced-continuation callers must run readiness after these events' own rules. */
+export function shouldReevaluatePrReadiness(event: string, payload: any): boolean {
+  return event === "pull_request_review" && payload?.action === "submitted" && String(payload?.review?.state ?? "").toLowerCase() === "approved"
+    || event === "pull_request" && (payload?.action === "ready_for_review" || payload?.action === "reopened");
+}
+
+/** Fetches complete reviews, suites and combined status. Unavailable or incomplete data fails closed. */
 export async function checkPrReadiness(
   octokit: OctokitRequest,
   repo: { owner: string; repo: string },
@@ -246,76 +309,31 @@ export async function checkPrReadiness(
   headSha: string,
   hooks?: { onUnavailable?: (info: { what: "commit_status"; status: number }) => void | Promise<void> }
 ): Promise<boolean> {
-  const fetchAllReviews = async (): Promise<ReviewSummary[]> => {
-    const all: ReviewSummary[] = [];
-    let page = 1;
-    while (true) {
-      const res = await octokit.request<ReviewSummary[]>("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
-        owner: repo.owner,
-        repo: repo.repo,
-        pull_number: prNumber,
-        per_page: 100,
-        page,
-      });
-      const items = Array.isArray(res?.data) ? res.data : [];
-      all.push(...items);
-      if (items.length < 100 || page >= 20) break;
-      page++;
-    }
-    return all;
-  };
-
-  const fetchAllCheckSuites = async (): Promise<CheckSuiteSummary[]> => {
-    const all: CheckSuiteSummary[] = [];
-    let page = 1;
-    while (true) {
-      const res = await octokit.request<{ total_count?: number; check_suites: CheckSuiteSummary[] }>("GET /repos/{owner}/{repo}/commits/{ref}/check-suites", {
-        owner: repo.owner,
-        repo: repo.repo,
-        ref: headSha,
-        per_page: 100,
-        page,
-      });
-      const items = Array.isArray(res?.data?.check_suites) ? res.data.check_suites : [];
-      all.push(...items);
-      const total = res?.data?.total_count;
-      if (items.length < 100 || (typeof total === "number" && all.length >= total) || page >= 20) break;
-      page++;
-    }
-    return all;
-  };
-
-  // R4 F6: a status read that fails is never "no statuses". 403/404 (App lacks "Commit statuses: Read") means readiness cannot
-  // be judged, so the PR is not ready; anything else (5xx, network) propagates so the delivery retries.
   const fetchCombinedStatus = async (): Promise<CombinedCommitStatus | null> => {
     try {
       const res = await octokit.request<CombinedCommitStatus>("GET /repos/{owner}/{repo}/commits/{ref}/status", {
-        owner: repo.owner,
-        repo: repo.repo,
-        ref: headSha,
+        ...repo, ref: headSha,
       });
-      return res?.data ?? { total_count: 0 };
+      if (!res.data || typeof res.data.state !== "string") return null;
+      return res.data;
     } catch (err) {
-      const failure = err as { status?: unknown; response?: { status?: unknown; headers?: Record<string, unknown> } } | null;
-      const status = Number(failure?.status ?? failure?.response?.status);
-      const headers = failure?.response?.headers ?? {};
-      if (status === 403 && (headers["retry-after"] !== undefined || String(headers["x-ratelimit-remaining"]) === "0")) throw err;
-      if (status === 403 || status === 404) {
+      const failure = classifyGithubError(err);
+      if (failure.kind === "permission" || failure.kind === "not_found") {
+        const status = Number((err as any)?.status ?? (err as any)?.response?.status);
         await hooks?.onUnavailable?.({ what: "commit_status", status });
         return null;
       }
-      throw err;
+      throw err; // Preserve rate-limit response/deadline for the shared queue/outbox policy.
     }
   };
-
-  const [reviews, checkSuites, commitStatus] = await Promise.all([
-    fetchAllReviews(),
-    fetchAllCheckSuites(),
+  const [reviews, suites, status] = await Promise.all([
+    readPrReviews(octokit, repo, prNumber),
+    readGithubCollection<CheckSuiteSummary>(octokit, "GET /repos/{owner}/{repo}/commits/{ref}/check-suites",
+      { ...repo, ref: headSha }, (data) => data?.check_suites, { maxPages: 20, total: (data) => data?.total_count }),
     fetchCombinedStatus(),
   ]);
-
-  if (commitStatus === null) return false;
-  return isReadyForMerge(reviews, checkSuites, commitStatus);
+  if (!reviews.complete || !suites.complete || status === null) return false;
+  return isReadyForMerge(reviews.items, suites.items, status);
 }
 
 export interface PrRuleEventOptions {
@@ -346,7 +364,7 @@ export function prEventToRuleEvent(
       case "closed": trigger = pr.merged ? "pull_request.merged" : "pull_request.closed_unmerged"; break;
       case "reopened": trigger = "pull_request.reopened"; break;
       default: {
-        if (!pr.draft && !pr.merged && ready) {
+        if (!pr.draft && !pr.merged && (pr.state ?? "open") === "open" && ready) {
           trigger = "pull_request.ready_for_merge";
         }
       }
@@ -354,14 +372,14 @@ export function prEventToRuleEvent(
   } else if (event === "pull_request_review" && action === "submitted") {
     const state = String(payload?.review?.state ?? "").toLowerCase();
     if (state === "approved") {
-      trigger = (!pr.draft && !pr.merged && ready) ? "pull_request.ready_for_merge" : "pull_request.approved";
+      trigger = (!pr.draft && !pr.merged && (pr.state ?? "open") === "open" && ready) ? "pull_request.ready_for_merge" : "pull_request.approved";
     } else if (state === "changes_requested") {
       trigger = "pull_request.changes_requested";
     }
   } else if (event === "check_suite" && action === "completed") {
     const conclusion = String(payload?.check_suite?.conclusion ?? "").toLowerCase();
     if (conclusion === "success" || conclusion === "neutral") {
-      if (!pr.draft && !pr.merged && ready) {
+      if (!pr.draft && !pr.merged && (pr.state ?? "open") === "open" && ready) {
         trigger = "pull_request.ready_for_merge";
       }
     }
@@ -561,3 +579,4 @@ export function createRuleExecutor(deps: ExecutorDeps): ActionExecutor {
     },
   };
 }
+
