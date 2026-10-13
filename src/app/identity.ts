@@ -9,6 +9,7 @@ import { installationFor, usersByGithubId } from "./context.ts";
 import type { AppContext } from "./context.ts";
 import type { Mapping } from "./mappings.ts";
 import type { Db } from "../db/migrate.ts";
+import { planeWorkspacePath } from "../sync/plane.ts";
 
 const RETRY_AFTER_MS = 10 * 60_000;
 const attempted = new Map<string, number>();
@@ -19,7 +20,7 @@ const isAutomation = (s: GithubSender) => s.login.toLowerCase() === "ghost" || s
 class UserLinkAuthorityError extends Error {}
 
 async function members(ctx: AppContext, mapping: Mapping): Promise<PlaneMemberLite[]> {
-  const rows = await ctx.planeClient.listAll<any>(`/workspaces/${mapping.workspaceSlug}/members/`);
+  const rows = await ctx.planeClient.listAll<any>(planeWorkspacePath(mapping.workspaceSlug, "members"));
   return rows.map((m) => {
     const u = m?.member && typeof m.member === "object" ? m.member : m;
     return { id: String(u?.id ?? m?.member ?? ""), email: typeof u?.email === "string" ? u.email : null };
