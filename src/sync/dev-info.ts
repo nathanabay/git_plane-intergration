@@ -5,6 +5,7 @@ import type { SecretString } from "../auth/identity.ts";
 import type { Db } from "../db/migrate.ts";
 import { getDevInfoLink, upsertDevInfoLink } from "../db/ledgers.ts";
 import { safeUrl } from "../github/html.ts";
+import { parseReferences } from "../parse/references.ts";
 import { PlaneApiError } from "./plane.ts";
 import type { PlaneWrite, PlaneWriteResult } from "./plane.ts";
 import type { FrozenWriteAuthority } from "../app/mappings.ts";
@@ -143,4 +144,138 @@ export async function upsertRollupLink(
     if (err instanceof PlaneApiError && err.status === 404) return add();
     throw err;
   }
+}
+
+// ---- branch names (N3) --------------------------------------------------------------------------------------
+// A per-mapping template (repo_mappings.branch_template) renders the branch name offered on the work item.
+// Placeholders: {key} (required; e.g. WEB-12), {title-slug}, {username} (the viewer's GitHub login, when known).
+
+export const DEFAULT_BRANCH_TEMPLATE = "{key}-{title-slug}";
+const PLACEHOLDERS = new Set(["key", "title-slug", "username"]);
+const TEMPLATE_LITERAL = /^[A-Za-z0-9._\/-]*$/;
+const MAX_TEMPLATE = 120;
+const MAX_SLUG = 50;
+const MAX_BRANCH = 200;
+
+/** Lowercase ASCII words joined by hyphens, cut at a word boundary. */
+export function titleSlug(title: string, max = MAX_SLUG): string {
+  const words = title.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  let out = "";
+  for (const w of words) {
+    const next = out ? `${out}-${w}` : w;
+    if (next.length > max) { if (!out) out = w.slice(0, max); break; }
+    out = next;
+  }
+  return out;
+}
+
+/** git check-ref-format rules for a branch under refs/heads/ (plus: not starting with "-"). */
+export function isValidGitBranchName(name: string): boolean {
+  if (!name || name.length > MAX_BRANCH || name === "@") return false;
+  if (name.startsWith("-") || name.startsWith("/") || name.endsWith("/") || name.endsWith(".")) return false;
+  if (/[\x00-\x20\x7f~^:?*\[\\]/.test(name) || name.includes("..") || name.includes("//") || name.includes("@{")) return false;
+  return name.split("/").every((c) => c !== "" && !c.startsWith(".") && !c.endsWith(".lock"));
+}
+
+function placeholders(template: string): string[] {
+  return [...template.matchAll(/\{([^{}]*)\}/g)].map((m) => m[1]!);
+}
+
+/**
+ * Renders a template. A missing {username} is dropped together with the separator after it, so
+ * `{username}/{key}-{title-slug}` still gives `WEB-12-fix-login` for the suggested link.
+ */
+export function renderBranchName(template: string | null | undefined, v: { key: string; title: string; username?: string | null }): string {
+  const t = template ?? DEFAULT_BRANCH_TEMPLATE;
+  const user = (v.username ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  const slug = titleSlug(v.title);
+  let out = t;
+  if (!user) out = out.replace(/\{username\}[\/_-]?/g, "");
+  if (!slug) out = out.replace(/[\/_-]?\{title-slug\}/g, "");
+  out = out.replace(/\{key\}/g, v.key).replace(/\{title-slug\}/g, slug).replace(/\{username\}/g, user);
+  out = out.replace(/\/{2,}/g, "/").replace(/-{2,}/g, "-").replace(/^[\/._-]+|[\/._-]+$/g, "");
+  if (out.length > MAX_BRANCH) out = out.slice(0, MAX_BRANCH).replace(/[\/._-]+$/g, "");
+  return out;
+}
+
+export type TemplateCheck = { ok: true } | { ok: false; reason: string };
+
+/**
+ * A template is valid when it uses only known placeholders and safe literal characters, contains {key},
+ * and renders to a valid branch name from which our branch parser reads the key back (otherwise a branch
+ * created from it would never link to the work item).
+ */
+/** The keys our push and PR handling read from a branch name. */
+export function branchKeys(branch: string): string[] {
+  return parseReferences({ branch }).refs.map((r) => r.identifier);
+}
+
+export function validateBranchTemplate(template: string, parseBranchKeys: (branch: string) => string[] = branchKeys): TemplateCheck {
+  if (typeof template !== "string" || template.length === 0) return { ok: false, reason: "The template is empty" };
+  if (template.length > MAX_TEMPLATE) return { ok: false, reason: `The template is longer than ${MAX_TEMPLATE} characters` };
+  const names = placeholders(template);
+  const unknown = names.find((n) => !PLACEHOLDERS.has(n));
+  if (unknown !== undefined) return { ok: false, reason: `Unknown placeholder {${unknown}}; use {key}, {title-slug} or {username}` };
+  if (!names.includes("key")) return { ok: false, reason: "The template must contain {key}" };
+  if (!TEMPLATE_LITERAL.test(template.replace(/\{[^{}]*\}/g, ""))) return { ok: false, reason: "Use only letters, digits, '.', '_', '-' and '/' outside placeholders" };
+  for (const sample of [
+    { key: "ABC-123", title: "Fix the login page", username: "octocat" },
+    { key: "ABC-123", title: "", username: null },
+  ]) {
+    const name = renderBranchName(template, sample);
+    if (!isValidGitBranchName(name)) return { ok: false, reason: `The template renders an invalid branch name (${name || "empty"})` };
+    if (!parseBranchKeys(name).map((k) => k.toUpperCase()).includes(sample.key)) {
+      return { ok: false, reason: `The key cannot be read back from ${name}; separate {key} with '-' or '/'` };
+    }
+  }
+  return { ok: true };
+}
+
+/** The same rollup key and URL push.ts uses, so the first push turns the suggestion into the branch link. */
+export function branchRollupKey(repoId: number | string, branch: string): string {
+  return `branch:${repoId}:${branch}`;
+}
+
+export function branchTreeUrl(repoWebUrl: string, branch: string): string {
+  return `${repoWebUrl.replace(/\/+$/, "")}/tree/${encodeURIComponent(branch).replace(/%2F/g, "/")}`;
+}
+
+export const SUGGESTED_PREFIX = "suggested: ";
+
+export function suggestedBranchTitle(branch: string): string {
+  return categorisedTitle("Branch", SUGGESTED_PREFIX + branch);
+}
+
+/**
+ * Adds `[Branch] suggested: <name>` to a work item when it is linked or created, so there is a name to copy
+ * at once. Callers check the mapping's linkback setting first. Returns the branch name.
+ */
+export async function upsertSuggestedBranchLink(
+  deps: RollupDeps, target: RollupTarget,
+  s: { repoId: number | string; repoWebUrl: string; template: string | null; key: string; title: string },
+): Promise<string> {
+  const branch = renderBranchName(s.template, { key: s.key, title: s.title });
+  if (!isValidGitBranchName(branch)) throw new Error(`Branch template renders an invalid name: ${branch}`);
+  await upsertRollupLink(deps, target, branchRollupKey(s.repoId, branch), { title: suggestedBranchTitle(branch), url: branchTreeUrl(s.repoWebUrl, branch) });
+  return branch;
+}
+
+// ---- reading rollup links back (Development panel) ----------------------------------------------------------
+export type DevLinkCategory = "PR" | "CI" | "Deploy" | "Preview" | "Branch";
+export interface DevLink { category: DevLinkCategory; text: string; url: string; suggested?: boolean }
+const CATEGORIES = new Set<DevLinkCategory>(["PR", "CI", "Deploy", "Preview", "Branch"]);
+
+/** Parses `[Category] text` link titles written by this service; other links are ignored. */
+export function parseDevLinks(links: { title?: unknown; url?: unknown }[]): DevLink[] {
+  const out: DevLink[] = [];
+  for (const l of links) {
+    const m = typeof l.title === "string" ? /^\[([A-Za-z]+)\] (.*)$/s.exec(l.title) : null;
+    const url = typeof l.url === "string" ? safeUrl(l.url) : null;
+    if (!m || !url || !CATEGORIES.has(m[1] as DevLinkCategory)) continue;
+    const category = m[1] as DevLinkCategory;
+    const text = m[2]!;
+    if (category === "Branch" && text.startsWith(SUGGESTED_PREFIX)) out.push({ category, text: text.slice(SUGGESTED_PREFIX.length), url, suggested: true });
+    else out.push({ category, text, url });
+  }
+  return out;
 }
