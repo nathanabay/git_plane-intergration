@@ -22,6 +22,15 @@ function validateTrigger(trigger: string): boolean {
   return false;
 }
 
+/**
+ * `create_issue.project` becomes a Plane URL segment, so it may only be a project UUID or a project
+ * identifier. No template, `/`, `.` or `%`: `../../other-ws/projects/<id>` left the workspace (audit S1).
+ */
+const PROJECT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PROJECT_IDENTIFIER = /^[A-Za-z0-9]{1,12}$/;
+export const isRuleProject = (value: unknown): value is string =>
+  typeof value === "string" && (PROJECT_UUID.test(value) || PROJECT_IDENTIFIER.test(value));
+
 const regexCache = new WeakMap<RuleConditions, { base_branch?: RegExp, head_branch?: RegExp }>();
 
 export function parseRules(source: string): Rule[] {
@@ -146,6 +155,9 @@ export function parseRules(source: string): Rule[] {
           if (!val || typeof val !== "object" || typeof val.project !== "string" || typeof val.title !== "string") {
             throw new Error(`Rule at index ${i}: create_issue value must be {project, title}`);
           }
+          if (!isRuleProject(val.project)) {
+            throw new Error(`Rule at index ${i}: create_issue project must be a Plane project UUID or identifier`);
+          }
           actions.push({ type: "create_issue", project: val.project, title: val.title });
           break;
         default:
@@ -219,7 +231,11 @@ function mapAction(action: Action, context?: Record<string, unknown>): Action {
     case "comment": return { ...action, body: renderTemplate(action.body, context) };
     case "log_time": return { ...action, duration: renderTemplate(action.duration, context) };
     case "add_link": return { ...action, url: renderTemplate(action.url, context), title: renderTemplate(action.title, context) };
-    case "create_issue": return { ...action, project: renderTemplate(action.project, context), title: renderTemplate(action.title, context) };
+    case "create_issue": {
+      // The project is never a template; re-check it here too, in case a rule object skipped parseRules.
+      if (!isRuleProject(action.project)) throw new Error("create_issue project must be a Plane project UUID or identifier");
+      return { ...action, title: renderTemplate(action.title, context) };
+    }
   }
 }
 
