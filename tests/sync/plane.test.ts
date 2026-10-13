@@ -3,7 +3,7 @@ import { strictEqual, deepStrictEqual, ok, rejects } from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
 import { migrate } from "../../src/db/migrate.ts";
 import { SecretString } from "../../src/auth/identity.ts";
-import { PlaneApiError, PlaneClient, PlaneWritePath, TokenBucket, TriageWriteRejected, pendingCommentHash, pendingCreateHash } from "../../src/sync/plane.ts";
+import { PlaneApiError, PlaneClient, PlaneRateLimitError, PlaneWritePath, TokenBucket, TriageWriteRejected, pendingCommentHash, pendingCreateHash } from "../../src/sync/plane.ts";
 import { createPending } from "../../src/db/ledgers.ts";
 import { opHash } from "../../src/sync/ophash.ts";
 
@@ -20,7 +20,7 @@ function harness(script: Reply[] = [], states = [{ id: "s1", name: "Todo", group
     const next = queue.shift();
     if (next) return new Response(next.body === undefined ? null : JSON.stringify(next.body), { status: next.status, headers: next.headers });
     if (init.method === "GET" && u.pathname.endsWith("/states/")) return new Response(JSON.stringify(states), { status: 200 });
-    if (init.method === "POST" && u.pathname.endsWith("/issues/")) return new Response(JSON.stringify({ id: "new1" }), { status: 201 });
+    if (init.method === "POST" && u.pathname.endsWith("/work-items/")) return new Response(JSON.stringify({ id: "new1" }), { status: 201 });
     if (init.method === "POST" && u.pathname.endsWith("/comments/")) return new Response(JSON.stringify({ id: "c1" }), { status: 201 });
     return new Response(JSON.stringify({ ok: 1 }), { status: 200 });
   }) as unknown as typeof fetch;
@@ -57,10 +57,10 @@ test("client: 4xx other than 429 is not retried", async () => {
   await rejects(client.request("POST", "/x/", {}));
   strictEqual(calls.length, 1);
 });
-test("client: 429 waits for Retry-After", async () => {
-  const { client, sleeps } = harness([{ status: 429, body: {}, headers: { "retry-after": "2" } }]);
-  await client.request("GET", "/x/");
-  deepStrictEqual(sleeps, [2000]);
+test("client: 429 throws PlaneRateLimitError at the Retry-After deadline without sleeping", async () => {
+  const { client, sleeps, calls } = harness([{ status: 429, body: {}, headers: { "retry-after": "2" } }]);
+  await rejects(client.request("GET", "/x/"), (e: any) => e instanceof PlaneRateLimitError && e.retryAt >= Date.now() + 1000);
+  deepStrictEqual(sleeps, []); strictEqual(calls.length, 1);
 });
 test("client: list follows cursors, and a bare array is one page", async () => {
   const { client, calls } = harness([
@@ -80,7 +80,7 @@ test("client: issue lookups use the documented paths", async () => {
   const { client, calls } = harness();
   await client.getIssueByIdentifier("ws", "PROJ-12");
   await client.getIssue("ws", "p", "i1");
-  deepStrictEqual(calls.map((c) => c.url), ["/api/v1/workspaces/ws/issues/PROJ-12/", "/api/v1/workspaces/ws/projects/p/issues/i1/"]);
+  deepStrictEqual(calls.map((c) => c.url), ["/api/v1/workspaces/ws/work-items/PROJ-12/", "/api/v1/workspaces/ws/projects/p/work-items/i1/"]);
 });
 
 test("write: update_issue records per-field ops and sends the exact body", async () => {
@@ -150,7 +150,7 @@ test("write: create_issue and add_comment mark create pending during in-flight r
   const f = (async (url: string, init: any) => {
     const u = new URL(url);
     if (init.method === "GET" && u.pathname.endsWith("/states/")) return new Response(JSON.stringify([{ id: "s1", name: "Todo", group: "unstarted" }]), { status: 200 });
-    if (init.method === "POST" && u.pathname.endsWith("/issues/")) {
+    if (init.method === "POST" && u.pathname.endsWith("/work-items/")) {
       pendingDuringIssueCreate = await createPending(db, pendingCreateHash(W.projectId));
       return new Response(JSON.stringify({ id: "iss-123" }), { status: 201 });
     }

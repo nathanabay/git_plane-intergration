@@ -5,6 +5,10 @@ import { migrate } from "../../src/db/migrate.ts";
 import { GithubWritePath, githubFieldChanges, pendingGithubCreateHash } from "../../src/sync/github.ts";
 import { createPending } from "../../src/db/ledgers.ts";
 import { opHash } from "../../src/sync/ophash.ts";
+import { GithubRateLimitError } from "../../src/github/errors.ts";
+import { DelayedError, UnrecoverableError } from "bullmq";
+import { processQueueJob } from "../../src/queue/workers.ts";
+import type { DeferredJob } from "../../src/queue/workers.ts";
 
 const R = { installationId: 1, owner: "o", repo: "r", repoId: 7, number: 3 };
 async function setup(responses: (() => any)[] = []) {
@@ -56,9 +60,53 @@ test("write: a failed call forgets its ops", async () => {
   await rejects(w.apply({ kind: "comment", ...R, body: "x" }));
   strictEqual(await has(db, opHash("github", "7#3", "comment", "x")), 0);
 });
-test("write: removing a label that is absent (404) is success and leaves no op", async () => {
-  const { db, w } = await setup([err(404)]);
+test("write: removal 404 succeeds only after an accessible issue confirms label absence", async (t) => {
+  const { db, calls, sleeps, w } = await setup([err(404), () => ({ data: { labels: [{ name: "other" }] } })]);
+  t.after(() => db.close());
   deepStrictEqual(await w.apply({ kind: "remove_label", ...R, label: "gone" }), { ok: true });
+  deepStrictEqual(calls, [
+    ["DELETE /repos/{owner}/{repo}/issues/{issue_number}/labels/{name}", { owner: "o", repo: "r", issue_number: 3, name: "gone" }],
+    ["GET /repos/{owner}/{repo}/issues/{issue_number}", { owner: "o", repo: "r", issue_number: 3 }],
+  ]);
+  deepStrictEqual(sleeps, []);
+  strictEqual(await has(db, opHash("github", "7#3", "label:gone", false)), 0);
+});
+test("write: removal 404 remains a failure for present labels or unconfirmed/inaccessible issues", async () => {
+  for (const data of [{ labels: ["GONE"] }, { labels: [{ name: "gone" }] }, {}, { labels: null }, { labels: [{}] }]) {
+    const failure = Object.assign(new Error("removal failed"), { status: 404 });
+    const { db, calls, sleeps, w } = await setup([() => { throw failure; }, () => ({ data })]);
+    try {
+      await rejects(w.apply({ kind: "remove_label", ...R, label: "gone" }), (error: unknown) => error === failure);
+      strictEqual(calls.length, 2);
+      strictEqual(calls[1]![0], "GET /repos/{owner}/{repo}/issues/{issue_number}");
+      deepStrictEqual(sleeps, []);
+      strictEqual(await has(db, opHash("github", "7#3", "label:gone", false)), 0);
+    } finally { await db.close(); }
+  }
+  for (const status of [403, 404]) {
+    const confirmationFailure = Object.assign(new Error("issue inaccessible"), { status });
+    const { db, calls, sleeps, w } = await setup([err(404), () => { throw confirmationFailure; }]);
+    try {
+      await rejects(w.apply({ kind: "remove_label", ...R, label: "gone" }), (error: unknown) => error === confirmationFailure);
+      strictEqual(calls.length, 2);
+      deepStrictEqual(sleeps, []);
+      strictEqual(await has(db, opHash("github", "7#3", "label:gone", false)), 0);
+    } finally { await db.close(); }
+  }
+});
+test("write: rate-limited label-absence confirmation defers without declaring success", async (t) => {
+  const { db, calls, sleeps, w } = await setup([err(404), err(429, { "retry-after": "900" })]);
+  t.after(() => db.close());
+  const started = Date.now();
+  await rejects(w.apply({ kind: "remove_label", ...R, installationId: 100005, label: "gone" }), (error: unknown) => {
+    ok(error instanceof GithubRateLimitError);
+    ok(error.retryAt >= started + 900_000 && error.retryAt <= Date.now() + 900_000);
+    strictEqual(error.requestMade, true);
+    return true;
+  });
+  strictEqual(calls.length, 2);
+  strictEqual(calls[1]![0], "GET /repos/{owner}/{repo}/issues/{issue_number}");
+  deepStrictEqual(sleeps, []);
   strictEqual(await has(db, opHash("github", "7#3", "label:gone", false)), 0);
 });
 test("write: create_issue records `created` and initial label ops, and marks pending in-flight (F13)", async () => {
@@ -83,20 +131,77 @@ test("write: create_issue records `created` and initial label ops, and marks pen
   strictEqual(await has(db, opHash("github", "7#4", "label:bug", true)), 1);
   await db.close();
 });
-test("rate limit: 403 with retry-after and 429 retry; a plain 403 does not", async () => {
-  const a = await setup([err(403, { "retry-after": "2" }), err(429)]);
-  await a.w.apply({ kind: "comment", ...R, body: "x" });
-  deepStrictEqual(a.sleeps, [2000, 2000]);
-  const b = await setup([err(403)]);
-  await rejects(b.w.apply({ kind: "comment", ...R, body: "x" }));
-  strictEqual(b.sleeps.length, 0);
+test("rate limit: 403 with retry-after and 429 defer one request; plain 403 preserves its failure", async (t) => {
+  const cases = [
+    { installationId: 100001, status: 403, headers: { "retry-after": "2" }, wait: 2000 },
+    { installationId: 100002, status: 429, headers: {}, wait: 60_000 },
+    { installationId: 100003, status: 429, headers: { "retry-after": "900" }, wait: 900_000 },
+  ];
+  for (const scenario of cases) {
+    const failure = Object.assign(new Error("rate limited"), { status: scenario.status, response: { headers: scenario.headers } });
+    const { db, calls, sleeps, w } = await setup([() => { throw failure; }]);
+    t.after(() => db.close());
+    const started = Date.now();
+    await rejects(w.apply({ kind: "comment", ...R, installationId: scenario.installationId, body: "x" }), (error: unknown) => {
+      ok(error instanceof GithubRateLimitError);
+      strictEqual(error.cause, failure);
+      strictEqual(error.requestMade, true);
+      ok(error.retryAt >= started + scenario.wait && error.retryAt <= Date.now() + scenario.wait);
+      return true;
+    });
+    strictEqual(calls.length, 1, "the write must return scheduling data rather than retry inline");
+    deepStrictEqual(sleeps, []);
+    strictEqual(await has(db, opHash("github", "7#3", "comment", "x")), 0);
+  }
+  const failure = Object.assign(new Error("permission denied"), { status: 403 });
+  const b = await setup([() => { throw failure; }]);
+  t.after(() => b.db.close());
+  await rejects(b.w.apply({ kind: "comment", ...R, body: "x" }), (error: unknown) => error === failure);
+  strictEqual(b.calls.length, 1);
+  deepStrictEqual(b.sleeps, []);
+  strictEqual(await has(b.db, opHash("github", "7#3", "comment", "x")), 0);
 });
-test("rate limit: remaining 0 waits until x-ratelimit-reset; gives up after the retry cap", async () => {
-  const headers: Record<string, string> = { "x-ratelimit-remaining": "0" };
-  const a = await setup([() => { headers["x-ratelimit-reset"] = String(Math.floor(Date.now() / 1000) + 4); throw Object.assign(new Error("http"), { status: 403, response: { headers } }); }]);
-  await a.w.apply({ kind: "comment", ...R, body: "x" });
-  ok(a.sleeps[0]! >= 2000 && a.sleeps[0]! <= 5000, String(a.sleeps[0]));
-  const b = await setup(Array.from({ length: 10 }, () => err(429)));
-  await rejects(b.w.apply({ kind: "comment", ...R, body: "x" }));
-  strictEqual(b.calls.length, 6);
+test("rate limit: exhausted quota preserves the full reset deadline and blocks premature requests", async (t) => {
+  const retryAt = (Math.floor(Date.now() / 1000) + 2700) * 1000;
+  const headers = { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(retryAt / 1000) };
+  const a = await setup([err(403, headers)]);
+  t.after(() => a.db.close());
+  const write = { kind: "comment" as const, ...R, installationId: 100004, body: "x" };
+  await rejects(a.w.apply(write), (error: unknown) => {
+    ok(error instanceof GithubRateLimitError);
+    strictEqual(error.retryAt, retryAt);
+    strictEqual(error.requestMade, true);
+    return true;
+  });
+  await rejects(a.w.apply(write), (error: unknown) => {
+    ok(error instanceof GithubRateLimitError);
+    strictEqual(error.retryAt, retryAt);
+    strictEqual(error.requestMade, false, "an existing cooldown must reject before making another HTTP request");
+    return true;
+  });
+  strictEqual(a.calls.length, 1);
+  deepStrictEqual(a.sleeps, []);
+  strictEqual(await has(a.db, opHash("github", "7#3", "comment", "x")), 0);
+});
+test("rate limit: the queue defers exponential retries and terminates at its configured attempt budget", async () => {
+  const now = Date.UTC(2026, 9, 12);
+  let clock = now, requests = 0;
+  const deadlines: number[] = [];
+  const job: DeferredJob = {
+    data: {}, attemptsMade: 0, opts: { attempts: 6 }, token: "lock",
+    updateData: async (data) => { job.data = data; },
+    moveToDelayed: async (at, token) => { strictEqual(token, "lock"); deadlines.push(at); },
+  };
+  const work = async () => { requests++; return err(429)(); };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const expectedDeadline = clock + 60_000 * 2 ** attempt;
+    await rejects(processQueueJob(job, work, { outbound: true, now: () => clock }), DelayedError);
+    strictEqual(requests, attempt + 1);
+    strictEqual(job.data._rateLimitAttempts, attempt + 1);
+    strictEqual(deadlines[attempt], expectedDeadline);
+    clock = expectedDeadline;
+  }
+  await rejects(processQueueJob(job, work, { outbound: true, now: () => clock }), UnrecoverableError);
+  strictEqual(requests, 6, "bounded retries remain enforced by the scheduler");
+  strictEqual(deadlines.length, 5, "exhausted jobs must not schedule another retry");
 });

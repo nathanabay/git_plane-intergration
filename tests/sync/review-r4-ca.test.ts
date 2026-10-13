@@ -6,7 +6,7 @@ import { SecretString } from "../../src/auth/identity.ts";
 import { loadConfig } from "../../src/config/env.ts";
 import type { Db } from "../../src/db/migrate.ts";
 import { opHash } from "../../src/sync/ophash.ts";
-import { PlaneApiError, PlaneClient, PlaneWritePath } from "../../src/sync/plane.ts";
+import { PlaneApiError, PlaneClient, PlaneRateLimitError, PlaneWritePath } from "../../src/sync/plane.ts";
 import type { PlaneWrite } from "../../src/sync/plane.ts";
 
 type Call = { method: string; url: URL; body: any; key: string | null };
@@ -36,15 +36,16 @@ for (const method of ["POST", "post"]) for (const fault of ["network", 500, 502,
   });
 }
 
-test("F9 idempotent reads/updates still retry, and a rejected POST 429 honors Retry-After", async () => {
-  for (const method of ["GET", "PATCH", "POST"]) {
+test("F9 idempotent reads/updates still retry, and a rejected POST 429 defers at Retry-After", async () => {
+  for (const method of ["GET", "PATCH"]) {
     let attempt = 0;
-    const h = fixture(() => ++attempt === 1
-      ? method === "POST" ? new Response("{}", { status: 429, headers: { "retry-after": "2" } }) : json({}, 503)
-      : json({ id: "ok" }));
+    const h = fixture(() => ++attempt === 1 ? json({}, 503) : json({ id: "ok" }));
     deepStrictEqual(await h.client.request(method, "/issues/", {}), { id: "ok" });
-    strictEqual(h.calls.length, 2); deepStrictEqual(h.sleeps, [method === "POST" ? 2000 : 1000]);
+    strictEqual(h.calls.length, 2); deepStrictEqual(h.sleeps, [1000]);
   }
+  const p = fixture(() => new Response("{}", { status: 429, headers: { "retry-after": "2" } }));
+  await rejects(p.client.request("POST", "/issues/", {}), (e) => e instanceof PlaneRateLimitError && e.requestMade);
+  strictEqual(p.calls.length, 1); deepStrictEqual(p.sleeps, []);
   let attempt = 0;
   const h = fixture(() => { if (++attempt === 1) throw new Error("temporary read outage"); return json({ id: "ok" }); });
   await h.client.request("GET", "/issues/"); strictEqual(h.calls.length, 2);

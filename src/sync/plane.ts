@@ -4,6 +4,7 @@ import { appendAudit, clearCreatePending, forgetAppliedOps, markCreatePending, r
 import { backoffMs, realSleep, retryDelayMs } from "./backoff.ts";
 import type { Sleep } from "./backoff.ts";
 import { opHash } from "./ophash.ts";
+import { classifyGithubError } from "../github/errors.ts";
 
 export class PlaneApiError extends Error {
   readonly status: number;
@@ -17,6 +18,27 @@ export class PlaneApiError extends Error {
     this.response = Object.freeze({ status, headers: Object.freeze({ ...headers }) });
   }
 }
+
+/**
+ * Contract 2: Plane's 429 (or the local budget refusing a long wait) is scheduling data, not a reason to
+ * sleep while holding a worker. `retryAt` is an epoch-ms deadline the queue job or outbox row must honor in
+ * full. It is still a `PlaneApiError` with status 429, so every existing status check keeps working, and
+ * `classifyGithubError` (G1) reads its status and preserved headers as `rate_limited`.
+ */
+export class PlaneRateLimitError extends PlaneApiError {
+  readonly retryAt: number;
+  /** False when the local budget refused before any request was sent. */
+  readonly requestMade: boolean;
+  constructor(retryAt: number, opts: { body?: unknown; message?: string; headers?: Record<string, string>; requestMade?: boolean } = {}) {
+    super(429, opts.body ?? {}, opts.message ?? "Plane rate limit; retry at the server deadline", opts.headers ?? {});
+    this.name = "PlaneRateLimitError";
+    this.retryAt = retryAt;
+    this.requestMade = opts.requestMade ?? true;
+  }
+}
+
+/** The longest the client waits inline for its own budget; anything longer is deferred (contract 2). */
+export const PLANE_MAX_INLINE_WAIT_MS = 2_000;
 
 export class TriageWriteRejected extends Error {
   constructor(message = "writes into the triage state group are not allowed (§7.1)") {
@@ -34,25 +56,72 @@ export interface PlaneClientOptions {
   rateLimitPerMinute?: number;
   requestsPerMinute?: number;
   burstCapacity?: number;
+  /** Budget waits longer than this throw `PlaneRateLimitError` instead of sleeping (default 2 s). */
+  maxInlineWaitMs?: number;
 }
 
 export interface PlaneState { id: string; name: string; group: string; default?: boolean }
 
 const API_PREFIX = "/api/v1";
+/** A10: v1.4.2 lists `/issues/` under "Deprecated url patterns"; `work-items/` is served by the same views. */
+export const PLANE_ITEMS_SEGMENT = "work-items";
+/**
+ * One Plane path segment: a UUID, a project identifier or a workspace slug (letters, digits, `_`, `-`).
+ * Encoding alone is not enough: `..` encodes to itself and the WHATWG URL parser also folds `%2e%2e`
+ * into a dot segment, so `projects/../../other-ws` would leave this workspace (security audit S1).
+ */
+const PLANE_SEGMENT = /^[A-Za-z0-9_-]{1,100}$/;
+export function planeSegment(value: unknown, what = "Plane path segment"): string {
+  if (typeof value !== "string" || !PLANE_SEGMENT.test(value)) throw new PlaneApiError(400, {}, `${what} is not a valid Plane id`);
+  return encodeURIComponent(value);
+}
 
+/** `/workspaces/{slug}/` plus each checked segment and a trailing slash, as every v1 route expects. */
+export const planeWorkspacePath = (slug: string, ...segments: string[]): string =>
+  `/workspaces/${planeSegment(slug, "workspace slug")}/${segments.map((s) => `${planeSegment(s)}/`).join("")}`;
+
+/** `/workspaces/{slug}/projects/{projectId}/work-items/`, plus `{itemId}/` when an item is named. */
+export const planeItemsPath = (slug: string, projectId: string, itemId?: string): string =>
+  planeWorkspacePath(slug, "projects", projectId, PLANE_ITEMS_SEGMENT, ...(itemId === undefined ? [] : [itemId]));
+
+/** A5: Plane v1.4.2 limits each API key with DRF's sliding 60-second history, not a refilling bucket. */
+export const PLANE_RATE_WINDOW_MS = 60_000;
+/** A5: a full bucket of a whole minute's budget let about 2x the limit through one sliding minute. */
+export const DEFAULT_PLANE_BURST = 10;
+/**
+ * Slack added to the one-minute window before a send that would otherwise be exactly the limit-th in a minute.
+ * Plane throttles on its own receive time (DRF `SimpleRateThrottle`: history entries `<= now - duration` drop), so an
+ * old request that took longer in flight than the new one would still be inside Plane's minute at a zero margin.
+ */
+export const PLANE_RATE_MARGIN_MS = 1_000;
+
+/**
+ * Paces requests with a token bucket (smooths bursts) and a sliding window of `ratePerMinute` sends per
+ * 60 s, which is the exact rule Plane's throttle enforces, so a burst can never exceed the key's limit.
+ * Time is virtual (the latest scheduled send), so an injected sleep paces correctly in tests.
+ */
 export class TokenBucket {
   #capacity: number;
   #fillRatePerMs: number;
+  #windowLimit: number;
   #tokens: number;
   #lastRefill: number;
+  #clock = 0;
+  #pausedUntil = 0;
+  #sent: number[] = [];
   #queue: Promise<void> = Promise.resolve();
   #sleep: Sleep;
+  #now: () => number;
 
-  constructor(ratePerMinute: number, capacity?: number, sleep: Sleep = realSleep) {
-    this.#capacity = capacity ?? (ratePerMinute > 0 ? ratePerMinute : 1);
-    this.#fillRatePerMs = ratePerMinute > 0 && Number.isFinite(ratePerMinute) ? ratePerMinute / 60_000 : 0;
+  /** `now` is the clock the window is measured on; tests pass the same virtual clock their `sleep` advances. */
+  constructor(ratePerMinute: number, capacity?: number, sleep: Sleep = realSleep, now: () => number = Date.now) {
+    const rate = ratePerMinute > 0 && Number.isFinite(ratePerMinute) ? ratePerMinute : 0;
+    this.#capacity = capacity ?? (rate > 0 ? Math.max(1, Math.min(DEFAULT_PLANE_BURST, Math.floor(rate))) : 1);
+    this.#fillRatePerMs = rate / PLANE_RATE_WINDOW_MS;
+    this.#windowLimit = Math.max(1, Math.floor(rate));
     this.#tokens = this.#capacity;
-    this.#lastRefill = Date.now();
+    this.#now = now;
+    this.#lastRefill = now();
     this.#sleep = sleep;
   }
 
@@ -65,11 +134,27 @@ export class TokenBucket {
   }
 
   get availableTokens(): number {
-    const elapsed = Math.max(0, Date.now() - this.#lastRefill);
+    const elapsed = Math.max(0, this.#now() - this.#lastRefill);
     return Math.min(this.#capacity, this.#tokens + (this.#fillRatePerMs > 0 ? elapsed * this.#fillRatePerMs : 0));
   }
 
-  async acquire(cost = 1): Promise<void> {
+  /** Plane reported the key exhausted (`X-RateLimit-Remaining: 0`): send nothing before `untilMs`. */
+  pauseUntil(untilMs: number): void {
+    if (Number.isFinite(untilMs)) this.#pausedUntil = Math.max(this.#pausedUntil, untilMs);
+  }
+
+  #refill(at: number): void {
+    if (at > this.#lastRefill) {
+      this.#tokens = Math.min(this.#capacity, this.#tokens + (at - this.#lastRefill) * this.#fillRatePerMs);
+      this.#lastRefill = at;
+    }
+  }
+
+  /**
+   * Waits for the budget. With `maxWaitMs`, a longer wait is not slept: it throws `PlaneRateLimitError`
+   * (no request made) with the time the budget frees up, and nothing is consumed.
+   */
+  async acquire(cost = 1, opts: { maxWaitMs?: number } = {}): Promise<void> {
     if (this.#fillRatePerMs <= 0) return;
     const prev = this.#queue;
     let release!: () => void;
@@ -79,22 +164,28 @@ export class TokenBucket {
 
     await prev;
     try {
-      const now = Date.now();
-      if (now > this.#lastRefill) {
-        const elapsed = now - this.#lastRefill;
-        this.#tokens = Math.min(this.#capacity, this.#tokens + elapsed * this.#fillRatePerMs);
-        this.#lastRefill = now;
+      const at = Math.max(this.#now(), this.#clock);
+      this.#refill(at);
+      let wait = Math.max(0, this.#pausedUntil - at);
+      const tokensThen = Math.min(this.#capacity, this.#tokens + wait * this.#fillRatePerMs);
+      if (tokensThen < cost) wait += Math.ceil((cost - tokensThen) / this.#fillRatePerMs);
+      // The window is (send - span, send], as Plane's throttle drops history `<= now - duration`.
+      const span = PLANE_RATE_WINDOW_MS + PLANE_RATE_MARGIN_MS;
+      while (this.#sent.length && this.#sent[0]! <= at + wait - span) this.#sent.shift();
+      if (this.#sent.length >= this.#windowLimit) {
+        wait = Math.max(wait, this.#sent[this.#sent.length - this.#windowLimit]! + span - at);
       }
-
-      if (this.#tokens < cost) {
-        const needed = cost - this.#tokens;
-        const waitMs = Math.ceil(needed / this.#fillRatePerMs);
-        await this.#sleep(waitMs);
-        this.#tokens = Math.max(0, this.#tokens + (waitMs * this.#fillRatePerMs) - cost);
-        this.#lastRefill = Math.max(Date.now(), this.#lastRefill + waitMs);
-      } else {
-        this.#tokens -= cost;
+      if (opts.maxWaitMs !== undefined && wait > opts.maxWaitMs) {
+        throw new PlaneRateLimitError(at + wait, { message: "Plane request budget exhausted; retry when it frees up", requestMade: false });
       }
+      if (wait > 0) await this.#sleep(wait);
+      // Record when the request really leaves: a sleep that overran must not be booked at its planned time, or
+      // the request would stay in Plane's minute longer than in this history.
+      const sendAt = Math.max(at + wait, this.#now());
+      this.#refill(sendAt);
+      this.#tokens = Math.max(0, this.#tokens - cost);
+      this.#clock = sendAt;
+      for (let i = 0; i < cost; i++) this.#sent.push(sendAt);
     } finally {
       release();
     }
@@ -108,6 +199,7 @@ export class PlaneClient {
   #maxRetries: number;
   #sleep: Sleep;
   #rateLimiter: TokenBucket;
+  #maxInlineWaitMs: number;
 
   constructor(opts: PlaneClientOptions) {
     this.#baseUrl = opts.baseUrl.replace(/\/+$/, "");
@@ -117,6 +209,7 @@ export class PlaneClient {
     this.#sleep = opts.sleep ?? realSleep;
     const rate = opts.rateLimitPerMinute ?? opts.requestsPerMinute ?? 60;
     this.#rateLimiter = new TokenBucket(rate, opts.burstCapacity, this.#sleep);
+    this.#maxInlineWaitMs = opts.maxInlineWaitMs ?? PLANE_MAX_INLINE_WAIT_MS;
   }
 
   get rateBudget(): TokenBucket {
@@ -127,13 +220,18 @@ export class PlaneClient {
     return this.#rateLimiter.ratePerMinute;
   }
 
-  /** Retries rejected 429s and idempotent requests. Ambiguous POST failures belong to the durable outbox. */
+  /**
+   * Retries idempotent requests on network errors and 5xx. Ambiguous POST failures belong to the durable
+   * outbox. A 429 is never slept on: it throws `PlaneRateLimitError` with the server's deadline (contract 2).
+   */
   async request<T = unknown>(method: string, path: string, body?: unknown, opts?: { token?: SecretString }): Promise<T> {
     const url = this.#baseUrl + (path.startsWith(`${API_PREFIX}/`) ? path : API_PREFIX + path);
     const key = (opts?.token ?? this.#token).reveal();
+    // The limit is per API key: only the service key's own exhaustion pauses the shared service budget.
+    const serviceKey = opts?.token === undefined || key === this.#token.reveal();
     const post = method.toUpperCase() === "POST";
     for (let attempt = 0; ; attempt++) {
-      await this.#rateLimiter.acquire();
+      await this.#rateLimiter.acquire(1, { maxWaitMs: this.#maxInlineWaitMs });
       let res: Response;
       try {
         res = await this.#fetch(url, {
@@ -146,12 +244,12 @@ export class PlaneClient {
         await this.#sleep(backoffMs(attempt));
         continue;
       }
+      if (serviceKey) this.#noteRemaining(res.headers);
       const text = await res.text();
       let parsed: unknown = text;
       if (text) { try { parsed = JSON.parse(text); } catch { /* non-JSON body is kept as text */ } } else parsed = undefined;
       if (res.ok) return parsed as T;
-      const retriable = res.status === 429 || (!post && res.status >= 500);
-      if (retriable && attempt < this.#maxRetries) {
+      if (!post && res.status >= 500 && attempt < this.#maxRetries) {
         await this.#sleep(retryDelayMs((n) => res.headers.get(n), attempt));
         continue;
       }
@@ -161,8 +259,25 @@ export class PlaneClient {
         const value = res.headers.get(name);
         if (value !== null) headers[name] = value;
       }
-      throw new PlaneApiError(res.status, parsed, `Plane ${method} ${path} returned ${res.status}${detail}`, headers);
+      const message = `Plane ${method} ${path} returned ${res.status}${detail}`;
+      if (res.status === 429) {
+        // One rule for every deadline: Retry-After, else X-RateLimit-Reset, else the 60 s minimum fallback.
+        const error = new PlaneApiError(429, parsed, message, headers);
+        const c = classifyGithubError(error);
+        const retryAt = c.kind === "rate_limited" ? c.retryAt : Date.now() + 60_000;
+        if (serviceKey) this.#rateLimiter.pauseUntil(retryAt); // other requests on this key defer too
+        throw new PlaneRateLimitError(retryAt, { body: parsed, message, headers });
+      }
+      throw new PlaneApiError(res.status, parsed, message, headers);
     }
+  }
+
+  /** A5: `X-RateLimit-Remaining: 0` means every send before `X-RateLimit-Reset` (epoch seconds) is rejected. */
+  #noteRemaining(headers: Headers): void {
+    if (headers.get("x-ratelimit-remaining")?.trim() !== "0") return;
+    const reset = Number(headers.get("x-ratelimit-reset"));
+    if (!Number.isFinite(reset) || reset <= 0) return;
+    this.#rateLimiter.pauseUntil(Math.min(reset * 1000, Date.now() + PLANE_RATE_WINDOW_MS));
   }
 
   /** Follows `next_cursor` while `next_page_results` is true; a bare array is a single page. */
@@ -181,18 +296,73 @@ export class PlaneClient {
     throw new Error(`Plane pagination did not terminate for ${path}`);
   }
 
-  listStates(slug: string, projectId: string): Promise<PlaneState[]> {
-    return this.listAll<PlaneState>(`/workspaces/${slug}/projects/${projectId}/states/`);
+  async listStates(slug: string, projectId: string): Promise<PlaneState[]> {
+    return this.listAll<PlaneState>(planeWorkspacePath(slug, "projects", projectId, "states"));
   }
 
-  getIssueByIdentifier(slug: string, identifier: string): Promise<unknown> {
-    return this.request("GET", `/workspaces/${slug}/issues/${encodeURIComponent(identifier)}/`);
+  async getIssueByIdentifier(slug: string, identifier: string): Promise<unknown> {
+    return this.request("GET", planeWorkspacePath(slug, PLANE_ITEMS_SEGMENT, identifier));
   }
 
-  getIssue(slug: string, projectId: string, issueId: string): Promise<unknown> {
-    return this.request("GET", `/workspaces/${slug}/projects/${projectId}/issues/${issueId}/`);
+  async getIssue(slug: string, projectId: string, issueId: string): Promise<unknown> {
+    return this.request("GET", planeItemsPath(slug, projectId, issueId));
+  }
+
+  /** The project as the service user sees it; `archived_at` is null unless the project is archived. */
+  async getProject(slug: string, projectId: string): Promise<PlaneProject> {
+    return this.request<PlaneProject>("GET", planeWorkspacePath(slug, "projects", projectId));
+  }
+
+  /**
+   * Ids of the project's visible (not archived) work items, `per_page` at a time. Stops after `maxPages`,
+   * or after the first page when `total_pages` exceeds it, and then reports `complete: false`, so a
+   * caller never takes a partial list for the whole project.
+   */
+  async listIssueIds(slug: string, projectId: string, opts: { perPage?: number; maxPages?: number } = {}): Promise<PlaneIdPage> {
+    const perPage = opts.perPage ?? 100;
+    const maxPages = opts.maxPages ?? 1000;
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    let totalPages: number | undefined;
+    for (let page = 0; page < maxPages; page++) {
+      const q = new URLSearchParams({ per_page: String(perPage), fields: "id", order_by: "created_at" });
+      if (cursor) q.set("cursor", cursor);
+      const res = await this.request<PlanePage<{ id?: unknown }> | { id?: unknown }[]>("GET", `${planeItemsPath(slug, projectId)}?${q}`);
+      if (Array.isArray(res)) return { ids: res.map((r) => r?.id).filter((id): id is string => typeof id === "string"), complete: true, totalPages: 1 };
+      if (typeof res?.total_pages === "number") totalPages = res.total_pages;
+      for (const r of res?.results ?? []) if (typeof r?.id === "string") ids.push(r.id);
+      if (!res?.next_page_results || !res.next_cursor) return { ids, complete: true, ...(totalPages !== undefined ? { totalPages } : {}) };
+      // Reading on would cost more than the caller allowed: stop now rather than after `maxPages` pages.
+      if (totalPages !== undefined && totalPages > maxPages) return { ids, complete: false, totalPages };
+      cursor = res.next_cursor;
+    }
+    return { ids, complete: false, ...(totalPages !== undefined ? { totalPages } : {}) };
+  }
+
+  /** The newest `updated_at` among the project's visible work items, or null for an empty project. */
+  async latestIssueUpdate(slug: string, projectId: string): Promise<string | null> {
+    const q = new URLSearchParams({ per_page: "1", fields: "id,updated_at", order_by: "-updated_at" });
+    const res = await this.request<PlanePage<{ updated_at?: unknown }>>("GET", `${planeItemsPath(slug, projectId)}?${q}`);
+    const at = res?.results?.[0]?.updated_at;
+    return typeof at === "string" ? at : null;
+  }
+
+  /**
+   * The item's newest activity rows. v1.4.2 keeps activities when an item is deleted (DO_NOTHING) and
+   * records `field: "archived_at"` on archive and restore, so they tell an archived item from a deleted one.
+   */
+  async listIssueActivities(slug: string, projectId: string, issueId: string, perPage = 50): Promise<PlaneActivity[]> {
+    const q = new URLSearchParams({ per_page: String(perPage), order_by: "-created_at" });
+    const res = await this.request<PlanePage<PlaneActivity> | PlaneActivity[]>("GET", `${planeItemsPath(slug, projectId, issueId)}activities/?${q}`);
+    return Array.isArray(res) ? res : res?.results ?? [];
   }
 }
+
+export interface PlaneProject { id?: string; archived_at?: string | null }
+export interface PlaneActivity { verb?: string | null; field?: string | null; new_value?: string | null; created_at?: string }
+interface PlanePage<T> { results?: T[]; next_cursor?: string | null; next_page_results?: boolean; total_pages?: number }
+/** Contract 3: a list read either returns everything (`complete: true`) or says it did not. */
+export interface PlaneIdPage { ids: string[]; complete: boolean; totalPages?: number }
 
 export type PlaneWrite =
   | { kind: "update_issue"; slug: string; projectId: string; issueId: string; fields: Record<string, unknown>; skipTerminalState?: boolean }
@@ -210,8 +380,15 @@ export interface PlaneWriteOptions {
 }
 
 export class UnknownPlaneState extends Error {
-  constructor(message: string) { super(message); this.name = "UnknownPlaneState"; }
+  /** A9: v1.4.2's states list filters out triage states, so an id missing after a refresh may be one. */
+  readonly mayBeTriage: boolean;
+  constructor(message: string, mayBeTriage = false) { super(message); this.name = "UnknownPlaneState"; this.mayBeTriage = mayBeTriage; }
 }
+
+/** The id is absent from a freshly read states list: either it does not exist or it is a triage state. */
+const unknownOrTriage = (stateId: string, projectId: string) => new UnknownPlaneState(
+  `unknown Plane state id ${stateId} in project ${projectId}: not in the project's states list, which omits triage states, `
+  + "so it is either missing or a triage state (writes into triage are not allowed, §7.1)", true);
 
 /** Markers for creates in flight (F13, F9): ingress retries a creation event while one of these is fresh. */
 export const pendingCreateHash = (projectId: string, name = "") =>
@@ -248,7 +425,8 @@ export class PlaneWritePath {
     if (typeof state !== "string") throw new Error("Plane state must be a state id string");
     let found = (await this.#statesFor(slug, projectId)).find((s) => s.id === state);
     if (!found) found = (await this.#statesFor(slug, projectId, true)).find((s) => s.id === state);
-    if (!found) throw new UnknownPlaneState(`unknown Plane state id ${state} in project ${projectId}`);
+    if (!found) throw unknownOrTriage(state, projectId);
+    // Plane v1.4.2 never lists triage states (StateManager excludes them); this guards a version that does.
     if (found.group === "triage") throw new TriageWriteRejected();
   }
 
@@ -259,7 +437,8 @@ export class PlaneWritePath {
 
   async apply(write: PlaneWrite, opts: PlaneWriteOptions = {}): Promise<PlaneWriteResult> {
     const req = <T>(method: string, path: string, body?: unknown) => this.#client.request<T>(method, path, body, opts.actorToken ? { token: opts.actorToken } : undefined);
-    const base = (w: { slug: string; projectId: string }) => `/workspaces/${w.slug}/projects/${w.projectId}`;
+    const base = (w: { slug: string; projectId: string }) => planeWorkspacePath(w.slug, "projects", w.projectId);
+    const item = (w: { slug: string; projectId: string; issueId: string }) => planeItemsPath(w.slug, w.projectId, w.issueId);
 
     switch (write.kind) {
       case "update_issue": {
@@ -275,7 +454,7 @@ export class PlaneWritePath {
             st = (await this.#statesFor(write.slug, write.projectId, true)).find((s) => s.id === stateId);
           }
           if (!st) {
-            throw new UnknownPlaneState(`unknown Plane state id ${stateId} in project ${write.projectId}`);
+            throw unknownOrTriage(stateId, write.projectId);
           }
           if (st.group === "completed" || st.group === "cancelled") {
             await appendAudit(this.#db, {
@@ -292,7 +471,7 @@ export class PlaneWritePath {
         // Recorded BEFORE the request: the echo webhook can arrive before the response does.
         await recordAppliedOps(this.#db, hashes.map((opHash) => ({ opHash, direction: "to_plane" as const })));
         try {
-          await req("PATCH", `${base(write)}/issues/${write.issueId}/`, write.fields);
+          await req("PATCH", item(write), write.fields);
         } catch (err) {
           await forgetAppliedOps(this.#db, hashes); // a stale row would swallow a genuine human edit
           throw err;
@@ -304,7 +483,7 @@ export class PlaneWritePath {
         return this.#create(write, opts);
       case "add_link": {
         try {
-          const created = await req<{ id?: string }>("POST", `${base(write)}/issues/${write.issueId}/links/`, { url: write.url, title: write.title });
+          const created = await req<{ id?: string }>("POST", `${item(write)}links/`, { url: write.url, title: write.title });
           return created?.id ? { ok: true, id: created.id } : { ok: true };
         } catch (err) {
           const msg = err instanceof PlaneApiError && err.status === 400 && err.body && typeof err.body === "object" ? (err.body as { error?: unknown }).error : undefined;
@@ -313,12 +492,12 @@ export class PlaneWritePath {
         }
       }
       case "update_link": {
-        await req("PATCH", `${base(write)}/issues/${write.issueId}/links/${write.linkId}/`, { url: write.url, title: write.title });
+        await req("PATCH", `${item(write)}links/${planeSegment(write.linkId, "Plane link id")}/`, { url: write.url, title: write.title });
         return { ok: true, id: write.linkId };
       }
       case "upsert_label": {
         try {
-          const created = await req<{ id: string }>("POST", `${base(write)}/labels/`, write.color ? { name: write.name, color: write.color } : { name: write.name });
+          const created = await req<{ id: string }>("POST", `${base(write)}labels/`, write.color ? { name: write.name, color: write.color } : { name: write.name });
           return { ok: true, id: created.id };
         } catch (err) {
           const existing = err instanceof PlaneApiError && err.status === 409 && err.body && typeof err.body === "object" ? (err.body as { id?: unknown }).id : undefined;
@@ -335,8 +514,8 @@ export class PlaneWritePath {
     if (intentId !== undefined && (typeof intentId !== "string" || !intentId.trim() || intentId.length > 255)) {
       throw new Error("Plane create intent id must be a nonempty string of at most 255 characters");
     }
-    const path = `/workspaces/${write.slug}/projects/${write.projectId}/issues/`
-      + (write.kind === "add_comment" ? `${write.issueId}/comments/` : "");
+    const path = write.kind === "add_comment" ? `${planeItemsPath(write.slug, write.projectId, write.issueId)}comments/`
+      : planeItemsPath(write.slug, write.projectId);
     const requestOptions = opts.actorToken ? { token: opts.actorToken } : undefined;
     if (intentId) {
       let existing: { id?: unknown; external_id?: unknown; external_source?: unknown } | undefined;

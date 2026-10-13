@@ -12,6 +12,8 @@ import { PlaneApiError } from "../sync/plane.ts";
 import type { PlaneWrite, PlaneWritePath, PlaneWriteResult } from "../sync/plane.ts";
 import type { GithubWrite, GithubWritePath } from "../sync/github.ts";
 import { isPermanentWriteError, outboundBackoff } from "../queue/workers.ts";
+import { classifyGithubError, GithubRateLimitError, rememberGithubRateLimit } from "../github/errors.ts";
+import { problemReportsEnabled } from "../github/problems.ts";
 
 type Side = "plane" | "github";
 type IssueTarget = { slug: string; projectId: string; issueId: string };
@@ -26,6 +28,7 @@ type Write = (ResumeWrite | RollupWrite | PlaneWrite | GithubWrite | PlaneMutati
   _plan?: PlanMetadata;
   _smartCommit?: { sha: string; stepId: string };
   _authority?: WriteAuthority;
+  _problemReport?: { key: string };
 };
 type Result = PlaneWriteResult | { ok: true; id?: number; number?: number };
 type RegistrationReceipt = Result & { registered?: true; outboxId?: string };
@@ -82,10 +85,12 @@ class WriteAuthorisationError extends PlaneApiError {
 /** The worker should move this wake-up to delayed without spending its BullMQ failure budget. */
 export class OrderedWriteDeferredError extends Error {
   retryAfterMs: number;
-  constructor(ms: number) {
+  readonly retryAt?: number;
+  constructor(ms: number, retryAt?: number) {
     super("an earlier outbound intent must finish first");
     this.name = "OrderedWriteDeferredError";
     this.retryAfterMs = Math.max(1, Math.ceil(ms));
+    this.retryAt = retryAt;
   }
 }
 
@@ -100,21 +105,32 @@ export function writeJobId(side: Side, write: unknown, deliveryId?: string, acto
 /** Counts equal-content occurrences, rather than positions shared with different writes. */
 export function nextWriteJobId(side: Side, write: unknown, scope?: DeliveryContext, actorUserId?: string): string {
   if (!scope) return writeJobId(side, write, undefined, actorUserId);
-  const content = writeJobId(side, write, "content", actorUserId, scope.operationId ?? 0);
+  // A Plane comment creation is an immutable source operation, even when a retry re-reads edited
+  // text. Its GitHub comment identity comes from the source comment ID and destination, not body.
+  const w = write as { kind?: string; body?: unknown } | null;
+  const identityWrite = side === "github" && w?.kind === "comment" && /^plane-plane-comment-[a-f0-9]{64}$/.test(scope.deliveryId)
+    ? Object.fromEntries(Object.entries(w).filter(([key]) => key !== "body")) : write;
+  const content = writeJobId(side, identityWrite, "content", actorUserId, scope.operationId ?? 0);
   const counts = scope.occurrences ??= new Map();
   const ordinal = counts.get(content) ?? 0;
   counts.set(content, ordinal + 1);
-  return writeJobId(side, write, scope.deliveryId, actorUserId, scope.operationId ? `${scope.operationId}:${ordinal}` : ordinal);
+  return writeJobId(side, identityWrite, scope.deliveryId, actorUserId, scope.operationId ? `${scope.operationId}:${ordinal}` : ordinal);
 }
+
+const isPlaneProblemReport = (write: Write): boolean => write.kind === "add_comment" && /^[a-f0-9]{64}$/.test(write._problemReport?.key ?? "");
 
 function targetKey(side: Side, write: Write, id?: string): string {
   if (write.kind === "resume_reducer") return JSON.stringify([side, "continuation", write.continuation.mappingId, write.continuation.job.deliveryId]);
   if (side === "plane") {
     const w = write as PlaneWrite | PlaneMutationWrite;
+    if (isPlaneProblemReport(write) && "issueId" in w)
+      return JSON.stringify([side, "problem_report", w.slug, w.projectId, ["issue", w.issueId]]);
     return JSON.stringify([side, w.slug, w.projectId,
       "issueId" in w ? ["issue", w.issueId] : w.kind === "upsert_label" ? "labels" : ["create", id]]);
   }
   const w = write as GithubWrite;
+  if (w.kind === "problem_report") return JSON.stringify([side, "problem_report", w.repoId,
+    w.target.kind === "commit" ? ["commit", w.target.sha] : ["issue", w.target.number]]);
   return JSON.stringify([side, w.repoId, "number" in w ? ["issue", w.number] : ["create", id]]);
 }
 
@@ -347,7 +363,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
       const metadata: PlanMetadata = { root: opts.groupRoot ?? root, bindings: { ...bindings }, after: [], ...(predecessor ? { predecessor } : {}), ...(step.bind ? { bind: step.bind } : {}) };
       const write = { ...step.write, _plan: metadata } as Write;
       freezeAuthority(write, authority ?? group?.write._authority);
-      const target = group ? group.target_key : opts.target && step.side === "plane" ? targetKey("plane", { ...opts.target, kind: "update_issue", fields: {} })
+      const target = group ? group.target_key : opts.target && step.side === "plane" && !isPlaneProblemReport(write) ? targetKey("plane", { ...opts.target, kind: "update_issue", fields: {} })
         : key && opts.pendingLink && step.side === first.side ? JSON.stringify([step.side, "create", key]) : targetKey(step.side, write, id);
       let workspace = step.side === "plane" ? (write as PlaneWrite).slug ?? write._authority?.workspaceSlug
         : write._authority?.workspaceSlug ?? scope?.workspaceSlug ?? planWorkspace ?? undefined;
@@ -452,11 +468,16 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
   };
 
   const failIntent = async (conn: Db, head: Row, id: string, err: unknown, actor?: SecretString): Promise<never> => {
-    const attempts = head.attempts + 1;
+    const classified = classifyGithubError(err, { now: now(), attempt: head.attempts });
+    const attempts = head.attempts + ((err as { requestMade?: unknown } | null)?.requestMade === false ? 0 : 1);
     const retryStartedAt = head.error?.retryStartedAt ?? now();
     const expiresAt = retryStartedAt + maxBlockMs;
     const terminal = isPermanentWriteError(err, attempts - 1) || attempts >= maxAttempts || now() >= expiresAt;
-    const retryAfter = Math.max(1, Math.min(outboundBackoff(attempts), expiresAt - now()));
+    const retryAt = classified.kind === "rate_limited" ? classified.retryAt
+      : now() + Math.max(1, Math.min(outboundBackoff(attempts), expiresAt - now()));
+    const retryAfter = Math.max(1, retryAt - now());
+    if (classified.kind === "rate_limited" && err instanceof GithubRateLimitError && err.key)
+      await rememberGithubRateLimit(conn, err.key, retryAt, false);
     let message = err instanceof Error ? err.message : "outbound write failed";
     if (actor) message = message.replaceAll(actor.reveal(), "[redacted]");
     message = message.slice(0, 500);
@@ -468,7 +489,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
       await conn.query(`UPDATE outbound_writes SET attempts = $2, status = $3,
         retry_at = $4, error = $5::jsonb, updated_at = now() WHERE id = $1`,
       [head.id, attempts, terminal ? "failed" : "pending",
-        terminal ? null : new Date(now() + retryAfter), JSON.stringify({ message, retryStartedAt })]);
+        terminal ? null : new Date(retryAt), JSON.stringify({ message, retryStartedAt })]);
       if (terminal && head.write._plan) {
         const root = head.write._plan.root;
         if (deps.db.withConnection) {
@@ -499,7 +520,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
       }
       if (head.id === id) throw new QueuedWriteFailedError(id, message);
     }
-    throw new OrderedWriteDeferredError(terminal ? 1 : retryAfter);
+    throw new OrderedWriteDeferredError(terminal ? 1 : retryAfter, terminal ? undefined : retryAt);
   };
 
   const execute = async (side: Side, job: OutboxJob): Promise<Result> => {
@@ -530,12 +551,19 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
         if (head.error?.retryStartedAt !== undefined && now() >= head.error.retryStartedAt + maxBlockMs)
           return failIntent(conn, head, id, new PlaneApiError(422, {}, "outbound target retry window expired"));
         const due = head.retry_at ? new Date(head.retry_at).getTime() : 0;
-        if (due > now()) throw new OrderedWriteDeferredError(due - now());
+        if (due > now()) throw new OrderedWriteDeferredError(due - now(), due);
         let actor: SecretString | undefined;
         let result: Result;
         try {
           try { await deps.authoriseWrite?.(head.side, head.write, head.workspace_slug ?? undefined); }
-          catch (err) { throw new WriteAuthorisationError(err); }
+          catch (err) {
+            if (classifyGithubError(err).kind === "rate_limited") throw err;
+            throw new WriteAuthorisationError(err);
+          }
+          const reporting = head.write.kind === "problem_report" || isPlaneProblemReport(head.write);
+          if (reporting && !head.write._authority) throw new WriteAuthorisationError("failure report has no frozen mapping authority");
+          // A queued notice must honor opt-out at consumption time, not only producer time.
+          const reportSuppressed = reporting && !await problemReportsEnabled(conn, head.write._authority!);
           const plan = head.write._plan;
           const results: Record<string, unknown> = {};
           if (plan?.predecessor && !resultOf(await completion(plan.predecessor, conn))) throw new OrderedWriteDeferredError(1000);
@@ -545,7 +573,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
             if (!value) throw new OrderedWriteDeferredError(1000);
             results[name] = value;
           }
-          const { _plan: _metadata, _smartCommit: _command, _authority: _admission, ...template } = head.write;
+          const { _plan: _metadata, _smartCommit: _command, _authority: _admission, _problemReport: _report, ...template } = head.write;
           const actualWrite = resolvePlanValue(template, results) as Write;
           let tokenSnapshot: string | undefined;
           if (head.actor_user_id && !head.result) {
@@ -568,8 +596,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
             catch (err) {
               const e = err as { status?: number; response?: { status?: number; headers?: Record<string, unknown> } } | null;
               const status = e?.status ?? e?.response?.status;
-              const headers = e?.response?.headers ?? {};
-              const rateLimited = headers["retry-after"] !== undefined || String(headers["x-ratelimit-remaining"]) === "0";
+              const rateLimited = classifyGithubError(err).kind === "rate_limited";
               if (!actor || !(status === 401 || (status === 403 && !rateLimited))) throw err;
               const transactional = Boolean(deps.db.withConnection);
               if (transactional) await conn.exec("BEGIN");
@@ -588,6 +615,7 @@ export function makeOrderedOutbox(deps: OrderedOutboxDeps) {
             }
           };
           if (head.result?.ok === true) result = head.result;
+          else if (reportSuppressed) result = { ok: true };
           else if (actualWrite.kind === "resume_reducer") {
             if (!deps.resumeReducer) throw new PlaneApiError(503, {}, "outbox reducer continuation handler is required");
             await deps.resumeReducer({ ...actualWrite.continuation, ...(head.workspace_slug ? { workspaceSlug: head.workspace_slug } : {}),

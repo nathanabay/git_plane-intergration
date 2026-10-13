@@ -1,4 +1,5 @@
 // Operational features (spec §7.6): dry-run, audit replay and backfill on connect.
+import { readGithubCollection } from "../github/pr-automation.ts";
 import type { Db } from "../db/migrate.ts";
 import { appendAudit } from "../db/ledgers.ts";
 import { ruleEventsFor } from "../app/rule-events.ts";
@@ -191,22 +192,16 @@ export async function replayDelivery(
   return { auditId: newId, deliveryId };
 }
 
-export interface GithubRequester { request(route: string, params?: Record<string, unknown>): Promise<{ data: any }> }
+export interface GithubRequester { request(route: string, params?: Record<string, unknown>): Promise<{ data: any; headers?: Record<string, unknown> }> }
 export interface BackfillMapping { id: number; workspaceSlug: string; planeProjectId: string; ghRepoId: number; owner: string; repo: string }
-export interface BackfillResult { linked: number; unresolved: number; pullRequests: number; issues: number }
+export interface BackfillCursor { pullRequestsPage: number | null; issuesPage: number | null }
+export interface BackfillResult { linked: number; unresolved: number; pullRequests: number; issues: number; complete?: false; cursor?: BackfillCursor }
 
-const PAGE = 100;
 const MAX_PAGES = 50;
 
-async function listOpen(github: GithubRequester, route: string, owner: string, repo: string): Promise<any[]> {
-  const out: any[] = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const res = await github.request(route, { owner, repo, state: "open", per_page: PAGE, page });
-    const items: any[] = Array.isArray(res?.data) ? res.data : [];
-    out.push(...items);
-    if (items.length < PAGE) break;
-  }
-  return out;
+async function listOpen(github: GithubRequester, route: string, owner: string, repo: string, page: number) {
+  return readGithubCollection<any>(github, route, { owner, repo, state: "open", sort: "created", direction: "asc" },
+    (data) => data, { maxPages: MAX_PAGES, startPage: page });
 }
 
 /** On connect: link the repository's open PRs and issues to the work items they reference (§6, §7.6). */
@@ -216,6 +211,8 @@ export async function backfill(deps: {
   mapping: BackfillMapping;
   resolveIssue(key: string): Promise<{ projectId: string; issueId: string } | null | undefined>;
   words?: MagicWords;
+  /** Persist the cursor from a partial result to resume each unfinished list. */
+  cursor?: BackfillCursor;
 }): Promise<BackfillResult> {
   const { db, github, mapping } = deps;
   const words = deps.words ?? DEFAULT_MAGIC_WORDS;
@@ -249,12 +246,22 @@ export async function backfill(deps: {
     }
   };
 
-  const prs = await listOpen(github, "GET /repos/{owner}/{repo}/pulls", mapping.owner, mapping.repo);
-  for (const pr of prs) { result.pullRequests++; await link(pr, "pr", typeof pr?.head?.ref === "string" ? pr.head.ref : undefined); }
+  const cursor = deps.cursor ?? { pullRequestsPage: 1, issuesPage: 1 };
+  for (const page of [cursor.pullRequestsPage, cursor.issuesPage]) {
+    if (page !== null && (!Number.isSafeInteger(page) || page < 1)) throw new OperationError(422, "Invalid backfill cursor page");
+  }
+  const prs = cursor.pullRequestsPage === null ? { items: [], complete: true } :
+    await listOpen(github, "GET /repos/{owner}/{repo}/pulls", mapping.owner, mapping.repo, cursor.pullRequestsPage);
+  for (const pr of prs.items) { result.pullRequests++; await link(pr, "pr", typeof pr?.head?.ref === "string" ? pr.head.ref : undefined); }
   // GitHub's issues endpoint also lists pull requests; those were handled above.
-  const issues = (await listOpen(github, "GET /repos/{owner}/{repo}/issues", mapping.owner, mapping.repo)).filter((i) => !i?.pull_request);
-  for (const issue of issues) { result.issues++; await link(issue, "issue"); }
-
-  await appendAudit(db, { kind: "backfill", workspaceSlug: mapping.workspaceSlug, outcome: "done", detail: { mappingId: mapping.id, ...result } });
+  const issues = cursor.issuesPage === null ? { items: [], complete: true } :
+    await listOpen(github, "GET /repos/{owner}/{repo}/issues", mapping.owner, mapping.repo, cursor.issuesPage);
+  for (const issue of issues.items.filter((i) => !i?.pull_request)) { result.issues++; await link(issue, "issue"); }
+  if (!prs.complete || !issues.complete) {
+    result.complete = false;
+    result.cursor = { pullRequestsPage: prs.complete ? null : prs.nextPage!, issuesPage: issues.complete ? null : issues.nextPage! };
+  }
+  await appendAudit(db, { kind: "backfill", workspaceSlug: mapping.workspaceSlug,
+    outcome: result.complete === false ? "partial" : "done", detail: { mappingId: mapping.id, ...result } });
   return result;
 }

@@ -40,12 +40,25 @@ test("F2/F6: the running service registers mirror and actor intents without wait
   ];
   let fail = true;
   let refused = 0;
+  const githubReads: string[] = [];
   const applied: { state: string; token: string }[] = [];
   const api = createServer((req, res) => {
     let body = "";
     req.on("data", (chunk) => { body += chunk; });
     req.on("end", () => {
       const send = (status: number, data: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(data)); };
+      // Current installation authority (GitHub A14) and fresh mirror reads (A10)
+      // are part of the real reducer; exercise them against the loopback fixture.
+      const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+      if (req.method === "GET" && path === "/repos/o/r/installation") {
+        githubReads.push(path); return send(200, { id: 1, suspended_at: null });
+      }
+      if (req.method === "POST" && path === "/app/installations/1/access_tokens")
+        return send(201, { token: "FIXTURE-INSTALLATION-TOKEN", expires_at: new Date(Date.now() + 3_600_000).toISOString(), permissions: { issues: "read" } });
+      if (req.method === "GET" && path === "/repos/o/r/issues/3") {
+        githubReads.push(path); return send(200, { number: 3, state: "closed", labels: [{ name: "plane" }] });
+      }
+      if (path.startsWith("/repos/") || path.startsWith("/app/")) return send(404, { message: "unexpected GitHub fixture route" });
       if (req.method === "GET" && /\/states\/(\?|$)/.test(req.url ?? "")) return send(200, { results: states, next_page_results: false });
       if (req.method === "PATCH") {
         const w = JSON.parse(body);
@@ -80,6 +93,7 @@ test("F2/F6: the running service registers mirror and actor intents without wait
   const service = await runService({ PORT: "0", HOST: "127.0.0.1", DATABASE_URL: pg.url, REDIS_URL: vk.url,
     QUEUE_PREFIX: prefix, PLANE_BASE_URL: `http://127.0.0.1:${address.port}`, PLANE_SERVICE_PAT: "SERVICE-PAT", PLANE_SERVICE_USER_ID: "u-service",
     PLANE_WEBHOOK_SECRET: "plane-secret", GITHUB_APP_ID: "1", GITHUB_PRIVATE_KEY_PATH: keyFile,
+    GITHUB_API_BASE_URL: `http://127.0.0.1:${address.port}`,
     GITHUB_WEBHOOK_SECRET: "gh-secret", GITSYNC_TOKEN_KEY: key.toString("base64") },
   { startServer: async (opts) => { const server = await startServer(opts); base = `http://127.0.0.1:${server.port}`; return server; } });
   // Stop the service before its databases/server. Hooks execute in registration order.
@@ -98,6 +112,8 @@ test("F2/F6: the running service registers mirror and actor intents without wait
       "inbound reduction waited for the unavailable Plane destination");
     strictEqual(applied.length, 0);
     strictEqual((await db.query("SELECT 1 FROM outbound_writes WHERE status = 'pending'")).rows.length, 2);
+    ok(githubReads.includes("/repos/o/r/installation"), "reducer did not verify current installation authority");
+    ok(githubReads.includes("/repos/o/r/issues/3"), "mirror did not read the current GitHub issue");
     ok(await until(async () => refused > 0), "fixture did not exercise an actual Plane outage");
     const began = performance.now();
     const ping = JSON.stringify({ repository: { id: 999 }, check_run: { id: 7 } });
