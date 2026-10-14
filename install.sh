@@ -286,8 +286,10 @@ wait_for_proxy() {
   # Docker re-attaches the published port a moment after the container restarts (measured: about a second).
   # Wait for it too, so the site answers from this machine before we say we are done.
   local proxy_cid addr host port
-  proxy_cid="$(compose ps -q proxy 2>/dev/null | head -n1)"
-  addr="$( [ -z "$proxy_cid" ] || docker port "$proxy_cid" 80/tcp 2>/dev/null | head -n1)"
+  # No published port is normal (e.g. a host reverse proxy reaches Plane over a Docker network); `|| true` keeps
+  # `docker port`'s error from ending the script under `set -e -o pipefail`.
+  proxy_cid="$(compose ps -q proxy 2>/dev/null | head -n1 || true)"
+  addr="$( { [ -z "$proxy_cid" ] || docker port "$proxy_cid" 80/tcp 2>/dev/null; } | head -n1 || true)"
   [ -n "$addr" ] || return 0
   host="${addr%:*}"; port="${addr##*:}"
   case "$host" in 0.0.0.0|"[::]"|"::"|"") host=127.0.0.1 ;; esac

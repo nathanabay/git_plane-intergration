@@ -14,7 +14,7 @@ Scope: replace the 12-step manual runbook with `./install.sh`, which detects the
   EXPECT: /^# pass [1-9]\d*$[\s\S]*^# fail 0$/m
   EVIDENCE: automatic-evidence=v1; definition-sha256=2d9ca568548d23e24d1f8ce524a50d6521c651311efb24c102284aa90bd12de9; exit=0; EXPECT=matched; output-sha256=ef311d6464bea578bd32d28c12a033339e9dcc8f98e48a3546696856bb8c3509; output-bytes=1787; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/pomfret; path=ae06f499d48e/29 entries
 
-- [x] G3: end-to-end — install.sh finds an installed-but-stopped Plane and a Plane whose containers were removed, refuses a folder without Plane, and against a scratch Plane-shaped compose project in rootless Docker yields a healthy git-sync reachable through Plane's proxy, keeps existing override services, writes a 0600 env file, creates the gitsync database, is idempotent on re-run, and --uninstall removes it
+- [ ] G3: end-to-end — install.sh finds an installed-but-stopped Plane and a Plane whose containers were removed, refuses a folder without Plane, and against a scratch Plane-shaped compose project in rootless Docker yields a healthy git-sync reachable through Plane's proxy, keeps existing override services, writes a 0600 env file, creates the gitsync database, is idempotent on re-run, and --uninstall removes it
   CHECK: node scripts/verify-install-e2e.mjs
   EXPECT: INSTALL E2E PASSED
   EVIDENCE: automatic-evidence=v1; definition-sha256=7f81f254a588a088541e49e34c2645232f6fa5b5bd4b3c369a07ddb36d24cee1; exit=0; EXPECT=matched; output-sha256=4ed046d0bb42721bd6f0a58b86d22f143ac5ce05b6470b45dbaf3f3576695a8a; output-bytes=2727; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/pomfret; path=ae06f499d48e/29 entries
