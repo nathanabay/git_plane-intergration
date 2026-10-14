@@ -95,25 +95,99 @@ docker compose version >/dev/null 2>&1 || die "The Docker Compose plugin is miss
 
 label() { docker inspect --format "{{index .Config.Labels \"$2\"}}" "$1"; }
 
-# Plane's api container identifies the Compose project: its directory, project name and compose files.
-API_CID=""
-mapfile -t API_CANDIDATES < <(docker ps -q --filter label=com.docker.compose.service=api --filter status=running)
-for cid in "${API_CANDIDATES[@]}"; do
-  wd="$(label "$cid" com.docker.compose.project.working_dir)"
-  if [ -n "$PLANE_DIR" ]; then
-    [ "$(cd "$PLANE_DIR" 2>/dev/null && pwd -P)" = "$(cd "$wd" 2>/dev/null && pwd -P)" ] && { API_CID="$cid"; break; }
-  else
-    # A Plane project also has a plane-db service.
+same_dir() { [ "$(cd "$1" 2>/dev/null && pwd -P)" = "$(cd "$2" 2>/dev/null && pwd -P)" ]; }
+
+# Finds Plane's api container: a Compose service "api" whose project also has a "plane-db" service. It identifies
+# the project: its directory, name and compose files. $1 = "running" (running containers only) or "all".
+find_plane() {
+  local cid wd proj found=""
+  local -a ps=(docker ps -q); [ "$1" = running ] || ps+=(-a)
+  local -a cids; mapfile -t cids < <("${ps[@]}" --filter label=com.docker.compose.service=api)
+  for cid in "${cids[@]}"; do
+    wd="$(label "$cid" com.docker.compose.project.working_dir)"
     proj="$(label "$cid" com.docker.compose.project)"
-    if [ -n "$(docker ps -q --filter "label=com.docker.compose.project=$proj" --filter label=com.docker.compose.service=plane-db)" ]; then
-      [ -z "$API_CID" ] || die "Found more than one running Plane. Choose one with --plane-dir DIR"
-      API_CID="$cid"
-    fi
+    if [ -n "$PLANE_DIR" ]; then same_dir "$PLANE_DIR" "$wd" || continue; fi
+    [ -n "$("${ps[@]}" --filter "label=com.docker.compose.project=$proj" --filter label=com.docker.compose.service=plane-db)" ] || continue
+    [ -z "$found" ] || [ "$(label "$found" com.docker.compose.project)" = "$proj" ] \
+      || die "Found more than one Plane. Choose one with --plane-dir DIR"
+    found="$cid"
+  done
+  API_CID="$found"
+}
+
+# A directory holding a Plane Compose install (the official setup.sh puts it in plane-selfhost/plane-app).
+plane_compose_file() {
+  local f; for f in docker-compose.yaml docker-compose.yml compose.yaml compose.yml; do
+    if [ -f "$1/$f" ] && grep -qE '^  plane-db:' "$1/$f" && grep -qE '^  api:' "$1/$f"; then echo "$1/$f"; return 0; fi
+  done
+  return 1
+}
+
+confirm_start() {
+  info "$1"
+  if [ "$ASSUME_YES" = 0 ] && [ -t 0 ]; then
+    read -r -p "    Start Plane now and install git-sync on it? [Y/n] " answer
+    [[ -z "$answer" || "$answer" =~ ^[Yy] ]] || die "cancelled. Start Plane yourself, then run this again."
   fi
-done
+}
+
+wait_for_plane() {
+  for _ in $(seq 1 90); do
+    find_plane running
+    if [ -n "$API_CID" ]; then
+      local db; db="$(docker ps -q --filter "label=com.docker.compose.project=$(label "$API_CID" com.docker.compose.project)" --filter label=com.docker.compose.service=plane-db | head -n1)"
+      if [ -n "$db" ] && docker exec "$db" pg_isready -q >/dev/null 2>&1; then return 0; fi
+    fi
+    sleep 2
+  done
+  die "Plane did not come up within 3 minutes. Check it with 'docker compose ps' in its directory."
+}
+
+API_CID=""
+find_plane running
 if [ -z "$API_CID" ]; then
-  if [ -n "$PLANE_DIR" ]; then die "No running Plane found for $PLANE_DIR. Start Plane first, then run this again."; fi
-  die "No running Plane found. Start Plane first (or pass --plane-dir DIR)."
+  # Installed but stopped: its containers still exist. Starting them as they are keeps Plane's exact configuration.
+  find_plane all
+  if [ -n "$API_CID" ]; then
+    proj="$(label "$API_CID" com.docker.compose.project)"
+    confirm_start "Plane is installed in $(label "$API_CID" com.docker.compose.project.working_dir) but not running."
+    mapfile -t stopped < <(docker ps -aq --filter "label=com.docker.compose.project=$proj")
+    docker start "${stopped[@]}" >/dev/null || die "could not start Plane's containers"
+    wait_for_plane
+    info "Plane started"
+  fi
+fi
+if [ -z "$API_CID" ]; then
+  # Installed but its containers are gone (e.g. after 'docker compose down'): start it from its directory the way
+  # Plane's setup.sh does, with plane.env when there is one.
+  dirs=()
+  if [ -n "$PLANE_DIR" ]; then dirs=("$PLANE_DIR")
+  else
+    for home in "$HOME" ${SUDO_USER:+"$(getent passwd "$SUDO_USER" | cut -d: -f6)"} /root; do
+      dirs+=("$home/plane-selfhost/plane-app" "$home/plane")
+    done
+    dirs+=(/opt/plane-selfhost/plane-app /opt/plane /srv/plane)
+  fi
+  found_dir=""
+  for d in "${dirs[@]}"; do
+    if [ -z "$d" ] || ! plane_compose_file "$d" >/dev/null; then continue; fi
+    [ -z "$found_dir" ] || same_dir "$found_dir" "$d" || die "Found Plane installed in $found_dir and $d. Choose one with --plane-dir DIR"
+    found_dir="$d"
+  done
+  if [ -z "$found_dir" ]; then
+    [ -z "$PLANE_DIR" ] || die "$PLANE_DIR does not hold a Plane install (no compose file with plane-db and api services)."
+    die "Plane is not installed here (no Plane found in Docker or in the usual folders).
+       Install Plane first: https://developers.plane.so/self-hosting/methods/docker-compose
+       If it is installed somewhere else, pass --plane-dir DIR."
+  fi
+  start_cmd=(docker compose)
+  if [ -n "$PLANE_ENV_FILE" ]; then start_cmd+=(--env-file "$PLANE_ENV_FILE")
+  elif [ -f "$found_dir/plane.env" ]; then start_cmd+=(--env-file plane.env); fi
+  confirm_start "Plane is installed in $found_dir but not running."
+  (cd "$found_dir" && "${start_cmd[@]}" up -d) >/dev/null 2>&1 || die "could not start Plane: run '${start_cmd[*]} up -d' in $found_dir to see why"
+  PLANE_DIR="$found_dir"
+  wait_for_plane
+  info "Plane started"
 fi
 PROJECT="$(label "$API_CID" com.docker.compose.project)"
 PLANE_DIR="$(label "$API_CID" com.docker.compose.project.working_dir)"
@@ -195,10 +269,42 @@ run_installer() {
     "$GITSYNC_IMAGE_TAG" node src/install/main.ts "$@"
 }
 
+# Plane's proxy restarts when git-sync is added or removed. Wait until it answers again, so the site is back when
+# this script says it is done. $1 = "git-sync" to also require the /git-sync/* route.
+wait_for_proxy() {
+  [ "$PROXY_MODE" = plane ] || return 0
+  local want="${1:-}" probe
+  # A domain site answers plain HTTP with a redirect to HTTPS; that still proves Caddy is up with its config.
+  probe="fetch('http://proxy:80/git-sync/healthz',{redirect:'manual'}).then(async r=>{const b=await r.text();"
+  probe+="process.exit(r.status>=300&&r.status<400?0:'$want'!=='git-sync'?(r.status>0?0:1):(r.status===200&&b.includes('\"ok\"')?0:1))},()=>process.exit(1))"
+  local ready=0
+  for _ in $(seq 1 45); do
+    if docker run --rm --network "$NETWORK" "$GITSYNC_IMAGE_TAG" node -e "$probe" >/dev/null 2>&1; then ready=1; break; fi
+    sleep 2
+  done
+  [ "$ready" = 1 ] || { warn "Plane's proxy is not answering yet. Check it with: docker compose logs proxy (in $PLANE_DIR)"; return 0; }
+  # Docker re-attaches the published port a moment after the container restarts (measured: about a second).
+  # Wait for it too, so the site answers from this machine before we say we are done.
+  local proxy_cid addr host port
+  proxy_cid="$(compose ps -q proxy 2>/dev/null | head -n1)"
+  addr="$( [ -z "$proxy_cid" ] || docker port "$proxy_cid" 80/tcp 2>/dev/null | head -n1)"
+  [ -n "$addr" ] || return 0
+  host="${addr%:*}"; port="${addr##*:}"
+  case "$host" in 0.0.0.0|"[::]"|"::"|"") host=127.0.0.1 ;; esac
+  # An HTTP answer, not just a TCP connect: rootless Docker's port forwarder accepts connections early.
+  for _ in $(seq 1 30); do
+    if (exec 3<>"/dev/tcp/$host/$port" && printf 'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 \
+        && IFS= read -r -t 5 line <&3 && [[ "$line" == HTTP/* ]]) 2>/dev/null; then return 0; fi
+    sleep 1
+  done
+  warn "Plane's proxy runs, but port $port on this machine is not answering yet"
+}
+
 # ---- uninstall -------------------------------------------------------------------------------------------
 
 if [ "$ACTION" = uninstall ]; then
-  docker image inspect "$GITSYNC_IMAGE_TAG" >/dev/null 2>&1 || docker build -q -t "$GITSYNC_IMAGE_TAG" "$REPO_DIR" >/dev/null
+  # Always rebuild (cached, quick): the removal logic runs from this image and must match this checkout.
+  docker build -q -t "$GITSYNC_IMAGE_TAG" "$REPO_DIR" >/dev/null || die "docker build failed; run: docker build -t $GITSYNC_IMAGE_TAG $REPO_DIR"
   if [ "$PURGE" = 1 ] && [ "$ASSUME_YES" = 0 ]; then
     read -r -p "    Delete git-sync's database, settings and stored GitHub credentials for good? [y/N] " answer
     [[ "$answer" =~ ^[Yy] ]] || die "cancelled"
@@ -208,7 +314,8 @@ if [ "$ACTION" = uninstall ]; then
   uninstall_args=(uninstall); [ "$PURGE" = 0 ] || uninstall_args+=(--purge)
   run_installer "${uninstall_args[@]}"
   step "Restarting Plane's proxy and apps without git-sync"
-  compose up -d
+  compose up -d >/dev/null 2>"$SCRATCH/up.log" || { cat "$SCRATCH/up.log" >&2; die "docker compose up failed"; }
+  wait_for_proxy
   printf '\n%sgit-sync has been removed.%s\n' "$G" "$N"
   exit 0
 fi
@@ -266,7 +373,7 @@ result() { sed -n "s/^$1=//p" "$SCRATCH/result.env"; }
 # ---- 4. Start --------------------------------------------------------------------------------------------
 
 step "Starting git-sync"
-compose config --quiet || die "the merged compose configuration is invalid (a backup of the override was kept next to it)"
+compose config --quiet 2>"$SCRATCH/config.log" || { cat "$SCRATCH/config.log" >&2; die "the merged compose configuration is invalid (a backup of the override was kept next to it)"; }
 compose up -d >/dev/null 2>"$SCRATCH/up.log" || { cat "$SCRATCH/up.log" >&2; die "docker compose up failed"; }
 probe="http.get('http://127.0.0.1:3100/git-sync/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 healthy=0
@@ -278,6 +385,7 @@ if [ "$healthy" = 0 ]; then
   compose logs --tail 40 git-sync >&2 || true
   die "git-sync did not become healthy within 2 minutes (logs above)"
 fi
+wait_for_proxy git-sync
 info "git-sync is running and healthy"
 
 ORIGIN="$(result PUBLIC_ORIGIN)"

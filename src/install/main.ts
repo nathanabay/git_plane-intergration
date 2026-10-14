@@ -133,9 +133,15 @@ async function configure(flags: Map<string, string | true>) {
   const given = process.env.GITSYNC_PLANE_PAT?.trim();
   let pat = given ? checkValue("Plane API key", given) : existing.get("PLANE_SERVICE_PAT") || await askPat();
   let user;
+  const waitUntil = Date.now() + 180_000;
   for (;;) {
     try { user = await planeUserForKey(planeBase, pat); break; }
     catch (err) {
+      // A Plane that was just started answers only after its migrations: keep trying for a while.
+      if (/Could not reach|answered 5\d\d/.test((err as Error).message) && Date.now() < waitUntil) {
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
       // A stored key that Plane no longer accepts (revoked, user removed): ask for a new one when someone is there.
       const storedKeyRejected = !given && interactive() && /rejected the API key/.test((err as Error).message);
       if (!storedKeyRejected) throw new InstallError((err as Error).message);
@@ -229,7 +235,8 @@ async function uninstall(flags: Map<string, string | true>) {
   const override = overridePath();
   if (existsSync(override)) {
     const before = readFileSync(override, "utf8");
-    if (hasGitSync(before) || before.includes(PROXY_MOUNT) || Object.values(FORK_IMAGES).some((image) => before.includes(image))) {
+    if (hasGitSync(before) || before.includes(PROXY_MOUNT) || Object.values(FORK_IMAGES).some((image) => before.includes(image))
+      || /plane-(admin|frontend)-gitsync:/.test(before)) {
       const saved = backup(override);
       writeFileSync(override, removeOverride(before));
       step(`Removed git-sync from ${override.replace(PLANE, "<plane>")} (backup: ${saved!.replace(PLANE, "<plane>")})`);

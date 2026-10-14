@@ -96,13 +96,15 @@ const compose = (...args) => sh("docker", ["compose", "-p", project, "--project-
   "-f", join(dir, "docker-compose.override.yaml"), "--env-file", join(dir, "plane.env"), ...args]);
 const cid = (svc) => compose("ps", "-q", svc).stdout.trim();
 const psql = (sql, user = "planeadmin", db = "postgres") => compose("exec", "-T", "plane-db", "psql", "-U", user, "-d", db, "-tAc", sql);
-const install = (args, env = {}) => {
-  const r = sh(INSTALL, ["--plane-dir", dir, "--yes", ...args], { env: { ...process.env, ...env }, input: "" });
+const install = (args, env = {}, planeDir = dir) => {
+  const r = sh(INSTALL, ["--plane-dir", planeDir, "--yes", ...args], { env: { ...process.env, ...env }, input: "" });
   return { ...r, out: `${r.stdout}\n${r.stderr}` };
 };
 
 async function cleanup() {
   compose("down", "-v", "--remove-orphans", "-t", "1");
+  // Phase 6 starts Plane under Compose's default project name (the folder's name), as Plane's setup.sh would.
+  sh("docker", ["compose", "--project-directory", dir, "--env-file", join(dir, "plane.env"), "down", "-v", "--remove-orphans", "-t", "1"], { cwd: dir });
   // Files written by the installer's container may belong to a remapped uid (rootless Docker): delete from a container.
   docker("run", "--rm", "-v", `${dir}:/d`, "--entrypoint", "sh", "node:24-alpine", "-c", "rm -rf /d/* /d/.[!.]*");
   sh("rm", ["-rf", dir]);
@@ -116,12 +118,22 @@ try {
   check(psql("SELECT 1").stdout.trim() === "1", "scratch Plane database is up");
   const before = { api: cid("api"), db: cid("plane-db"), redis: cid("plane-redis") };
 
-  // ---- 1. install ----------------------------------------------------------------------------------------
+  // ---- 0. a folder without Plane is refused --------------------------------------------------------------
+  console.log("\n[no Plane]");
+  const empty = mkdtempSync(join(tmpdir(), "gitsync-noplane-"));
+  const none = install([], {}, empty);
+  sh("rm", ["-rf", empty]);
+  check(none.status !== 0 && /does not hold a Plane install/.test(none.out), "a folder without Plane is refused with a clear message");
+
+  // ---- 1. install onto an installed but stopped Plane ----------------------------------------------------
   console.log("\n[install]");
+  compose("stop", "-t", "1");
+  check(compose("ps", "-a", "-q", "api").stdout.trim() !== "" && compose("ps", "-q", "--status", "running").stdout.trim() === "", "scratch Plane is installed but stopped");
   const first = install([], { GITSYNC_PLANE_PAT: key, GITSYNC_PLANE_WEBHOOK_SECRET: "plane_wh_e2e" });
   if (first.status !== 0 || process.env.SHOW_OUTPUT) console.log(first.out);
   check(first.status === 0, "install.sh exits 0");
   check(/git-sync is installed/.test(first.out), "install.sh reports success");
+  check(/is installed in .* but not running/.test(first.out) && /Plane started/.test(first.out), "it finds the stopped Plane and starts it");
   check(first.out.includes("Plane env file: ") && first.out.includes("plane.env"), "detects that Plane runs with --env-file plane.env");
   check(first.out.includes(`--env-file plane.env up -d`), "prints the exact command to start Plane with git-sync included");
   check(!first.out.includes(key) && !first.out.includes("plane_wh_e2e") && !first.out.includes(pgPassword), "prints no secret");
@@ -196,6 +208,18 @@ try {
   check(!existsSync(envPath) && !existsSync(join(dir, "git-sync")), "purge deletes git-sync.env and git-sync/");
   check(psql("SELECT count(*) FROM pg_database WHERE datname = 'gitsync'").stdout.trim() === "0", "purge drops the gitsync database");
   check(psql("SELECT count(*) FROM pg_database WHERE datname = 'plane'").stdout.trim() === "1", "Plane's database is untouched");
+
+  // ---- 6. Plane installed, containers removed: found from its folder and started like setup.sh does --------
+  console.log("\n[Plane whose containers were removed]");
+  compose("down", "-t", "1");
+  check(cid("api") === "" && cid("plane-db") === "", "scratch Plane's containers are gone, its folder and data remain");
+  const fromDir = install([], { GITSYNC_PLANE_PAT: key, GITSYNC_PLANE_WEBHOOK_SECRET: "plane_wh_e2e" });
+  if (fromDir.status !== 0) console.log(fromDir.out);
+  check(fromDir.status === 0 && /Plane started/.test(fromDir.out), "installs after starting Plane from its folder");
+  check(fromDir.out.includes("Plane env file: ") && fromDir.out.includes("plane.env"), "started with Plane's plane.env");
+  check((await http(`http://127.0.0.1:${port}/git-sync/healthz`)).body.includes('"status":"ok"'), "healthy through Plane's proxy");
+  const purge2 = install(["--uninstall", "--purge"]);
+  check(purge2.status === 0, "purge after the folder install exits 0");
 } catch (err) {
   failures.push(String(err?.stack ?? err));
   console.log(`  FAIL ${err?.message ?? err}`);

@@ -145,6 +145,25 @@ test("merge keeps the operator's services, comments and Compose !override tags",
   deepStrictEqual(out.services.proxy.volumes, [PROXY_MOUNT]);
 });
 
+test("merge refreshes an existing git-sync entry but keeps what the operator added", () => {
+  const before = `services:
+  git-sync:
+    image: git-sync:old
+    env_file: [old.env]
+    labels: [team=ops]
+    networks:
+      default:
+        aliases: [sink.gitsync.test]
+`;
+  const out = parse(mergeOverride(before, { uiForks: false, proxy: "plane" })).services["git-sync"];
+  strictEqual(out.image, "${GITSYNC_IMAGE:-git-sync:local}");
+  deepStrictEqual(out.env_file, ["git-sync.env"]);
+  deepStrictEqual(out.labels, ["team=ops"]);
+  deepStrictEqual(out.networks, { default: { aliases: ["sink.gitsync.test"] } });
+  const gw = parse(mergeOverride(before, { uiForks: false, proxy: "external", gatewayNetwork: "gateway" })).services["git-sync"];
+  deepStrictEqual(gw.networks, { default: { aliases: ["sink.gitsync.test"] }, gateway: { aliases: ["git-sync"] } });
+});
+
 test("merge is idempotent", () => {
   const once = mergeOverride(operatorOverride, { uiForks: true, proxy: "plane" });
   strictEqual(mergeOverride(once, { uiForks: true, proxy: "plane" }), once);
@@ -185,6 +204,11 @@ test("remove takes out exactly what merge added", () => {
       parse(operatorOverride, { customTags: [{ tag: "!override", collection: "seq", resolve: (v: unknown) => v }] }));
     doesNotMatch(removed, /git-sync/);
   }
+});
+
+test("remove also takes out Git Sync UI images written by hand from the runbook", () => {
+  const removed = parse(removeOverride("services:\n  admin:\n    image: plane-admin-gitsync:v1.4.2\n  web:\n    image: plane-frontend-gitsync:v1.4.2\n  api:\n    image: mine:1\n"));
+  deepStrictEqual(removed.services, { api: { image: "mine:1" } });
 });
 
 test("remove keeps a gateway network that another service still uses", () => {

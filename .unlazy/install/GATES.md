@@ -7,17 +7,17 @@ Scope: replace the 12-step manual runbook with `./install.sh`, which detects the
 - [x] G1: installer unit tests pass (Plane env parsing, compose override merge and removal, Caddyfile patching, env-file rendering that keeps existing secrets, PAT lookup)
   CHECK: node scripts/run-tests.mjs 20 tests/install
   EXPECT: /tests passed \(\d+ tests in \d+ files\)/
-  EVIDENCE: automatic-evidence=v1; definition-sha256=600214eee5f60dc603692e105eb4630a66297988952d258224c4b5e2295f7de0; exit=0; EXPECT=matched; output-sha256=c8905796fbf3bc765c4a5b24b93c81e9e75239ace01eb59bcdc7b23cf313ec65; output-bytes=35; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/pomfret; path=ae06f499d48e/29 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=600214eee5f60dc603692e105eb4630a66297988952d258224c4b5e2295f7de0; exit=0; EXPECT=matched; output-sha256=f43568ccf054ac558fbdf4353434b20e9c6d2bf1d9235dc970a8e03d393f696a; output-bytes=35; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/pomfret; path=ae06f499d48e/29 entries
 
 - [x] G2: the service boots without GitHub env, rejects a partial GitHub env, and the credential source fails closed with a clear "not configured" error
   CHECK: node --test --test-reporter=tap tests/install/config-optional-github.test.ts
   EXPECT: /^# pass [1-9]\d*$[\s\S]*^# fail 0$/m
   EVIDENCE: automatic-evidence=v1; definition-sha256=2d9ca568548d23e24d1f8ce524a50d6521c651311efb24c102284aa90bd12de9; exit=0; EXPECT=matched; output-sha256=ef311d6464bea578bd32d28c12a033339e9dcc8f98e48a3546696856bb8c3509; output-bytes=1787; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/pomfret; path=ae06f499d48e/29 entries
 
-- [x] G3: end-to-end — install.sh against a scratch Plane-shaped compose project in rootless Docker yields a healthy git-sync reachable through Plane's proxy, keeps existing override services, writes a 0600 env file, creates the gitsync database, is idempotent on re-run, and --uninstall removes it
+- [x] G3: end-to-end — install.sh finds an installed-but-stopped Plane and a Plane whose containers were removed, refuses a folder without Plane, and against a scratch Plane-shaped compose project in rootless Docker yields a healthy git-sync reachable through Plane's proxy, keeps existing override services, writes a 0600 env file, creates the gitsync database, is idempotent on re-run, and --uninstall removes it
   CHECK: node scripts/verify-install-e2e.mjs
   EXPECT: INSTALL E2E PASSED
-  EVIDENCE: automatic-evidence=v1; definition-sha256=7f81f254a588a088541e49e34c2645232f6fa5b5bd4b3c369a07ddb36d24cee1; exit=0; EXPECT=matched; output-sha256=e2172427a001260501d350d01daa287ce5ad4ed8b7459c0b97a83846435123ea; output-bytes=2275; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/pomfret; path=ae06f499d48e/29 entries
+  EVIDENCE: automatic-evidence=v1; definition-sha256=7f81f254a588a088541e49e34c2645232f6fa5b5bd4b3c369a07ddb36d24cee1; exit=0; EXPECT=matched; output-sha256=7debb0a9b2e03113944c5f27fb2b0f4bd239569d34ddb480ef14f01ef87c1e16; output-bytes=2727; shell=/bin/sh; cwd=/home/claudeuser/orca/workspaces/git_plane-intergration/pomfret; path=ae06f499d48e/29 entries
 
 - [x] G4: typecheck is clean
   CHECK: npm run typecheck

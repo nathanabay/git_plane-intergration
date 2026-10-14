@@ -5,7 +5,8 @@ next to Plane and uses Plane's own Postgres, Valkey and proxy. You add nothing e
 
 ## What you need
 
-- A self-hosted Plane that is **running** with Docker Compose. The official `setup.sh` install works.
+- A self-hosted Plane installed with Docker Compose (the official `setup.sh` install works). If it is stopped,
+  the installer finds it and offers to start it first. If Plane is not installed, it tells you so and stops.
 - Docker with the Compose plugin, run by a user who may use Docker and write Plane's directory (usually `sudo`).
 - `git`, to build the Plane UI images that add Git Sync to Plane's menus.
 
@@ -24,7 +25,8 @@ cd git-sync
 sudo ./install.sh
 ```
 
-The installer finds your Plane, works out its settings and asks for two things:
+The installer finds your Plane, whether it is running, stopped, or only present as its install folder
+(it starts a stopped Plane after asking). It works out Plane's settings and asks for two things:
 
 | It asks for | Where it comes from |
 | --- | --- |
@@ -113,7 +115,8 @@ sudo ./install.sh --plane-dir /root/plane --proxy external --gateway-network gat
 
 | Message | What to do |
 | --- | --- |
-| `No running Plane found` | Start Plane first, or point at it with `--plane-dir`. |
+| `Plane is not installed here` | Install Plane first. If it lives in an unusual folder, point at it with `--plane-dir`. |
+| `Found more than one Plane` | Choose one with `--plane-dir`. |
 | `Could not work out how this Plane was started` | Pass Plane's env file, e.g. `--env-file /root/plane/plane.env`. |
 | `Plane rejected the API key` | Create a new key for the service account and run the installer again with it: `GITSYNC_PLANE_PAT=<key> sudo -E ./install.sh`. |
 | `git-sync did not become healthy` | The last log lines are printed. More: `docker compose logs git-sync` in Plane's directory. |

@@ -61,9 +61,22 @@ export function mergeOverride(text: string, opts: OverrideOptions): string {
   const doc = load(text);
   const services = doc.getIn(["services"]) as YAMLMap;
   const existing = services.items.find((p) => (isScalar(p.key) ? p.key.value : p.key) === GITSYNC_SERVICE);
-  const node = doc.createNode(gitSyncService(opts));
-  if (existing) existing.value = node;
+  const wanted = gitSyncService(opts);
+  if (existing && isMap(existing.value)) {
+    // Refresh only what git-sync needs; keep what the operator added (labels, extra networks and aliases, ...).
+    for (const [key, value] of Object.entries(wanted)) {
+      if (key === "networks") continue;
+      existing.value.set(key, doc.createNode(value));
+    }
+    if (opts.gatewayNetwork) {
+      if (!isMap(existing.value.get("networks"))) existing.value.set("networks", doc.createNode({ default: {} }));
+      const networks = existing.value.get("networks") as YAMLMap;
+      if (!networks.has("default")) networks.set("default", doc.createNode({}));
+      networks.set(opts.gatewayNetwork, doc.createNode({ aliases: ["git-sync"] }));
+    }
+  } else if (existing) existing.value = doc.createNode(wanted);
   else {
+    const node = doc.createNode(wanted);
     services.add(doc.createPair(GITSYNC_SERVICE, node));
     const key = services.items.at(-1)!.key as { commentBefore?: string };
     key.commentBefore = MARK;
@@ -101,8 +114,11 @@ export function removeOverride(text: string): string {
   doc.deleteIn(["services", GITSYNC_SERVICE]);
   const services = doc.getIn(["services"]) as YAMLMap;
   const dropIfEmpty = (name: string) => { const s = doc.getIn(["services", name]); if (isMap(s) && s.items.length === 0) doc.deleteIn(["services", name]); };
-  for (const [name, image] of Object.entries(FORK_IMAGES)) {
-    if (doc.getIn(["services", name, "image"]) === image) { doc.deleteIn(["services", name, "image"]); dropIfEmpty(name); }
+  // Ours whether written by this installer (templated) or by hand from the runbook (plain tag).
+  const forkTag = { admin: /^plane-admin-gitsync:/, web: /^plane-frontend-gitsync:/ } as const;
+  for (const [name, image] of Object.entries(FORK_IMAGES) as [keyof typeof FORK_IMAGES, string][]) {
+    const current = doc.getIn(["services", name, "image"]);
+    if (current === image || (typeof current === "string" && forkTag[name].test(current))) { doc.deleteIn(["services", name, "image"]); dropIfEmpty(name); }
   }
   const volumes = doc.getIn(["services", "proxy", "volumes"]);
   if (isSeq(volumes)) {
