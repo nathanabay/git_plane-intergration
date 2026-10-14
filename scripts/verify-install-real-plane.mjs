@@ -67,7 +67,7 @@ writeFileSync(join(dir, "plane.env"), [
   `SECRET_KEY=${randomBytes(32).toString("hex")}`, `LIVE_SERVER_SECRET_KEY=${randomBytes(16).toString("hex")}`,
   "POSTGRES_USER=plane", `POSTGRES_PASSWORD=${pg}`, "POSTGRES_DB=plane", `DATABASE_URL=postgresql://plane:${pg}@plane-db/plane`,
   `AWS_ACCESS_KEY_ID=${randomBytes(8).toString("hex")}`, `AWS_SECRET_ACCESS_KEY=${randomBytes(16).toString("hex")}`,
-  "API_KEY_RATE_LIMIT=60/minute", "WEBHOOK_ALLOWED_HOSTS=git-sync",
+  "API_KEY_RATE_LIMIT=60/minute", "WEBHOOK_ALLOWED_HOSTS=git-sync.internal",
   // Plane's plane.env always sets this; Caddy refuses an empty acme_ca.
   "CERT_ACME_CA=https://acme-v02.api.letsencrypt.org/directory", "",
 ].join("\n"));
@@ -103,7 +103,7 @@ u.set_password("${randomBytes(12).toString("hex")}"); u.save()
 w = Workspace.objects.create(name="Sync Test", slug="sync-test", owner=u)
 WorkspaceMember.objects.create(workspace=w, member=u, role=20)
 t = APIToken.objects.create(user=u, workspace=w, label="git-sync")
-h = Webhook.objects.create(workspace=w, url="http://git-sync:3100/git-sync/webhooks/plane", project=True, issue=True, module=True, cycle=True, issue_comment=True)
+h = Webhook.objects.create(workspace=w, url="http://git-sync.internal:3100/git-sync/webhooks/plane", project=True, issue=True, module=True, cycle=True, issue_comment=True)
 print("BOOT" + json.dumps({"user": str(u.id), "token": t.token, "secret": h.secret_key}))
 `;
   const boot = sh("docker", ["exec", "-i", cid("api"), "python", "manage.py", "shell"], { input: bootstrap });

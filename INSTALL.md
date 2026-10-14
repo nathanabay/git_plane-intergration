@@ -16,6 +16,12 @@ git-sync acts in Plane as a service account:
 
 1. In Plane, create a user for it (for example "GitHub Bot") and add it to the workspaces you will sync.
 2. Signed in as that user, go to **Profile settings → Personal access tokens → Add** and copy the key.
+   Do not use your own account: git-sync ignores changes made by its service account, so your edits would not sync.
+3. Let Plane send webhooks to git-sync. Plane refuses webhooks to its own domain, so it reaches git-sync inside
+   Docker as `git-sync.internal`. In Plane's env file (often `plane.env`) set
+   `WEBHOOK_ALLOWED_HOSTS=git-sync.internal` (or add `,git-sync.internal` to an existing value), then restart Plane's
+   `api`, `worker` and `beat-worker` with your usual compose command. The installer checks this and tells you if it
+   is missing.
 
 ## 2. Install
 
@@ -31,7 +37,7 @@ The installer finds your Plane, whether it is running, stopped, or only present 
 | It asks for | Where it comes from |
 | --- | --- |
 | Plane API key | Step 1 above |
-| Plane webhook secret | The installer prints a URL. In Plane go to **Workspace settings → Webhooks → Add webhook**, paste the URL, choose **Send me everything**, save, and copy the secret key. |
+| Plane webhook secret | In Plane go to **Workspace settings → Webhooks → Add webhook**, enter `http://git-sync.internal:3100/git-sync/webhooks/plane`, choose **Send me everything**, save, and copy the secret key. |
 
 Everything else is generated or read from Plane: database and password, encryption key, Plane's public URL and
 its API rate limit. It then routes `/git-sync/*` through Plane's proxy, starts git-sync and waits until it is healthy.
@@ -120,7 +126,7 @@ sudo ./install.sh --plane-dir /root/plane --proxy external --gateway-network gat
 | `Could not work out how this Plane was started` | Pass Plane's env file, e.g. `--env-file /root/plane/plane.env`. |
 | `Plane rejected the API key` | Create a new key for the service account and run the installer again with it: `GITSYNC_PLANE_PAT=<key> sudo -E ./install.sh`. |
 | `git-sync did not become healthy` | The last log lines are printed. More: `docker compose logs git-sync` in Plane's directory. |
-| Plane will not save the webhook URL, or never delivers | Plane only sends webhooks to public addresses by default. For a Plane on a private network, add its host name to `WEBHOOK_ALLOWED_HOSTS` in Plane's env file and restart Plane. |
+| Plane says "Webhook not created" | Use `http://git-sync.internal:3100/git-sync/webhooks/plane`, not your Plane domain (Plane blocks its own domain and names without a dot), and make sure `git-sync.internal` is in `WEBHOOK_ALLOWED_HOSTS` and Plane's api was restarted. |
 | Plane's proxy already mounts its own Caddyfile | Use `--proxy external` and add the `/git-sync/*` route to that Caddyfile yourself. |
 
 Webhook redelivery, secret rotation and other operations are covered in [deploy/APPLY.md](deploy/APPLY.md).

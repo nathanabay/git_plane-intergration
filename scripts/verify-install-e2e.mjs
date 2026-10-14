@@ -63,6 +63,7 @@ writeFileSync(join(dir, "docker-compose.yaml"), `services:
       POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-plane}
       REDIS_URL: redis://plane-redis:6379/
       STUB_KEY: \${STUB_KEY:-}
+      WEBHOOK_ALLOWED_HOSTS: \${WEBHOOK_ALLOWED_HOSTS:-}
   web:
     image: node:24-alpine
     command: ["node", "-e", "require('http').createServer((q, s) => s.end('plane web')).listen(3000)"]
@@ -89,7 +90,7 @@ services:
 writeFileSync(join(dir, "docker-compose.override.yaml"), operatorOverride);
 writeFileSync(join(dir, "plane.env"), [
   `POSTGRES_USER=planeadmin`, `POSTGRES_PASSWORD=${pgPassword}`, `WEB_URL=http://127.0.0.1:${port}`,
-  `API_KEY_RATE_LIMIT=120/minute`, `HTTP_PORT=${port}`, `STUB_KEY=${key}`, "",
+  `API_KEY_RATE_LIMIT=120/minute`, `HTTP_PORT=${port}`, `STUB_KEY=${key}`, "WEBHOOK_ALLOWED_HOSTS=git-sync.internal", "",
 ].join("\n"));
 
 const compose = (...args) => sh("docker", ["compose", "-p", project, "--project-directory", dir, "-f", join(dir, "docker-compose.yaml"),

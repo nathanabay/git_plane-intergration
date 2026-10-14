@@ -6,7 +6,9 @@ services:
       - plane-db
       - plane-redis
     networks:
-      default: {}
+      default:
+        aliases:
+          - git-sync.internal
       gateway:
         aliases:
           - git-sync

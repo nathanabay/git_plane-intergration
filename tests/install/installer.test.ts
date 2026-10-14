@@ -159,9 +159,16 @@ test("merge refreshes an existing git-sync entry but keeps what the operator add
   strictEqual(out.image, "${GITSYNC_IMAGE:-git-sync:local}");
   deepStrictEqual(out.env_file, ["git-sync.env"]);
   deepStrictEqual(out.labels, ["team=ops"]);
-  deepStrictEqual(out.networks, { default: { aliases: ["sink.gitsync.test"] } });
+  deepStrictEqual(out.networks, { default: { aliases: ["sink.gitsync.test", "git-sync.internal"] } });
   const gw = parse(mergeOverride(before, { uiForks: false, proxy: "external", gatewayNetwork: "gateway" })).services["git-sync"];
-  deepStrictEqual(gw.networks, { default: { aliases: ["sink.gitsync.test"] }, gateway: { aliases: ["git-sync"] } });
+  deepStrictEqual(gw.networks, { default: { aliases: ["sink.gitsync.test", "git-sync.internal"] }, gateway: { aliases: ["git-sync"] } });
+});
+
+test("git-sync always answers inside Docker as git-sync.internal, the dotted name Plane's webhooks accept", () => {
+  deepStrictEqual(parse(mergeOverride("", { uiForks: false, proxy: "plane" })).services["git-sync"].networks, { default: { aliases: ["git-sync.internal"] } });
+  const once = mergeOverride("services:\n  git-sync:\n    image: x\n", { uiForks: false, proxy: "plane" });
+  deepStrictEqual(parse(once).services["git-sync"].networks, { default: { aliases: ["git-sync.internal"] } });
+  strictEqual(mergeOverride(once, { uiForks: false, proxy: "plane" }), once);
 });
 
 test("merge is idempotent", () => {
@@ -182,7 +189,7 @@ test("merge refuses a proxy that already mounts its own Caddyfile", () => {
 
 test("external proxy mode joins the gateway network and leaves Plane's proxy alone", () => {
   const out = parse(mergeOverride("", { uiForks: false, proxy: "external", gatewayNetwork: "gateway" }));
-  deepStrictEqual(out.services["git-sync"].networks, { default: {}, gateway: { aliases: ["git-sync"] } });
+  deepStrictEqual(out.services["git-sync"].networks, { default: { aliases: ["git-sync.internal"] }, gateway: { aliases: ["git-sync"] } });
   deepStrictEqual(out.networks, { gateway: { external: true } });
   strictEqual(out.services.proxy, undefined);
 });

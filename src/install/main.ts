@@ -9,7 +9,7 @@ import { chmodSync, chownSync, copyFileSync, existsSync, mkdirSync, readFileSync
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { addGitSyncRoute } from "./caddy.ts";
-import { FORK_IMAGES, PROXY_MOUNT, hasGitSync, mergeOverride, removeOverride } from "./compose.ts";
+import { FORK_IMAGES, INTERNAL_HOST, PROXY_MOUNT, hasGitSync, mergeOverride, removeOverride } from "./compose.ts";
 import type { OverrideOptions } from "./compose.ts";
 import { dropDatabase, ensureDatabase } from "./database.ts";
 import { dbPasswordFrom, renderEnvFile } from "./env-file.ts";
@@ -150,9 +150,22 @@ async function configure(flags: Map<string, string | true>) {
     }
   }
   step(`Plane service account: ${user.displayName || user.email || user.id}`);
+  say("    Note: git-sync ignores Plane changes made by this account (they look like its own). Use a dedicated");
+  say("    account, not your personal one, or your own edits will not sync to GitHub.");
 
   // Plane webhook secret: Plane generates it when the webhook is created.
-  const webhookUrl = `${publicOrigin}/git-sync/webhooks/plane`;
+  // Plane refuses webhooks to its own domain, so it reaches git-sync inside Docker under INTERNAL_HOST, which must be
+  // in Plane's WEBHOOK_ALLOWED_HOSTS (Plane: settings/common.py, app/serializers/webhook.py).
+  const webhookUrl = `http://${INTERNAL_HOST}:3100/git-sync/webhooks/plane`;
+  const allowed = (api.get("WEBHOOK_ALLOWED_HOSTS") ?? "").split(",").map((h) => h.trim().replace(/\.$/, "").toLowerCase());
+  if (!allowed.includes(INTERNAL_HOST)) {
+    throw new InstallError([
+      `Plane does not allow webhooks to git-sync yet. Add ${INTERNAL_HOST} to WEBHOOK_ALLOWED_HOSTS in Plane's env file`,
+      `  (e.g. WEBHOOK_ALLOWED_HOSTS=${INTERNAL_HOST}, or append ,${INTERNAL_HOST} to an existing value),`,
+      "  restart Plane's api, worker and beat-worker with your usual compose command, then run ./install.sh again.",
+      "  Nothing has been changed yet.",
+    ].join("\n"));
+  }
   const planeWebhookSecret = checkValue("Plane webhook secret", process.env.GITSYNC_PLANE_WEBHOOK_SECRET?.trim() || existing.get("PLANE_WEBHOOK_SECRET") || await obtain(
     "Plane webhook secret", "GITSYNC_PLANE_WEBHOOK_SECRET", "--plane-webhook-secret", { secret: true, help: [
       "In Plane: Workspace settings > Webhooks > Add webhook",

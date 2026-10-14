@@ -6,6 +6,9 @@ import type { Document } from "yaml";
 export const GITSYNC_SERVICE = "git-sync";
 export const FORK_IMAGES = { admin: "${GITSYNC_ADMIN_IMAGE:-plane-admin-gitsync:v1.4.2}", web: "${GITSYNC_WEB_IMAGE:-plane-frontend-gitsync:v1.4.2}" } as const;
 export const PROXY_MOUNT = "./git-sync/Caddyfile:/etc/caddy/Caddyfile:ro";
+/** The name Plane's webhooks use to reach git-sync inside Docker. Plane only accepts webhook URLs whose host has a
+ *  dot (Django URLField), and only internal hosts listed in its WEBHOOK_ALLOWED_HOSTS. */
+export const INTERNAL_HOST = "git-sync.internal";
 const MARK = " Added by git-sync install.sh (./install.sh --uninstall removes it)";
 
 export interface OverrideOptions {
@@ -48,7 +51,7 @@ export function gitSyncService(opts: OverrideOptions): Record<string, unknown> {
       interval: "30s", timeout: "10s", retries: 3, start_period: "20s",
     },
   };
-  if (opts.gatewayNetwork) service.networks = { default: {}, [opts.gatewayNetwork]: { aliases: ["git-sync"] } };
+  service.networks = { default: { aliases: [INTERNAL_HOST] }, ...(opts.gatewayNetwork ? { [opts.gatewayNetwork]: { aliases: ["git-sync"] } } : {}) };
   return service;
 }
 
@@ -68,12 +71,13 @@ export function mergeOverride(text: string, opts: OverrideOptions): string {
       if (key === "networks") continue;
       existing.value.set(key, doc.createNode(value));
     }
-    if (opts.gatewayNetwork) {
-      if (!isMap(existing.value.get("networks"))) existing.value.set("networks", doc.createNode({ default: {} }));
-      const networks = existing.value.get("networks") as YAMLMap;
-      if (!networks.has("default")) networks.set("default", doc.createNode({}));
-      networks.set(opts.gatewayNetwork, doc.createNode({ aliases: ["git-sync"] }));
-    }
+    if (!isMap(existing.value.get("networks"))) existing.value.set("networks", doc.createNode({ default: {} }));
+    const networks = existing.value.get("networks") as YAMLMap;
+    if (!isMap(networks.get("default"))) networks.set("default", doc.createNode({}));
+    const def = networks.get("default") as YAMLMap;
+    if (!isSeq(def.get("aliases"))) def.set("aliases", doc.createNode([]));
+    if (!seqHas(def.get("aliases"), INTERNAL_HOST)) (def.get("aliases") as { add(v: unknown): void }).add(doc.createNode(INTERNAL_HOST));
+    if (opts.gatewayNetwork) networks.set(opts.gatewayNetwork, doc.createNode({ aliases: ["git-sync"] }));
   } else if (existing) existing.value = doc.createNode(wanted);
   else {
     const node = doc.createNode(wanted);
