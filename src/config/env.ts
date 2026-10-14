@@ -16,6 +16,8 @@ export interface Config {
   PLANE_WEBHOOK_SECRET_PREVIOUS?: string;
   /** Match Plane SESSION_COOKIE_NAME; defaults to session-id. */
   PLANE_SESSION_COOKIE_NAME?: string;
+  /** GitHub App bootstrap. Optional: all three are set together, or all are empty ("") and the App is
+   *  configured later in the instance-admin UI, which stores it encrypted in the database. */
   GITHUB_APP_ID: string;
   GITHUB_PRIVATE_KEY_PATH: string;
   /** Durable writable storage, separate from the read-only private-key mount. */
@@ -63,10 +65,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     PLANE_WEBHOOK_SECRET: req("PLANE_WEBHOOK_SECRET"),
     PLANE_SESSION_COOKIE_NAME: env.PLANE_SESSION_COOKIE_NAME || "session-id",
     PLANE_API_RATE_PER_MINUTE: 60,
-    GITHUB_APP_ID: req("GITHUB_APP_ID"),
-    GITHUB_PRIVATE_KEY_PATH: req("GITHUB_PRIVATE_KEY_PATH"),
+    GITHUB_APP_ID: env.GITHUB_APP_ID?.trim() ?? "",
+    GITHUB_PRIVATE_KEY_PATH: env.GITHUB_PRIVATE_KEY_PATH?.trim() ?? "",
     GITHUB_CREDENTIAL_MARKER_PATH: env.GITHUB_CREDENTIAL_MARKER_PATH || DEFAULT_CREDENTIAL_MARKER_PATH,
-    GITHUB_WEBHOOK_SECRET: req("GITHUB_WEBHOOK_SECRET"),
+    GITHUB_WEBHOOK_SECRET: env.GITHUB_WEBHOOK_SECRET ?? "",
     GITSYNC_TOKEN_KEY: req("GITSYNC_TOKEN_KEY"),
     PUBLIC_ORIGIN: env.PUBLIC_ORIGIN || "https://tasks.qelal.et",
     REQUIRE_VERIFIED_COMMITS: /^(1|true|yes)$/i.test(env.REQUIRE_VERIFIED_COMMITS ?? ""),
@@ -84,6 +86,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     config.PLANE_API_RATE_PER_MINUTE = rate;
   }
   if (!config.PLANE_SERVICE_USER_ID && !missing.includes("PLANE_SERVICE_USER_ID")) missing.push("PLANE_SERVICE_USER_ID");
+  const githubBootstrap = { GITHUB_APP_ID: config.GITHUB_APP_ID, GITHUB_PRIVATE_KEY_PATH: config.GITHUB_PRIVATE_KEY_PATH, GITHUB_WEBHOOK_SECRET: config.GITHUB_WEBHOOK_SECRET };
+  const githubSet = Object.entries(githubBootstrap).filter(([, v]) => v !== "");
+  if (githubSet.length > 0 && githubSet.length < 3) {
+    for (const [name, v] of Object.entries(githubBootstrap)) if (v === "") missing.push(name);
+  }
   try {
     const hosts = deriveGithubHosts({
       edition: (env.GITHUB_EDITION?.trim() || undefined) as GithubEdition | undefined,

@@ -1,5 +1,13 @@
 # Git Sync Service Deployment Runbook
 
+> **Installing? Use [`./install.sh`](../INSTALL.md).** It does sections 1–7 below in one command (secrets,
+> database, compose override, proxy route, start and health check) and can be re-run or undone
+> (`--uninstall`). On this host: `sudo ./install.sh --plane-dir /root/plane --proxy external --gateway-network gateway`,
+> then add the `/git-sync/*` route to `/root/caddy/Caddyfile` as in section 7.
+>
+> The manual steps below remain the reference for what the installer does. Sections 8–12 (webhooks, rate limits,
+> verification, rollback, redelivery, secret rotation) apply to either kind of install.
+
 This runbook is intended to be executed on the live host `convpss` to deploy the git-sync service alongside Plane.
 
 ## 1. Backups

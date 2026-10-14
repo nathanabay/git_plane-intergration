@@ -74,8 +74,11 @@ export async function checkSetup(deps: SetupCheckDeps): Promise<SetupCheckResult
   ]);
   const checks: SetupCheckItem[] = [];
   const decryptOk = credentials.status === "fulfilled" && credentials.value.decryptOk === true;
+  const notConfigured = credentials.status === "fulfilled" && credentials.value.configured === false;
   checks.push(item("credentials", "App credentials", decryptOk ? "pass" : "fail",
-    decryptOk ? "Active App credentials can be read and decrypted." : "App credentials cannot be read or decrypted. Check the stored key and token encryption key.",
+    decryptOk ? "Active App credentials can be read and decrypted."
+      : notConfigured ? "No GitHub App is configured yet. Add its App ID, private key and webhook secret under GitHub App below."
+      : "App credentials cannot be read or decrypted. Check the stored key and token encryption key.",
     "4-setup-secrets--environment", credentials.status === "fulfilled" ? { source: credentials.value.source, decryptOk } : { decryptOk }));
 
   let app: any, appError: unknown;

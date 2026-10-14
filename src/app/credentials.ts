@@ -30,7 +30,16 @@ export interface CredentialSource {
   load(): Promise<GithubCredentials>;
   webhookSecret(): Promise<string>;
   /** Which source the App credentials come from right now, and whether a stored row decrypts (F15). */
-  describe(): Promise<{ source: "database" | "environment"; decryptOk: boolean }>;
+  describe(): Promise<{ source: "database" | "environment"; decryptOk: boolean; configured?: false }>;
+}
+
+/** No App is stored and none is bootstrapped from the environment: the instance admin has not added one yet. */
+export class GithubAppNotConfiguredError extends Error {
+  constructor() { super("No GitHub App is configured yet: add it in the instance admin (God mode) under Git Sync"); this.name = "GithubAppNotConfiguredError"; }
+}
+
+export function githubBootstrapConfigured(config: Pick<Config, "GITHUB_APP_ID" | "GITHUB_PRIVATE_KEY_PATH" | "GITHUB_WEBHOOK_SECRET">): boolean {
+  return Boolean(config.GITHUB_APP_ID && config.GITHUB_PRIVATE_KEY_PATH && config.GITHUB_WEBHOOK_SECRET);
 }
 
 export type GithubBootstrapConfig = Pick<Config, "GITHUB_APP_ID" | "GITHUB_PRIVATE_KEY_PATH" | "GITHUB_WEBHOOK_SECRET" | "GITHUB_API_BASE_URL" | "GITHUB_CREDENTIAL_MARKER_PATH" | "GITHUB_EDITION" | "GITHUB_GHE_SUBDOMAIN" | "GITHUB_GHES_BASE_URL">;
@@ -50,6 +59,7 @@ export function createCredentialSource(db: Db, tokenKey: Buffer, config: GithubB
   let cached: { at: number; value: GithubCredentials } | undefined;
 
   const fromEnvironment = async (): Promise<GithubCredentials> => {
+    if (!githubBootstrapConfigured(config)) throw new GithubAppNotConfiguredError();
     const hosts = hostsFromBootstrap(config);
     return { appId: config.GITHUB_APP_ID, privateKey: await readFile(config.GITHUB_PRIVATE_KEY_PATH, "utf8"),
       webhookSecret: config.GITHUB_WEBHOOK_SECRET, hosts,
@@ -118,10 +128,11 @@ export function createCredentialSource(db: Db, tokenKey: Buffer, config: GithubB
     cached = { at: Date.now(), value };
     return value;
   };
-  const describe = async (): Promise<{ source: "database" | "environment"; decryptOk: boolean }> => {
+  const describe = async (): Promise<{ source: "database" | "environment"; decryptOk: boolean; configured?: false }> => {
     try {
       return { source: (await load()).source, decryptOk: true };
-    } catch {
+    } catch (err) {
+      if (err instanceof GithubAppNotConfiguredError) return { source: "environment", decryptOk: false, configured: false };
       let retired = sawRow;
       try { retired ||= markerOnDisk(); } catch { retired = true; }
       return { source: retired ? "database" : "environment", decryptOk: false };
