@@ -1,0 +1,11 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ args: ['--host-resolver-rules=MAP plane.example.com:80 127.0.0.1:3199'] });
+const ctx = await b.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+await ctx.addCookies([{ name: 'session-id', value: process.argv[3] || 'admin', domain: 'plane.example.com', path: '/' }, { name: 'admin-session-id', value: 'god', domain: 'plane.example.com', path: '/' }]);
+const p = await ctx.newPage();
+p.on('console', m => m.type() === 'error' && console.log('console:', m.text()));
+await p.goto('http://plane.example.com' + process.argv[2], { waitUntil: 'networkidle' });
+await p.waitForTimeout(800);
+await p.screenshot({ path: process.argv[4] || '/tmp/claude-0/shots/try.png', fullPage: true });
+console.log(await p.evaluate(() => document.body.innerText.slice(0, 1500)));
+await b.close();

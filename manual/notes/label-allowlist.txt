@@ -1,0 +1,74 @@
+# Bold words in the manual that are NOT on-screen labels. One per line; "# reason" comments allowed.
+# Box and procedure words defined by manual/notes/style.md:
+Tip
+Note
+Warning
+Example
+Admin only
+Goal
+Before you start
+Steps
+Result
+If it went wrong
+# Access levels used in Appendix A ("Who may call"):
+Member
+Workspace admin
+Instance admin
+Signed
+Anyone
+# Emphasis used in prose, not UI labels:
+not
+never
+Never change it
+not applied
+This is the switch that is enforced
+strongest tier wins
+The first rule whose trigger and conditions match is the only one that runs
+only
+no
+at least one space
+before
+generated
+real git-sync service code and user interface
+Time is a comment only
+Plane-side changes are authored by the bot
+The signed-commit checkbox is not enforced
+GitHub autolink references are unavailable
+The branch name template cannot be edited
+The Development panel has no commit list
+Previews come only from deployments
+Commit messages never link a pull request
+The merge guard is checked once
+Deleting a Plane item does not close the GitHub issue
+Comment edits and deletions are not mirrored
+Unmapped GitHub assignees are dropped
+Never synced
+Members cannot see the GitHub Sync menu
+The audit log has no filter controls
+Saving YAML replaces the default rules
+The review-requested default needs an In Review state
+The Plane request-rate setup check can say "Needs attention"
+Installer wording
+Environment variables
+Instance settings
+Mapping settings
+Relation
+Non-closing
+Closing
+# Caption source labels (style.md):
+Screenshot (test Plane)
+Screenshot (GitHub)
+Screenshot (demo instance)
+Diagram
+Illustration
+[[SCREENSHOT NEEDED]]
+# Appendix A heading for the access-level list:
+Who may call
+# Appendix E defect title (prose, not a label):
+The link-back comment for a WEB-NEW pull request shows the project, not the new key
+# Section names every chapter ends with (style.md):
+What you learned
+Source files
+Request changes   # GitHub pull-request review option (github.com UI, not in this repo)
+Revert   # GitHub pull-request button that creates a revert PR (github.com UI)
+Approve   # GitHub pull-request review option (github.com UI)

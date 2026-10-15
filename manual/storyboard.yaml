@@ -1,0 +1,1077 @@
+# Storyboard: every screenshot in the manual.
+# New shots (reuse_existing: null) are captured by manual/scripts/capture.mjs from the local demo instance
+# (real git-sync code + UI, demo database, Plane/GitHub API stand-ins); the per-shot actions, waits, crops and callout
+# selectors live in that script's `shots` table under the same id. placeholder: true = needs a real signed-in browser.
+# Reused shots point at the PNG captured earlier on the test Plane (docs/handbook, docs/manual) — still correct for
+# Plane CE v1.4.2 and kept unchanged.
+new:
+- id: acct-01-not-connected
+  chapter: 8
+  account: riley
+  url: /git-sync/ui/workspaces/acme/account
+  caption: 'My GitHub account before connecting: (1) status line; (2) Connect personal account.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: acct-02-connected
+  chapter: 8
+  account: alex
+  url: /git-sync/ui/workspaces/acme/account?github=linked
+  caption: 'Right after GitHub sends you back: (1) success message; (2) the linked GitHub login.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: acct-03-connected-idle
+  chapter: 8
+  account: alex
+  url: /git-sync/ui/workspaces/acme/account
+  caption: 'Connected: (1) GitHub account login; (2) Reconnect; (3) Disconnect personal account.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: acct-04-needs-reauth
+  chapter: 8
+  account: alex
+  setup: alex-needs-reauth
+  url: /git-sync/ui/workspaces/acme/account
+  caption: 'GitHub refused the stored token: (1) the re-authorization notice; (2) Reconnect.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: acct-05-disconnect-confirm
+  chapter: 8
+  account: alex
+  url: /git-sync/ui/workspaces/acme/account
+  caption: 'Disconnect asks first: (1) the confirmation text; (2) confirm.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: acct-06-error-denied
+  chapter: 8
+  account: riley
+  url: /git-sync/ui/workspaces/acme/account?github=error&reason=denied
+  caption: 'You pressed Cancel on GitHub: (1) the error explains what happened.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: acct-07-error-already-linked
+  chapter: 8
+  account: riley
+  url: /git-sync/ui/workspaces/acme/account?github=error&reason=already_linked
+  caption: 'That GitHub account is already linked to another member: (1) the error.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: acct-08-member-no-admin
+  chapter: 8
+  account: alex
+  url: /git-sync/ui/workspaces/acme
+  caption: 'A member opening the admin page: (1) the refusal. Members use the direct My GitHub account link instead.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-01-not-mapped
+  chapter: 12
+  account: alex
+  url: dev:DES-7
+  caption: 'A project with no mapped repository: (1) the Development panel says so.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-02-start-work
+  chapter: 12
+  account: alex
+  url: dev:WEB-42
+  caption: 'WEB-42 before any code: (1) suggested branch name; (2) Copy branch name; (3) Create branch.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-03-branch-created
+  chapter: 12
+  account: alex
+  url: dev:WEB-42
+  caption: 'After Create branch: (1) the confirmation with the new branch.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-04-branch-exists
+  chapter: 12
+  account: alex
+  url: dev:WEB-42
+  caption: 'Pressing Create branch again: (1) the branch already exists — nothing is overwritten.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-05-first-push
+  chapter: 15
+  account: alex
+  step: web42-first-push
+  url: dev:WEB-42
+  caption: 'After the first push: (1) Branches lists the branch.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-06-draft-pr
+  chapter: 15
+  account: alex
+  step: web42-open-draft
+  url: dev:WEB-42
+  caption: 'Draft PR opened: (1) PR roll-up status; (2) the PR with its OPEN badge.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-07-build-pending
+  chapter: 15
+  account: alex
+  step: web42-ci-pending
+  url: dev:WEB-42
+  caption: 'CI started: (1) Builds shows pending.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-08-build-pass-preview
+  chapter: 15
+  account: alex
+  step:
+  - web42-ci-pass
+  - web42-preview
+  url: dev:WEB-42
+  caption: 'CI passed and a preview deployed: (1) Builds pass; (2) Deployments; (3) Previews.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-09-review-requested
+  chapter: 15
+  account: alex
+  step:
+  - web42-ready-for-review
+  - web42-review-requested
+  url: dev:WEB-42
+  caption: 'Ready for review and a reviewer requested: (1) review badge.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-10-changes-requested
+  chapter: 15
+  account: alex
+  step: web42-changes-requested
+  url: dev:WEB-42
+  caption: 'The reviewer asked for changes: (1) the review badge changes.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-11-approved
+  chapter: 15
+  account: alex
+  step:
+  - web42-fix-push
+  - web42-ci-pass-2
+  - web42-approved
+  url: dev:WEB-42
+  caption: 'Approved with passing checks: (1) review badge.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-12-merged
+  chapter: 15
+  account: alex
+  step: web42-merged
+  url: dev:WEB-42
+  caption: 'Merged: (1) PR status MERGED; the work item moved to Done.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: strip-web42-loop
+  chapter: 15
+  kind: strip
+  frames:
+  - dev-05-first-push
+  - dev-06-draft-pr
+  - dev-09-review-requested
+  - dev-12-merged
+  caption: 'The WEB-42 loop in four frames: push → draft PR → review → merged.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-13-failing-build
+  chapter: 12
+  account: alex
+  url: dev:WEB-37
+  caption: 'A failing check: (1) Builds shows fail. Open it to see the CI log on GitHub.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-14-merge-guard
+  chapter: 14
+  account: alex
+  url: dev:WEB-36
+  caption: 'Two PRs close WEB-36: (1) one merged; (2) one still open — the item does not move to Done yet.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-15-web-new
+  chapter: 10
+  account: alex
+  url: dev:WEB-46
+  caption: 'A work item created from a WEB-NEW pull request: (1) title taken from the PR; (2) the PR link.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-16-mirrored-issue
+  chapter: 13
+  account: alex
+  url: dev:WEB-47
+  caption: 'A GitHub issue mirrored into Plane: the Development panel has no PR — mirrored issues appear as a link on the item, not here.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: dev-17-refs-non-closing
+  chapter: 9
+  account: alex
+  url: dev:WEB-41
+  caption: 'A non-closing reference (Refs WEB-41): (1) the PR is linked and shown like any other.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: ws-01-setup-checklist
+  chapter: 24
+  account: admin
+  url: /git-sync/ui/workspaces/beta
+  caption: 'A new workspace: (1) Set up GitHub sync checklist; (2) Connect GitHub; (3) Send a link to an organization owner.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: ws-02-connected
+  chapter: 24
+  account: admin
+  url: /git-sync/ui/workspaces/acme
+  caption: 'Workspace GitHub connection: (1) connected organization and installation; (2) Refresh connection; (3) Disconnect.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: ws-03-owner-link
+  chapter: 24
+  account: admin
+  url: /git-sync/ui/workspaces/beta
+  caption: 'Send a link to an organization owner: (1) organization field; (2) create the link.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: ws-04-map-form
+  chapter: 24
+  account: admin
+  setup: unmap-public-api
+  url: /git-sync/ui/workspaces/acme
+  caption: 'Map a repository: (1) GitHub repository; (2) Plane project; (3) Sync direction; (4) options; (5) Add mapping.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: ws-05-custom-states
+  chapter: 24
+  account: admin
+  url: /git-sync/ui/workspaces/acme
+  caption: 'Open and closed states: (1) Open state; (2) Closed state. Project default leaves Plane''s default.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: ws-06-backfill-offer
+  chapter: 24
+  account: admin
+  url: /git-sync/ui/workspaces/acme
+  caption: 'Right after Add mapping: (1) the backfill offer; (2) Not now.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: ws-07-mapped-list
+  chapter: 28
+  account: admin
+  url: /git-sync/ui/workspaces/acme
+  caption: 'Mapped repositories with sync health: (1) Last GitHub delivery; (2) Errors in the last 24 hours; (3) Edit; (4) Remove.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: ws-08-remove-confirm
+  chapter: 24
+  account: admin
+  url: /git-sync/ui/workspaces/acme
+  caption: 'Remove asks first: (1) the confirmation.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: map-01-settings
+  chapter: 25
+  account: admin
+  url: /git-sync/ui/workspaces/acme/mappings/1
+  caption: 'Mapping Settings tab: (1) tabs; (2) Sync direction; (3) Smart Commits and comment options; (4) Save.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: map-02-policies
+  chapter: 25
+  account: admin
+  url: /git-sync/ui/workspaces/acme/mappings/1/policies
+  caption: 'Conflict policies: (1) one row per field; (2) policy choice; (3) Save policies.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: map-03-rules-table
+  chapter: 26
+  account: admin
+  url: /git-sync/ui/workspaces/acme/mappings/1/rules
+  caption: 'Rules: (1) lifecycle points → Plane state table; (2) Save mapping table.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: map-04-branch-rules
+  chapter: 26
+  account: admin
+  url: /git-sync/ui/workspaces/acme/mappings/1/rules
+  caption: 'Branch-aware rules: (1) Base branch (regex); (2) lifecycle point; (3) target state.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: map-05-yaml
+  chapter: 26
+  account: admin
+  url: /git-sync/ui/workspaces/acme/mappings/1/rules
+  caption: 'Rules (YAML): (1) the compiled rules; (2) Validate and save YAML.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: map-06-yaml-error
+  chapter: 26
+  account: admin
+  url: /git-sync/ui/workspaces/acme/mappings/1/rules
+  caption: 'An invalid rule is refused: (1) the validation error names the rule.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: map-07-versions
+  chapter: 26
+  account: admin
+  url: /git-sync/ui/workspaces/acme/mappings/1/rules
+  caption: 'Rule versions: (1) version list; (2) Restore.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: map-08-dryrun-input
+  chapter: 26
+  account: admin
+  url: /git-sync/ui/workspaces/acme/mappings/1/dry-run
+  caption: 'Test rules: (1) event; (2) conditions; (3) Rules to test (YAML, optional); (4) Run dry-run.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: map-09-dryrun-result
+  chapter: 26
+  account: admin
+  url: /git-sync/ui/workspaces/acme/mappings/1/dry-run
+  caption: 'Dry-run result: (1) matched rule; (2) actions that would run. Nothing was changed.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: map-10-dryrun-none
+  chapter: 26
+  account: admin
+  url: /git-sync/ui/workspaces/acme/mappings/1/dry-run
+  caption: 'Dry-run with no match: (1) No actions would run.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: users-01-list
+  chapter: 27
+  account: admin
+  url: /git-sync/ui/workspaces/acme/users
+  caption: 'User links: (1) Linked GitHub accounts; (2) needs re-authorization flag; (3) Unlink.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: users-02-link-form
+  chapter: 27
+  account: admin
+  url: /git-sync/ui/workspaces/acme/users
+  caption: 'Link a user: (1) Plane member; (2) GitHub login; (3) Look up id; (4) Link account.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: users-03-unlink-confirm
+  chapter: 27
+  account: admin
+  url: /git-sync/ui/workspaces/acme/users
+  caption: 'Unlink asks first: (1) the confirmation.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: health-01-rate-limited
+  chapter: 28
+  account: admin
+  setup: rate-limited
+  url: /git-sync/ui/workspaces/acme
+  caption: 'Sync health while GitHub rate-limits the App: (1) Rate-limited until.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: health-02-disabled
+  chapter: 28
+  account: admin
+  setup: disable-mapping
+  url: /git-sync/ui/workspaces/acme
+  caption: 'A disabled mapping: (1) Disabled and its reason.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: audit-01-log
+  chapter: 28
+  account: admin
+  url: /git-sync/ui/workspaces/acme/audit
+  caption: 'Audit log: (1) entry kind and outcome; (2) time; (3) Show raw; (4) Replay.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: audit-02-raw
+  chapter: 28
+  account: admin
+  url: /git-sync/ui/workspaces/acme/audit
+  caption: 'Show raw: (1) the stored event detail.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: audit-03-errors-only
+  chapter: 28
+  account: admin
+  url: /git-sync/ui/workspaces/acme/audit?errors=1
+  caption: 'Errors only (URL parameter errors=1): (1) failed Smart Commit commands.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: audit-04-replay
+  chapter: 29
+  account: admin
+  url: /git-sync/ui/workspaces/acme/audit
+  caption: 'Replay: (1) the confirmation that the delivery was queued again.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: audit-05-retry-write
+  chapter: 29
+  account: admin
+  setup: failed-write
+  url: /git-sync/ui/workspaces/acme/audit?errors=1
+  caption: 'A failed write: (1) Retry write.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-01-overview
+  chapter: 23
+  account: god
+  url: /git-sync/ui/admin
+  caption: 'Git sync: instance settings: (1) Connection health; (2) Setup checks; (3) Check setup again.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-02-setup-fail
+  chapter: 23
+  account: god
+  setup: app-missing-event
+  url: /git-sync/ui/admin
+  caption: 'A setup check that needs attention: (1) the failing check and what to fix.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-03-github-app
+  chapter: 23
+  account: god
+  url: /git-sync/ui/admin
+  caption: 'GitHub App: (1) App ID; (2) Private key (PEM); (3) Webhook secret; (4) App slug and OAuth client; (5) GitHub edition; (6) Save GitHub App.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-04-edition
+  chapter: 23
+  account: god
+  url: /git-sync/ui/admin
+  caption: 'GitHub edition: (1) GitHub.com, Enterprise Cloud with data residency, Enterprise Server.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-05-defaults
+  chapter: 23
+  account: god
+  url: /git-sync/ui/admin
+  caption: 'Defaults: (1) Smart Commits for new mappings; (2) Require signed commits — stored but not enforced in this release; (3) Save defaults.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-06-magic-words
+  chapter: 23
+  account: god
+  url: /git-sync/ui/admin
+  caption: 'Magic words: (1) one tier per box, one phrase per line; (2) Save magic words.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-07-installations
+  chapter: 23
+  account: god
+  url: /git-sync/ui/admin
+  caption: 'Workspace GitHub App installations: (1) allow-listed installation; (2) Allow-list an installation.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-08-mappings
+  chapter: 23
+  account: god
+  url: /git-sync/ui/admin
+  caption: 'Instance view of repository mappings: (1) every workspace''s mappings; (2) Disabled repository mappings.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-09-manual-recovery
+  chapter: 23
+  account: god
+  url: /git-sync/ui/admin
+  caption: 'Manual mapping recovery: (1) workspace; (2) repository and project; (3) Add manual mapping.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-10-instance-audit
+  chapter: 28
+  account: god
+  url: /git-sync/ui/admin/audit
+  caption: 'Instance audit across all workspaces: (1) workspace column; (2) entries.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gm-11-decrypt-error
+  chapter: 30
+  account: god
+  setup: corrupt-app-secret
+  url: /git-sync/ui/admin
+  caption: 'Stored App credentials that cannot be decrypted (GITSYNC_TOKEN_KEY changed): (1) the error.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: term-01-install-help
+  chapter: 21
+  kind: terminal
+  command: ./install.sh --help
+  caption: 'install.sh --help: every option.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: term-02-healthz
+  chapter: 29
+  kind: terminal
+  command: curl http://127.0.0.1:3199/git-sync/healthz
+  caption: The health endpoint of a running service.
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: text-github-comments
+  chapter: 13
+  kind: text
+  caption: Text git-sync posted to GitHub in the demo run (link-back, problem reports, mirrored issue).
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gh-01-new-app-form
+  chapter: 22
+  account: github
+  url: https://github.com/organizations/<org>/settings/apps/new
+  placeholder: true
+  caption: GitHub's New GitHub App form (do not submit).
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gh-02-app-permissions
+  chapter: 22
+  account: github
+  placeholder: true
+  caption: The test App's Permissions & events page.
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gh-03-oauth-consent
+  chapter: 8
+  account: github
+  placeholder: true
+  caption: GitHub's authorize screen during Connect personal account.
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gh-04-pr-linkback
+  chapter: 9
+  account: github
+  placeholder: true
+  caption: A PR on GitHub with git-sync's 'Linked Plane work item' comment.
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: gh-05-problem-comment
+  chapter: 11
+  account: github
+  placeholder: true
+  caption: A commit comment from git-sync reporting a Smart Commit problem.
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: plane-01-dev-sidebar
+  chapter: 12
+  account: plane-alex
+  placeholder: true
+  caption: The Development section inside a real Plane work item sidebar with PR, build and preview.
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: plane-02-smart-comment
+  chapter: 11
+  account: plane-alex
+  placeholder: true
+  caption: 'A Smart Commit #comment and Time logged comment in Plane''s activity.'
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: plane-03-mirrored-item
+  chapter: 13
+  account: plane-alex
+  placeholder: true
+  caption: A Plane work item created from a GitHub issue labelled plane.
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+- id: plane-04-done-after-merge
+  chapter: 15
+  account: plane-alex
+  placeholder: true
+  caption: WEB-42 in Done in Plane after the merge.
+  reuse_existing: null
+  redact: sanitize() + secret scan (scripts/capture-handbook.mjs, manual/scripts/capture.mjs)
+reused:
+- id: hb-01-workspace-invitation
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /onboarding/
+  caption: 'Accept the invitation: (1) select the workspace checkbox; (2) Continue.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/01-workspace-invitation.png
+  used_in_manual: true
+- id: hb-02-sign-in
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /
+  caption: 'Sign in: (1) email field; (2) Continue. The next screen asks for a password.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/02-sign-in.png
+  used_in_manual: true
+- id: hb-03-personal-menu
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/
+  caption: 'Personal menu: (1) avatar; (2) Settings; (3) Preferences.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/03-personal-menu.png
+  used_in_manual: true
+- id: hb-04-profile
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/
+  caption: 'Profile: (1) avatar; (2) name; (3) display name; (4) Save changes.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/04-profile.png
+  used_in_manual: true
+- id: hb-05-join-project
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/
+  caption: 'Join Website: (1) confirm the project name; (2) Join Project.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/05-join-project.png
+  used_in_manual: true
+- id: hb-06-home
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/
+  caption: 'Home: (1) sidebar Home; (2) Quicklinks; (3) Recents.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/06-home.png
+  used_in_manual: true
+- id: hb-07-preferences
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/
+  caption: 'Preferences: (1) theme; (2) timezone; (3) first day of the week.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/07-preferences.png
+  used_in_manual: true
+- id: hb-08-notification-preferences
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/
+  caption: 'Email notifications: (1) property-change switch; (2) Mentions category and its switch.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/08-notification-preferences.png
+  used_in_manual: true
+- id: hb-09-workspace-switcher
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/
+  caption: 'Workspace switcher: (1) current workspace control; (2) Settings; (3) Workspace invites.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/09-workspace-switcher.png
+  used_in_manual: true
+- id: hb-10-your-work
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/profile/6a57833d-4e43-49be-924c-f093cddfae76/assigned/
+  caption: 'Your work: (1) Assigned category; (2) matching item WEB-42; (3) Display controls.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/10-your-work.png
+  used_in_manual: true
+- id: hb-11-command-palette
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/
+  caption: 'Command palette: (1) search field; (2) a creation action in the results.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/11-command-palette.png
+  used_in_manual: true
+- id: hb-12-work-items-list
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'List layout: (1) project navigation; (2) layout buttons; (3) filter button; (4) Add work item.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/12-work-items-list.png
+  used_in_manual: true
+- id: hb-13-keyboard-shortcuts
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Keyboard shortcuts: (1) Work item actions category; (2) action labels with their adjacent keys.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/13-keyboard-shortcuts.png
+  used_in_manual: true
+- id: hb-14-board
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'Board layout: (1) state columns; (2) work item cards; (3) layout selector.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/14-board.png
+  used_in_manual: true
+- id: hb-15-calendar
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'Calendar: (1) displayed month; (2) WEB-42 on its due date; (3) calendar layout button.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/15-calendar.png
+  used_in_manual: true
+- id: hb-16-spreadsheet
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'Spreadsheet: (1) WEB-42 row; (2) state cell; (3) spreadsheet layout button.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/16-spreadsheet.png
+  used_in_manual: true
+- id: hb-17-gantt
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'Gantt: (1) time scale; (2) dated work-item bar; (3) Gantt layout button.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/17-gantt.png
+  used_in_manual: true
+- id: hb-18-work-item
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'WEB-42: (1) title and identifier; (2) description; (3) properties; (4) sub-work items.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/18-work-item.png
+  used_in_manual: true
+- id: hb-19-state-selector
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'State: (1) current state control; (2) In Review among the project choices.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/19-state-selector.png
+  used_in_manual: true
+- id: hb-20-priority
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Priority: (1) current priority; (2) Urgent among the available priorities.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/20-priority.png
+  used_in_manual: true
+- id: hb-21-relations
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Relations: (1) Add relation; (2) Blocked by, alongside Relates to, Duplicate of and Blocking.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/21-relations.png
+  used_in_manual: true
+- id: hb-22-add-link
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Add link: (1) URL field; (2) display-title field; (3) Add Link.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/22-add-link.png
+  used_in_manual: true
+- id: hb-23-description-editor
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Description: (1) customer problem; (2) acceptance criteria.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/23-description-editor.png
+  used_in_manual: true
+- id: hb-24-comment-editor
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Comment editor: (1) write the update; (2) Comment submits it.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/24-comment-editor.png
+  used_in_manual: true
+- id: hb-25-display-options
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'Display: (1) visible properties; (2) Group by; (3) Show sub-work items. Ordering is also in this menu.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/25-display-options.png
+  used_in_manual: true
+- id: hb-26-filters
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'Filters: (1) search field; (2) available property categories. Choose a category to select its values.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/26-filters.png
+  used_in_manual: true
+- id: hb-27-create-work-item
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'Create a work item: (1) title; (2) description; (3) properties; (4) Save.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/27-create-work-item.png
+  used_in_manual: true
+- id: hb-28-save-draft
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'Unfinished item: (1) Save to Drafts preserves the writing; (2) Discard removes it.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/28-save-draft.png
+  used_in_manual: true
+- id: hb-29-drafts
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/drafts/
+  caption: 'Drafts: (1) the saved unfinished item. Open it to continue editing.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/29-drafts.png
+  used_in_manual: true
+- id: hb-30-quick-add
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'Quick add: (1) inline title input. Enter submits; Escape cancels.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/30-quick-add.png
+  used_in_manual: true
+- id: hb-31-assignees-labels
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Labels: (1) Add labels; (2) accessibility in the project label choices.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/31-assignees-labels.png
+  used_in_manual: true
+- id: hb-32-date-selector
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Due date: (1) month selector; (2) selected day, 21 October.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/32-date-selector.png
+  used_in_manual: true
+- id: hb-33-attachment
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Attachment: (1) uploaded checkout-layout-example.png; (2) attachment section.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/33-attachment.png
+  used_in_manual: true
+- id: hb-34-item-actions
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Item menu: (1) menu button; (2) archive availability; (3) Delete.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/34-item-actions.png
+  used_in_manual: true
+- id: hb-35-start-work
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Starting work: (1) In Progress state; (2) assigned developer; (3) acceptance criteria.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/35-start-work.png
+  used_in_manual: true
+- id: hb-36-cycles
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/cycles/
+  caption: 'Cycles: (1) cycle name; (2) scheduled date range.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/36-cycles.png
+  used_in_manual: true
+- id: hb-37-cycle-detail
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/cycles/bd567583-6209-4a5c-ab61-5aec9d084d14/
+  caption: 'Inside a cycle: (1) included work items; (2) dates and progress.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/37-cycle-detail.png
+  used_in_manual: true
+- id: hb-38-modules
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/modules/
+  caption: 'Modules: (1) Checkout experience; (2) In Progress status.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/38-modules.png
+  used_in_manual: true
+- id: hb-39-module-detail
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/modules/8c2ca61e-b9f6-4686-b5ea-529f2047c5c4/
+  caption: 'Inside a module: (1) included work items; (2) module properties and progress.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/39-module-detail.png
+  used_in_manual: true
+- id: hb-40-pages
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/pages/
+  caption: 'Pages: (1) the shared working agreement; (2) Add page.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/40-pages.png
+  used_in_manual: true
+- id: hb-41-page-document
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/pages/d418c5cd-774d-478a-bddc-2673859c1720/
+  caption: 'Shared page: (1) document title; (2) review checklist.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/41-page-document.png
+  used_in_manual: true
+- id: hb-42-saved-views
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/views/
+  caption: 'Project Views: (1) Website delivery overview; (2) Add view creates another saved selection.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/42-saved-views.png
+  used_in_manual: true
+- id: hb-43-intake
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/intake/
+  caption: 'Intake: (1) pending request WEB-43; (2) report title; (3) Accept action.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/43-intake.png
+  used_in_manual: true
+- id: hb-44-estimates
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/settings/projects/bb57e81d-c161-441f-b50e-907af28f08c2/estimates/
+  caption: 'Estimates: (1) project enable control; (2) configured Fibonacci Points scale. Administrator view.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/44-estimates.png
+  used_in_manual: true
+- id: hb-45-github-branches
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: GitHub public page `/nathanabay/gitsync-test/branches
+  caption: 'Real GitHub branches: (1) web-42-checkout-button; (2) Check status column. The branch row also links PR #117.'
+  redact: Standard GitHub redactions described above.
+  reuse_existing: manual/images/handbook/45-github-branches.png
+  used_in_manual: true
+- id: hb-46-github-pr-open
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: GitHub public page `/nathanabay/gitsync-test/pull/117
+  caption: 'Real PR #117: (1) title; (2) feature branch targeting main; (3) Closes WEB-42.'
+  redact: Standard GitHub redactions described above.
+  reuse_existing: manual/images/handbook/46-github-pr-open.png
+  used_in_manual: true
+- id: hb-47-github-smart-commit
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: GitHub public page `/nathanabay/gitsync-test/commit/045a3f6485c477ab60c392a653704c0e0d68f3ba
+  caption: 'Real GitHub commit: (1) author and commit time; (2) Smart Commit message; (3) changed demonstration file.'
+  redact: Standard GitHub redactions described above.
+  reuse_existing: manual/images/handbook/47-github-smart-commit.png
+  used_in_manual: true
+- id: hb-48-github-review
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: GitHub public page `/nathanabay/gitsync-test/pull/117
+  caption: 'Real COMMENTED review: (1) walkthrough review text; (2) author identity on the review. This is not independent approval.'
+  redact: Standard GitHub redactions described above.
+  reuse_existing: manual/images/handbook/48-github-review.png
+  used_in_manual: true
+- id: hb-50-project-states
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/settings/projects/bb57e81d-c161-441f-b50e-907af28f08c2/states/
+  caption: 'Project states: (1) Started group; (2) In Review state in that group. Administrator view.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/50-project-states.png
+  used_in_manual: true
+- id: hb-51-project-analytics
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/
+  caption: 'Project analytics: (1) total work-item summary; (2) Created vs Resolved chart.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/51-project-analytics.png
+  used_in_manual: true
+- id: hb-52-inbox
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/notifications/
+  caption: 'Inbox: (1) All category; (2) Sam’s comment notification; (3) Mentions category.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/52-inbox.png
+  used_in_manual: true
+- id: hb-53-personal-github
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: Git Sync member UI `/git-sync/ui/workspaces/gitsync-test/account
+  caption: 'Personal GitHub account: (1) member account tab; (2) current connection status; (3) Connect personal account.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/53-personal-github.png
+  used_in_manual: true
+- id: hb-54-relation-picker
+  account: plane-alex or plane-admin (test Plane, captured for the handbook)
+  url: /gitsync-test/browse/WEB-42/
+  caption: 'Choose a related item: (1) search by identifier; (2) selected result; (3) Add selected work items.'
+  redact: Standard Plane redactions described above.
+  reuse_existing: manual/images/handbook/54-relation-picker.png
+  used_in_manual: true
+- id: ug-plane-signup
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /sign-up/`, separate unauthenticated browser context
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Example `bot@example.com` entered; Continue not pressed; no account created.
+  reuse_existing: manual/images/userguide/plane-signup.png
+  used_in_manual: true
+- id: ug-plane-members
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /gitsync-test/settings/members/
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Existing test member emails replaced; Add member located but not used.
+  reuse_existing: manual/images/userguide/plane-members.png
+  used_in_manual: true
+- id: ug-plane-profile-menu
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /gitsync-test/`, avatar menu open
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Email replaced; personal avatars suppressed where applicable; Settings callout.
+  reuse_existing: manual/images/userguide/plane-profile-menu.png
+  used_in_manual: true
+- id: ug-plane-personal-tokens
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: Same page, Profile settings → Personal Access Tokens modal
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Email replaced; only existing token titles/status visible; no key revealed.
+  reuse_existing: manual/images/userguide/plane-personal-tokens.png
+  used_in_manual: true
+- id: ug-plane-token-dialog
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: Same modal, Add access token → Create token
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Example title entered, then cancelled; no token generated; email replaced.
+  reuse_existing: manual/images/userguide/plane-token-dialog.png
+  used_in_manual: true
+- id: ug-plane-webhooks
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /gitsync-test/settings/webhooks/
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: No secret visible; existing test sink addresses retained and explicitly distinguished from the correct setup URL.
+  reuse_existing: manual/images/userguide/plane-webhooks.png
+  used_in_manual: true
+- id: ug-plane-webhook-dialog
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: Same page, Create webhook dialog
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Correct internal URL filled locally; all events selected by existing default; cancelled without creating.
+  reuse_existing: manual/images/userguide/plane-webhook-dialog.png
+  used_in_manual: true
+- id: ug-plane-gitsync-navigation
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /gitsync-test/settings/git-sync/`, loaded iframe
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Sanitized both parent and embedded UI; no connection initiated.
+  reuse_existing: manual/images/userguide/plane-gitsync-navigation.png
+  used_in_manual: true
+- id: ug-god-mode-navigation
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /god-mode/git-sync/
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Navigation only with the actual iframe; no personal admin settings captured.
+  reuse_existing: manual/images/userguide/god-mode-navigation.png
+  used_in_manual: true
+- id: ug-admin-setup
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /git-sync/ui/admin`, health/setup checks
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Secrets not returned; identifying App fields masked where visible. Actual unknown checks retained.
+  reuse_existing: manual/images/userguide/admin-setup.png
+  used_in_manual: false
+- id: ug-admin-github-app
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: Same page, scrolled to GitHub App form
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Private key/webhook/client-secret fields empty; slug and Client ID masked; no save.
+  reuse_existing: manual/images/userguide/admin-github-app.png
+  used_in_manual: false
+- id: ug-admin-defaults
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: Same page, Defaults and adjacent magic words
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: No secrets on screen; values left as read; no save.
+  reuse_existing: manual/images/userguide/admin-defaults.png
+  used_in_manual: false
+- id: ug-workspace-connection
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /git-sync/ui/workspaces/gitsync-test
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Actual unlinked personal account and empty repository mapping state; no Connect click.
+  reuse_existing: manual/images/userguide/workspace-connection.png
+  used_in_manual: false
+- id: ug-workspace-mapping
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: Same page, Map a repository form
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Plane project selected locally; no repository authorization or mapping save.
+  reuse_existing: manual/images/userguide/workspace-mapping.png
+  used_in_manual: false
+- id: ug-workspace-audit
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /git-sync/ui/workspaces/gitsync-test/audit
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Actual handled Plane delivery; raw payload collapsed; Replay not invoked.
+  reuse_existing: manual/images/userguide/workspace-audit.png
+  used_in_manual: false
+- id: ug-plane-work-item
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /gitsync-test/browse/GITSY-10/
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Existing historical test item, links and loaded Development iframe; personal login text replaced in parent/frame. No item changes.
+  reuse_existing: manual/images/userguide/plane-work-item.png
+  used_in_manual: true
+- id: ug-development-panel
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: /git-sync/ui/workspaces/gitsync-test/projects/972d93a8-6889-46b8-9b47-93f9e7546afb/work-items/352bbf1f-5bfc-4379-8b9a-26b842da26e3/development
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Same item's real historical PR/branch links and no-current-mapping message; no branch creation.
+  reuse_existing: manual/images/userguide/development-panel.png
+  used_in_manual: true
+- id: ug-installer-output
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: 'Terminal: real `SHOW_OUTPUT=1 sh scripts/heavy.sh node scripts/verify-install-e2e.mjs` output'
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Scratch directory became `/root/plane`, random project became `plane`, loopback origin became `https://plane.example.com`, backup timestamp simplified. No secret output used.
+  reuse_existing: manual/images/userguide/installer-output.png
+  used_in_manual: true
+- id: ug-installer-next-steps
+  account: plane-admin / god-mode (test Plane, captured for the user guide)
+  url: 'Terminal: same run''s printed next steps and restart command'
+  caption: see docs/manual/MANUAL_NOTES.md
+  redact: Same path/project/origin simplification; rendered verbatim otherwise in terminal-styled HTML.
+  reuse_existing: manual/images/userguide/installer-next-steps.png
+  used_in_manual: true

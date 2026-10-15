@@ -1,0 +1,90 @@
+# New screenshots captured from the local demo instance (manual/demo/server.ts) by manual/scripts/capture.mjs.
+# account: admin | alex | sam | riley (Plane web session) ; god (God mode session). url is relative to http://plane.example.com
+# step: demo events run before the shot (POST /__demo/feed {step}); setup: named setup routine in capture.mjs.
+# Output: manual/images/demo/<id>.png. Callout numbers in captions match the orange badges.
+- {id: acct-01-not-connected, chapter: 8, account: riley, url: /git-sync/ui/workspaces/acme/account, caption: "My GitHub account before connecting: (1) status line; (2) Connect personal account."}
+- {id: acct-02-connected, chapter: 8, account: alex, url: "/git-sync/ui/workspaces/acme/account?github=linked", caption: "Right after GitHub sends you back: (1) success message; (2) the linked GitHub login."}
+- {id: acct-03-connected-idle, chapter: 8, account: alex, url: /git-sync/ui/workspaces/acme/account, caption: "Connected: (1) GitHub account login; (2) Reconnect; (3) Disconnect personal account."}
+- {id: acct-04-needs-reauth, chapter: 8, account: alex, setup: alex-needs-reauth, url: /git-sync/ui/workspaces/acme/account, caption: "GitHub refused the stored token: (1) the re-authorization notice; (2) Reconnect."}
+- {id: acct-05-disconnect-confirm, chapter: 8, account: alex, url: /git-sync/ui/workspaces/acme/account, caption: "Disconnect asks first: (1) the confirmation text; (2) confirm."}
+- {id: acct-06-error-denied, chapter: 8, account: riley, url: "/git-sync/ui/workspaces/acme/account?github=error&reason=denied", caption: "You pressed Cancel on GitHub: (1) the error explains what happened."}
+- {id: acct-07-error-already-linked, chapter: 8, account: riley, url: "/git-sync/ui/workspaces/acme/account?github=error&reason=already_linked", caption: "That GitHub account is already linked to another member: (1) the error."}
+- {id: acct-08-member-no-admin, chapter: 8, account: alex, url: /git-sync/ui/workspaces/acme, caption: "A member opening the admin page: (1) the refusal. Members use the direct My GitHub account link instead."}
+- {id: dev-01-not-mapped, chapter: 12, account: alex, url: "dev:DES-7", caption: "A project with no mapped repository: (1) the Development panel says so."}
+- {id: dev-02-start-work, chapter: 12, account: alex, url: "dev:WEB-42", caption: "WEB-42 before any code: (1) suggested branch name; (2) Copy branch name; (3) Create branch."}
+- {id: dev-03-branch-created, chapter: 12, account: alex, url: "dev:WEB-42", caption: "After Create branch: (1) the confirmation with the new branch."}
+- {id: dev-04-branch-exists, chapter: 12, account: alex, url: "dev:WEB-42", caption: "Pressing Create branch again: (1) the branch already exists — nothing is overwritten."}
+- {id: dev-05-first-push, chapter: 15, account: alex, step: web42-first-push, url: "dev:WEB-42", caption: "After the first push: (1) Branches lists the branch."}
+- {id: dev-06-draft-pr, chapter: 15, account: alex, step: web42-open-draft, url: "dev:WEB-42", caption: "Draft PR opened: (1) PR roll-up status; (2) the PR with its OPEN badge."}
+- {id: dev-07-build-pending, chapter: 15, account: alex, step: web42-ci-pending, url: "dev:WEB-42", caption: "CI started: (1) Builds shows pending."}
+- {id: dev-08-build-pass-preview, chapter: 15, account: alex, step: [web42-ci-pass, web42-preview], url: "dev:WEB-42", caption: "CI passed and a preview deployed: (1) Builds pass; (2) Deployments; (3) Previews."}
+- {id: dev-09-review-requested, chapter: 15, account: alex, step: [web42-ready-for-review, web42-review-requested], url: "dev:WEB-42", caption: "Ready for review and a reviewer requested: (1) review badge."}
+- {id: dev-10-changes-requested, chapter: 15, account: alex, step: web42-changes-requested, url: "dev:WEB-42", caption: "The reviewer asked for changes: (1) the review badge changes."}
+- {id: dev-11-approved, chapter: 15, account: alex, step: [web42-fix-push, web42-ci-pass-2, web42-approved], url: "dev:WEB-42", caption: "Approved with passing checks: (1) review badge."}
+- {id: dev-12-merged, chapter: 15, account: alex, step: web42-merged, url: "dev:WEB-42", caption: "Merged: (1) PR status MERGED; the work item moved to Done."}
+- {id: strip-web42-loop, chapter: 15, kind: strip, frames: [dev-05-first-push, dev-06-draft-pr, dev-09-review-requested, dev-12-merged], caption: "The WEB-42 loop in four frames: push → draft PR → review → merged."}
+- {id: dev-13-failing-build, chapter: 12, account: alex, url: "dev:WEB-37", caption: "A failing check: (1) Builds shows fail. Open it to see the CI log on GitHub."}
+- {id: dev-14-merge-guard, chapter: 14, account: alex, url: "dev:WEB-36", caption: "Two PRs close WEB-36: (1) one merged; (2) one still open — the item does not move to Done yet."}
+- {id: dev-15-web-new, chapter: 10, account: alex, url: "dev:WEB-46", caption: "A work item created from a WEB-NEW pull request: (1) title taken from the PR; (2) the PR link."}
+- {id: dev-16-mirrored-issue, chapter: 13, account: alex, url: "dev:WEB-47", caption: "A GitHub issue mirrored into Plane: the Development panel has no PR — mirrored issues appear as a link on the item, not here."}
+- {id: dev-17-refs-non-closing, chapter: 9, account: alex, url: "dev:WEB-41", caption: "A non-closing reference (Refs WEB-41): (1) the PR is linked and shown like any other."}
+- {id: ws-01-setup-checklist, chapter: 24, account: admin, url: /git-sync/ui/workspaces/beta, caption: "A new workspace: (1) Set up GitHub sync checklist; (2) Connect GitHub; (3) Send a link to an organization owner."}
+- {id: ws-02-connected, chapter: 24, account: admin, url: /git-sync/ui/workspaces/acme, caption: "Workspace GitHub connection: (1) connected organization and installation; (2) Refresh connection; (3) Disconnect."}
+- {id: ws-03-owner-link, chapter: 24, account: admin, url: /git-sync/ui/workspaces/beta, caption: "Send a link to an organization owner: (1) organization field; (2) create the link."}
+- {id: ws-04-map-form, chapter: 24, account: admin, setup: unmap-public-api, url: /git-sync/ui/workspaces/acme, caption: "Map a repository: (1) GitHub repository; (2) Plane project; (3) Sync direction; (4) options; (5) Add mapping."}
+- {id: ws-05-custom-states, chapter: 24, account: admin, url: /git-sync/ui/workspaces/acme, caption: "Open and closed states: (1) Open state; (2) Closed state. Project default leaves Plane's default."}
+- {id: ws-06-backfill-offer, chapter: 24, account: admin, url: /git-sync/ui/workspaces/acme, caption: "Right after Add mapping: (1) the backfill offer; (2) Not now."}
+- {id: ws-07-mapped-list, chapter: 28, account: admin, url: /git-sync/ui/workspaces/acme, caption: "Mapped repositories with sync health: (1) Last GitHub delivery; (2) Errors in the last 24 hours; (3) Edit; (4) Remove."}
+- {id: ws-08-remove-confirm, chapter: 24, account: admin, url: /git-sync/ui/workspaces/acme, caption: "Remove asks first: (1) the confirmation."}
+- {id: map-01-settings, chapter: 25, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1, caption: "Mapping Settings tab: (1) tabs; (2) Sync direction; (3) Smart Commits and comment options; (4) Save."}
+- {id: map-02-policies, chapter: 25, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1/policies, caption: "Conflict policies: (1) one row per field; (2) policy choice; (3) Save policies."}
+- {id: map-03-rules-table, chapter: 26, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1/rules, caption: "Rules: (1) lifecycle points → Plane state table; (2) Save mapping table."}
+- {id: map-04-branch-rules, chapter: 26, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1/rules, caption: "Branch-aware rules: (1) Base branch (regex); (2) lifecycle point; (3) target state."}
+- {id: map-05-yaml, chapter: 26, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1/rules, caption: "Rules (YAML): (1) the compiled rules; (2) Validate and save YAML."}
+- {id: map-06-yaml-error, chapter: 26, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1/rules, caption: "An invalid rule is refused: (1) the validation error names the rule."}
+- {id: map-07-versions, chapter: 26, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1/rules, caption: "Rule versions: (1) version list; (2) Restore."}
+- {id: map-08-dryrun-input, chapter: 26, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1/dry-run, caption: "Test rules: (1) event; (2) conditions; (3) Rules to test (YAML, optional); (4) Run dry-run."}
+- {id: map-09-dryrun-result, chapter: 26, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1/dry-run, caption: "Dry-run result: (1) matched rule; (2) actions that would run. Nothing was changed."}
+- {id: map-10-dryrun-none, chapter: 26, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1/dry-run, caption: "Dry-run with no match: (1) No actions would run."}
+- {id: users-01-list, chapter: 27, account: admin, url: /git-sync/ui/workspaces/acme/users, caption: "User links: (1) Linked GitHub accounts; (2) needs re-authorization flag; (3) Unlink."}
+- {id: users-02-link-form, chapter: 27, account: admin, url: /git-sync/ui/workspaces/acme/users, caption: "Link a user: (1) Plane member; (2) GitHub login; (3) Look up id; (4) Link account."}
+- {id: users-03-unlink-confirm, chapter: 27, account: admin, url: /git-sync/ui/workspaces/acme/users, caption: "Unlink asks first: (1) the confirmation."}
+- {id: health-01-rate-limited, chapter: 28, account: admin, setup: rate-limited, url: /git-sync/ui/workspaces/acme, caption: "Sync health while GitHub rate-limits the App: (1) Rate-limited until."}
+- {id: health-02-disabled, chapter: 28, account: admin, setup: disable-mapping, url: /git-sync/ui/workspaces/acme, caption: "A disabled mapping: (1) Disabled and its reason."}
+- {id: audit-01-log, chapter: 28, account: admin, url: /git-sync/ui/workspaces/acme/audit, caption: "Audit log: (1) entry kind and outcome; (2) time; (3) Show raw; (4) Replay."}
+- {id: audit-02-raw, chapter: 28, account: admin, url: /git-sync/ui/workspaces/acme/audit, caption: "Show raw: (1) the stored event detail."}
+- {id: audit-03-errors-only, chapter: 28, account: admin, url: "/git-sync/ui/workspaces/acme/audit?errors=1", caption: "Errors only (URL parameter errors=1): (1) failed Smart Commit commands."}
+- {id: audit-04-replay, chapter: 29, account: admin, url: /git-sync/ui/workspaces/acme/audit, caption: "Replay: (1) the confirmation that the delivery was queued again."}
+- {id: audit-05-retry-write, chapter: 29, account: admin, setup: failed-write, url: "/git-sync/ui/workspaces/acme/audit?errors=1", caption: "A failed write: (1) Retry write."}
+- {id: gm-01-overview, chapter: 23, account: god, url: /git-sync/ui/admin, caption: "Git sync: instance settings: (1) Connection health; (2) Setup checks; (3) Check setup again."}
+- {id: gm-02-setup-fail, chapter: 23, account: god, setup: app-missing-event, url: /git-sync/ui/admin, caption: "A setup check that needs attention: (1) the failing check and what to fix."}
+- {id: gm-03-github-app, chapter: 23, account: god, url: /git-sync/ui/admin, caption: "GitHub App: (1) App ID; (2) Private key (PEM); (3) Webhook secret; (4) App slug and OAuth client; (5) GitHub edition; (6) Save GitHub App."}
+- {id: gm-04-edition, chapter: 23, account: god, url: /git-sync/ui/admin, caption: "GitHub edition: (1) GitHub.com, Enterprise Cloud with data residency, Enterprise Server."}
+- {id: gm-05-defaults, chapter: 23, account: god, url: /git-sync/ui/admin, caption: "Defaults: (1) Smart Commits for new mappings; (2) Require signed commits — stored but not enforced in this release; (3) Save defaults."}
+- {id: gm-06-magic-words, chapter: 23, account: god, url: /git-sync/ui/admin, caption: "Magic words: (1) one tier per box, one phrase per line; (2) Save magic words."}
+- {id: gm-07-installations, chapter: 23, account: god, url: /git-sync/ui/admin, caption: "Workspace GitHub App installations: (1) allow-listed installation; (2) Allow-list an installation."}
+- {id: gm-08-mappings, chapter: 23, account: god, url: /git-sync/ui/admin, caption: "Instance view of repository mappings: (1) every workspace's mappings; (2) Disabled repository mappings."}
+- {id: gm-09-manual-recovery, chapter: 23, account: god, url: /git-sync/ui/admin, caption: "Manual mapping recovery: (1) workspace; (2) repository and project; (3) Add manual mapping."}
+- {id: gm-10-instance-audit, chapter: 28, account: god, url: /git-sync/ui/admin/audit, caption: "Instance audit across all workspaces: (1) workspace column; (2) entries."}
+- {id: gm-11-decrypt-error, chapter: 30, account: god, setup: corrupt-app-secret, url: /git-sync/ui/admin, caption: "Stored App credentials that cannot be decrypted (GITSYNC_TOKEN_KEY changed): (1) the error."}
+- {id: term-01-install-help, chapter: 21, kind: terminal, command: "./install.sh --help", caption: "install.sh --help: every option."}
+- {id: term-02-healthz, chapter: 29, kind: terminal, command: "curl http://127.0.0.1:3199/git-sync/healthz", caption: "The health endpoint of a running service."}
+- {id: text-github-comments, chapter: 13, kind: text, caption: "Text git-sync posted to GitHub in the demo run (link-back, problem reports, mirrored issue)."}
+- {id: strip-account-states, chapter: 8, kind: strip, frames: [acct-01-not-connected, acct-02-connected, acct-04-needs-reauth], caption: "My GitHub account in three states: not connected → connected → needs re-authorization."}
+- {id: strip-review-badges, chapter: 15, kind: strip, frames: [dev-09-review-requested, dev-10-changes-requested, dev-11-approved], caption: "Review badges on the PR line: REVIEW → REJECTED → APPROVAL."}
+- {id: map-11-dryrun-custom-yaml, chapter: 26, account: admin, url: /git-sync/ui/workspaces/acme/mappings/1/dry-run, caption: "Testing unsaved rules: (1) Rules to test (YAML, optional); (2) the rule that matched."}
+- {id: audit-06-mapping-filter, chapter: 28, account: admin, url: "/git-sync/ui/workspaces/acme/audit?mappingId=1&hours=24", caption: "Audit log filtered by URL parameters (mappingId=1, hours=24): (1) the filter."}
+- {id: users-04-after-link, chapter: 27, account: admin, url: /git-sync/ui/workspaces/acme/users, caption: "After Link account: (1) the new link in Linked GitHub accounts."}
+- {id: ws-09-overview, chapter: 24, account: admin, url: /git-sync/ui/workspaces/acme, caption: "The workspace page: (1) Repositories; (2) User links; (3) My GitHub account; (4) Audit log."}
+- {id: acct-09-admin-tab, chapter: 8, account: admin, url: /git-sync/ui/workspaces/acme/account, caption: "Admins also reach the card from the workspace page: (1) the My GitHub account tab; (2) the linked login."}
+- {id: gm-12-instance-audit-default, chapter: 28, account: god, url: /git-sync/ui/admin/audit, caption: "Instance audit by default: (1) only activity with no workspace (none yet here); add ?scope=all for every workspace."}
+# Shots that need a real signed-in browser (no saved sessions were provided); kept as placeholders:
+- {id: gh-01-new-app-form, chapter: 22, account: github, url: "https://github.com/organizations/<org>/settings/apps/new", placeholder: true, caption: "GitHub's New GitHub App form (do not submit)."}
+- {id: gh-02-app-permissions, chapter: 22, account: github, placeholder: true, caption: "The test App's Permissions & events page."}
+- {id: gh-03-oauth-consent, chapter: 8, account: github, placeholder: true, caption: "GitHub's authorize screen during Connect personal account."}
+- {id: gh-04-pr-linkback, chapter: 9, account: github, placeholder: true, caption: "A PR on GitHub with git-sync's 'Linked Plane work item' comment."}
+- {id: gh-05-problem-comment, chapter: 11, account: github, placeholder: true, caption: "A commit comment from git-sync reporting a Smart Commit problem."}
+- {id: plane-01-dev-sidebar, chapter: 12, account: plane-alex, placeholder: true, caption: "The Development section inside a real Plane work item sidebar with PR, build and preview."}
+- {id: plane-02-smart-comment, chapter: 11, account: plane-alex, placeholder: true, caption: "A Smart Commit #comment and Time logged comment in Plane's activity."}
+- {id: plane-03-mirrored-item, chapter: 13, account: plane-alex, placeholder: true, caption: "A Plane work item created from a GitHub issue labelled plane."}
+- {id: plane-04-done-after-merge, chapter: 15, account: plane-alex, placeholder: true, caption: "WEB-42 in Done in Plane after the merge."}
