@@ -3,8 +3,8 @@
 reports/build/
 reports/debug-*.png
 reports/demo-server.log
-dist/
 reports/labels.json
 reports/verify.json
 reports/build.json
 reports/capture-report-partial.md
+!dist/
