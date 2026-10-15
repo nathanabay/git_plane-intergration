@@ -33,7 +33,7 @@ Heavy steps ran one at a time inside a memory cap (`manual/scripts/capped.sh`: c
 | `node scripts/verify-handbook.mjs` | HANDBOOK VERIFIED (139 pages) |
 | `node scripts/verify-manual.mjs` | MANUAL VERIFIED (old user guide) |
 | `npm run manual:verify` (new verifier) | **MANUAL VERIFIED** |
-| `npm test` | TESTS_RESULT |
+| `npm test` | **Not run to completion.** The first attempt exceeded its 4G memory cap (the suite runs many PGlite databases in parallel); the second, at concurrency 2, was stopped at the owner's request before reporting results. No `src/` or `tests/` file was changed by this work. |
 
 ## Coverage of catalogue sections A–L
 
