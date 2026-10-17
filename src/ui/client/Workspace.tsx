@@ -32,16 +32,21 @@ export function WorkspacePage({ route }: { route: WorkspaceRoute }) {
   const adminSection = route.name !== "account" && route.name !== "development";
   const health = useLoad(() => adminSection ? api<WorkspaceHealth>("GET", `${ws(slug)}/health`) : Promise.resolve(null), [slug, adminSection]);
   useEffect(() => { if (!adminSection) return; const timer = setInterval(health.reload, 30_000); return () => clearInterval(timer); }, [adminSection, health.reload]);
+  // A plain member may open only their own account page; the admin tabs would just say "needs a workspace admin".
+  const access = useLoad(() => route.name === "account"
+    ? api<WorkspaceHealth>("GET", `${ws(slug)}/health`).then(() => true, (e) => !isNotAuthorised(e))
+    : Promise.resolve(true), [slug, route.name === "account"]);
+  const memberOnly = route.name === "account" && access.data === false;
   if (route.name === "development") return <DevPanel route={route} />;
   return (
     <main>
       <h1>Git sync: {slug}</h1>
-      <nav aria-label="Workspace sections" className="tabs">
+      {memberOnly ? null : <nav aria-label="Workspace sections" className="tabs">
         <Link href={workspaceHref(slug)} aria-current={route.name === "mappings" || route.name === "mapping" ? "page" : undefined}>Repositories</Link>
         <Link href={workspaceHref(slug, "users")} aria-current={route.name === "users" ? "page" : undefined}>User links</Link>
         <Link href={workspaceHref(slug, "account")} aria-current={route.name === "account" ? "page" : undefined}>My GitHub account</Link>
         <Link href={workspaceHref(slug, "audit")} aria-current={route.name === "audit" ? "page" : undefined}>Audit log</Link>
-      </nav>
+      </nav>}
       {health.data ? <WorkspaceHealthBanners health={health.data} /> : null}
       {adminSection ? <ErrorNote error={health.error} /> : null}
       {route.name === "account" ? <PersonalAccountPanel slug={slug} /> : null}

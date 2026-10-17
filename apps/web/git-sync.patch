@@ -1,9 +1,9 @@
 diff --git a/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/git-sync/page.tsx b/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/git-sync/page.tsx
 new file mode 100644
-index 0000000..4bfddd0
+index 0000000..30b6879
 --- /dev/null
 +++ b/apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/git-sync/page.tsx
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,51 @@
 +import { observer } from "mobx-react";
 +import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 +import { NotAuthorizedView } from "@/components/auth-screens/not-authorized-view";
@@ -17,8 +17,9 @@ index 0000000..4bfddd0
 +  const { workspaceSlug } = params;
 +  const { workspaceUserInfo, allowPermissions } = useUserPermissions();
 +  
-+  // EUserPermissions.ADMIN value is 20 - verified in Plane source
++  // EUserPermissions.ADMIN value is 20, MEMBER 15 - verified in Plane source
 +  const canPerformWorkspaceAdminActions = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE);
++  const isWorkspaceMember = allowPermissions([EUserPermissions.MEMBER], EUserPermissionsLevel.WORKSPACE);
 +
 +  if (!workspaceUserInfo) {
 +    return (
@@ -31,7 +32,7 @@ index 0000000..4bfddd0
 +    );
 +  }
 +
-+  if (!canPerformWorkspaceAdminActions) {
++  if (!canPerformWorkspaceAdminActions && !isWorkspaceMember) {
 +    return <NotAuthorizedView section="settings" className="h-auto" />;
 +  }
 +
@@ -41,7 +42,8 @@ index 0000000..4bfddd0
 +      <PageHead title="GitHub Sync" />
 +      <div className="h-full w-full">
 +        <iframe
-+          src={`/git-sync/ui/workspaces/${workspaceSlug}`}
++          // Members see only their own GitHub account link; the workspace connection stays admin-only.
++          src={`/git-sync/ui/workspaces/${workspaceSlug}${canPerformWorkspaceAdminActions ? "" : "/account"}`}
 +          className="w-full border-none"
 +          // h-full collapses here: the settings container has no fixed height, so fill the viewport.
 +          style={{ height: "calc(100vh - 8rem)" }}
@@ -96,7 +98,7 @@ index 8077c4e..2a6a5a7 100644
        </div>
      </>
 diff --git a/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx b/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx
-index dbc9306..3592c90 100644
+index dbc9306..c15641a 100644
 --- a/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx
 +++ b/apps/web/core/components/settings/workspace/sidebar/item-categories.tsx
 @@ -7,8 +7,10 @@
@@ -110,11 +112,29 @@ index dbc9306..3592c90 100644
    EUserPermissionsLevel,
    GROUPED_WORKSPACE_SETTINGS,
    WORKSPACE_SETTINGS_CATEGORIES,
-@@ -65,6 +67,16 @@ export const WorkspaceSettingsSidebarItemCategories = observer(function Workspac
+@@ -31,6 +33,8 @@ export const WorkspaceSettingsSidebarItemCategories = observer(function Workspac
+   const { allowPermissions } = useUserPermissions();
+   // translation
+   const { t } = useTranslation();
++  // git-sync: admins manage the workspace connection; members open it to link their own GitHub account.
++  const canOpenGitSync = allowPermissions([EUserPermissions.ADMIN, EUserPermissions.MEMBER], EUserPermissionsLevel.WORKSPACE, workspaceSlug);
+ 
+   return (
+     <div className="mt-3 flex flex-col divide-y divide-subtle px-3">
+@@ -40,7 +44,7 @@ export const WorkspaceSettingsSidebarItemCategories = observer(function Workspac
+           allowPermissions(item.access, EUserPermissionsLevel.WORKSPACE, workspaceSlug)
+         );
+ 
+-        if (accessibleItems.length === 0) return null;
++        if (accessibleItems.length === 0 && !(category === "developer" && canOpenGitSync)) return null;
+ 
+         return (
+           <div key={category} className="shrink-0 py-3 first:pt-0 last:pb-0">
+@@ -65,6 +69,16 @@ export const WorkspaceSettingsSidebarItemCategories = observer(function Workspac
                    />
                  );
                })}
-+              {category === "developer" && allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE, workspaceSlug) && (
++              {category === "developer" && canOpenGitSync && (
 +                <SettingsSidebarItem
 +                  key="git-sync"
 +                  as="link"
@@ -128,10 +148,10 @@ index dbc9306..3592c90 100644
            </div>
          );
 diff --git a/packages/constants/src/settings/workspace.ts b/packages/constants/src/settings/workspace.ts
-index e9d326e..e8e7aeb 100644
+index e9d326e..e319fc6 100644
 --- a/packages/constants/src/settings/workspace.ts
 +++ b/packages/constants/src/settings/workspace.ts
-@@ -64,9 +64,11 @@ export const WORKSPACE_SETTINGS: Record<TWorkspaceSettingsTabs, TWorkspaceSettin
+@@ -64,9 +64,12 @@ export const WORKSPACE_SETTINGS: Record<TWorkspaceSettingsTabs, TWorkspaceSettin
    },
  };
  
@@ -140,8 +160,9 @@ index e9d326e..e8e7aeb 100644
 -);
 +export const WORKSPACE_SETTINGS_ACCESS: Record<string, EUserWorkspaceRoles[]> = {
 +  ...Object.fromEntries(Object.entries(WORKSPACE_SETTINGS).map(([_, { href, access }]) => [href, access])),
-+  // git-sync fork: the settings layout authorizes only listed paths; the GitHub page is admin-only.
-+  "/settings/git-sync": [EUserWorkspaceRoles.ADMIN],
++  // git-sync fork: the settings layout authorizes only listed paths. Admins get the workspace connection; members
++  // get their own GitHub account link (the page picks the view; git-sync enforces the role server-side).
++  "/settings/git-sync": [EUserWorkspaceRoles.ADMIN, EUserWorkspaceRoles.MEMBER],
 +};
  
  export const GROUPED_WORKSPACE_SETTINGS: Record<WORKSPACE_SETTINGS_CATEGORY, TWorkspaceSettingsItem[]> = {

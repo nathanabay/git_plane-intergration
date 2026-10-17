@@ -129,10 +129,14 @@ for (const app of which === "all" ? ["admin", "web"] : [which]) {
     if (a.ui.test(patched)) ui = true;
   }
   // Plane's workspace settings layout renders NotAuthorizedView for any path missing from
-  // WORKSPACE_SETTINGS_ACCESS, so the web fork must list its page there, admin-only.
+  // WORKSPACE_SETTINGS_ACCESS, so the web fork must list its page there for admins and members (members link their own
+  // GitHub account there), never guests; the page shows members only their account view.
   if (app === "web") {
     const access = existsSync(join(tmp, "packages/constants/src/settings/workspace.ts")) ? readFileSync(join(tmp, "packages/constants/src/settings/workspace.ts"), "utf8") : "";
-    if (!/"\/settings\/git-sync":\s*\[EUserWorkspaceRoles\.ADMIN\]/.test(access)) fail("web: WORKSPACE_SETTINGS_ACCESS does not authorize /settings/git-sync for workspace admins");
+    if (!/"\/settings\/git-sync":\s*\[EUserWorkspaceRoles\.ADMIN,\s*EUserWorkspaceRoles\.MEMBER\]/.test(access)) fail("web: WORKSPACE_SETTINGS_ACCESS does not authorize /settings/git-sync for workspace admins and members (only)");
+    const pageFile = "apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/git-sync/page.tsx";
+    const page = existsSync(join(tmp, pageFile)) ? readFileSync(join(tmp, pageFile), "utf8") : "";
+    if (!/canPerformWorkspaceAdminActions \? "" : "\/account"/.test(page)) fail("web: the Git Sync settings page does not send members to their own account view");
   }
   // N3 (spec §12.8): the work-item sidebar embeds the Development panel. Its iframe must sit in
   // IssueDetailsSidebar and point at /git-sync/ui/workspaces/<slug>/projects/<project>/work-items/<item>/development,

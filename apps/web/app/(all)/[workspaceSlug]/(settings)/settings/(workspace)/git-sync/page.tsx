@@ -11,8 +11,9 @@ function GitSyncWorkspacePage({ params }: Route.ComponentProps) {
   const { workspaceSlug } = params;
   const { workspaceUserInfo, allowPermissions } = useUserPermissions();
   
-  // EUserPermissions.ADMIN value is 20 - verified in Plane source
+  // EUserPermissions.ADMIN value is 20, MEMBER 15 - verified in Plane source
   const canPerformWorkspaceAdminActions = allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE);
+  const isWorkspaceMember = allowPermissions([EUserPermissions.MEMBER], EUserPermissionsLevel.WORKSPACE);
 
   if (!workspaceUserInfo) {
     return (
@@ -25,7 +26,7 @@ function GitSyncWorkspacePage({ params }: Route.ComponentProps) {
     );
   }
 
-  if (!canPerformWorkspaceAdminActions) {
+  if (!canPerformWorkspaceAdminActions && !isWorkspaceMember) {
     return <NotAuthorizedView section="settings" className="h-auto" />;
   }
 
@@ -35,7 +36,8 @@ function GitSyncWorkspacePage({ params }: Route.ComponentProps) {
       <PageHead title="GitHub Sync" />
       <div className="h-full w-full">
         <iframe
-          src={`/git-sync/ui/workspaces/${workspaceSlug}`}
+          // Members see only their own GitHub account link; the workspace connection stays admin-only.
+          src={`/git-sync/ui/workspaces/${workspaceSlug}${canPerformWorkspaceAdminActions ? "" : "/account"}`}
           className="w-full border-none"
           // h-full collapses here: the settings container has no fixed height, so fill the viewport.
           style={{ height: "calc(100vh - 8rem)" }}

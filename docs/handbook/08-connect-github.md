@@ -21,7 +21,7 @@ The last row is your day-one task. You do not need to create a GitHub App or cop
 
 The actual screen is called **My GitHub account**. Its card heading repeats that name. The source is `src/ui/client/Connect.tsx`, and its member route is registered in `src/ui/client/router.ts` and `src/ui/api.ts`.
 
-There is a navigation wrinkle in this fork of Plane: **GitHub Sync** under workspace settings is restricted to workspace administrators. The personal account page itself allows ordinary workspace members. The current fork does not add a separate member account item to Plane's native profile settings. An administrator can therefore give you the direct member-page link. For the fictional workspace in this handbook it is:
+Open it from Plane itself: **Workspace settings → Developer → GitHub Sync**. Workspace administrators see the full integration there; ordinary workspace **members** see only their own **My GitHub account** page. Guests do not get the page. You can also open the page directly. For the fictional workspace in this handbook the direct link is:
 
 ```text
 https://plane.example.com/git-sync/ui/workspaces/acme/account
@@ -29,7 +29,7 @@ https://plane.example.com/git-sync/ui/workspaces/acme/account
 
 Replace `plane.example.com` with your team's Plane hostname and `acme` with the workspace slug supplied by your team. A slug is the short workspace name used in URLs. This direct link uses your existing Plane session; it is not a separate registration site.
 
-If you are an administrator already inside GitHub Sync, the integration's own tabs include **Repositories**, **User links**, **My GitHub account**, and **Audit log**. Choose **My GitHub account**. Ordinary members can see that account page even though the other management pages require an administrator.
+If you are an administrator, GitHub Sync opens with the integration's tabs: **Repositories**, **User links**, **My GitHub account**, and **Audit log**. Choose **My GitHub account**. Members see the account page straight away, without the management tabs.
 
 > **Tip:** Bookmark your member account page. It is useful later if a token expires or you change which GitHub account you use for work.
 

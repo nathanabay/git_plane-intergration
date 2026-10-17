@@ -33,6 +33,8 @@ export const WorkspaceSettingsSidebarItemCategories = observer(function Workspac
   const { allowPermissions } = useUserPermissions();
   // translation
   const { t } = useTranslation();
+  // git-sync: admins manage the workspace connection; members open it to link their own GitHub account.
+  const canOpenGitSync = allowPermissions([EUserPermissions.ADMIN, EUserPermissions.MEMBER], EUserPermissionsLevel.WORKSPACE, workspaceSlug);
 
   return (
     <div className="mt-3 flex flex-col divide-y divide-subtle px-3">
@@ -42,7 +44,7 @@ export const WorkspaceSettingsSidebarItemCategories = observer(function Workspac
           allowPermissions(item.access, EUserPermissionsLevel.WORKSPACE, workspaceSlug)
         );
 
-        if (accessibleItems.length === 0) return null;
+        if (accessibleItems.length === 0 && !(category === "developer" && canOpenGitSync)) return null;
 
         return (
           <div key={category} className="shrink-0 py-3 first:pt-0 last:pb-0">
@@ -67,7 +69,7 @@ export const WorkspaceSettingsSidebarItemCategories = observer(function Workspac
                   />
                 );
               })}
-              {category === "developer" && allowPermissions([EUserPermissions.ADMIN], EUserPermissionsLevel.WORKSPACE, workspaceSlug) && (
+              {category === "developer" && canOpenGitSync && (
                 <SettingsSidebarItem
                   key="git-sync"
                   as="link"

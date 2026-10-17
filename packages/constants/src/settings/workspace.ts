@@ -66,8 +66,9 @@ export const WORKSPACE_SETTINGS: Record<TWorkspaceSettingsTabs, TWorkspaceSettin
 
 export const WORKSPACE_SETTINGS_ACCESS: Record<string, EUserWorkspaceRoles[]> = {
   ...Object.fromEntries(Object.entries(WORKSPACE_SETTINGS).map(([_, { href, access }]) => [href, access])),
-  // git-sync fork: the settings layout authorizes only listed paths; the GitHub page is admin-only.
-  "/settings/git-sync": [EUserWorkspaceRoles.ADMIN],
+  // git-sync fork: the settings layout authorizes only listed paths. Admins get the workspace connection; members
+  // get their own GitHub account link (the page picks the view; git-sync enforces the role server-side).
+  "/settings/git-sync": [EUserWorkspaceRoles.ADMIN, EUserWorkspaceRoles.MEMBER],
 };
 
 export const GROUPED_WORKSPACE_SETTINGS: Record<WORKSPACE_SETTINGS_CATEGORY, TWorkspaceSettingsItem[]> = {

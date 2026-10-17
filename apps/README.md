@@ -12,10 +12,10 @@ The fork surface is intentionally minimal to make upgrading to newer Plane versi
 - `apps/admin/app/(all)/(dashboard)/git-sync/page.tsx` (route component rendering the iframe)
 
 ### Web App
-- `apps/web/core/components/settings/workspace/sidebar/item-categories.tsx` (nav entry, admin-only)
+- `apps/web/core/components/settings/workspace/sidebar/item-categories.tsx` (nav entry for admins and members; members get only their own GitHub account page)
 - `apps/web/app/routes/extended.ts` (route registration)
 - `apps/web/app/(all)/[workspaceSlug]/(settings)/settings/(workspace)/git-sync/page.tsx` (route component rendering the iframe)
-- `packages/constants/src/settings/workspace.ts` (`WORKSPACE_SETTINGS_ACCESS` entry for `/settings/git-sync`, admin-only; the settings layout refuses unlisted paths)
+- `packages/constants/src/settings/workspace.ts` (`WORKSPACE_SETTINGS_ACCESS` entry for `/settings/git-sync`, admins and members, never guests; the settings layout refuses unlisted paths)
 - `apps/web/core/components/issues/issue-detail/sidebar.tsx` (the work-item Development panel: an iframe at the end of `IssueDetailsSidebar`)
 
 Eight files in total: admin 3, web 5. `scripts/verify-fork-patch.mjs all` enforces these limits, applies the patches to a pristine v1.4.2 checkout, compares the mirrored files, and checks the settings routes and the Development panel iframe.
