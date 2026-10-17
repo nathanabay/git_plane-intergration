@@ -1,0 +1,554 @@
+{
+ "items": [
+  {
+   "key": "WEB-1",
+   "id": "c6fe096e-5ec6-46c4-ac68-a59c63a1c9bc",
+   "name": "Set up the website repository",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-2",
+   "id": "5ee94f42-6ed1-4206-afbd-2558f02319a1",
+   "name": "Add the company logo to the header",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-3",
+   "id": "ba17629f-cea0-4e18-8e5b-4fd99532af2a",
+   "name": "Write the privacy policy page",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-4",
+   "id": "6c209518-00be-4aeb-94c6-0e0b12556593",
+   "name": "Website task 4",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-5",
+   "id": "e77d36f0-b8b4-43e8-95a2-da3ca03c5c9e",
+   "name": "Fix broken link in the footer",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-6",
+   "id": "969870dd-8bac-4190-8a05-986aaaf29e6f",
+   "name": "Website task 6",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-7",
+   "id": "228c5e96-4cdc-4794-b1fc-782396919ffc",
+   "name": "Website task 7",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-8",
+   "id": "0398e2c2-7e73-4cb3-a929-c5ccb513d240",
+   "name": "Compress hero images",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-9",
+   "id": "4ef59ec5-f305-4a2a-803a-3c83a3bdd872",
+   "name": "Website task 9",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-10",
+   "id": "ca5ebbee-70e5-4fee-8f1c-a331146ac1dd",
+   "name": "Website task 10",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-11",
+   "id": "cfa85884-3b71-4f6a-a2cf-c08125388281",
+   "name": "Website task 11",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-12",
+   "id": "9721976d-3745-47d1-8639-a8c9216a1366",
+   "name": "Add a cookie consent banner",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-13",
+   "id": "ceb59ee4-bd88-4ce5-b965-0b6813f8f2f6",
+   "name": "Website task 13",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-14",
+   "id": "14dc2ded-8c81-4d73-9881-2a3f3e258513",
+   "name": "Website task 14",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-15",
+   "id": "d6449838-bb61-45ee-a8ab-f3454455d305",
+   "name": "Website task 15",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-16",
+   "id": "e4abb257-7fd0-44b4-b50f-7c2a9833cd7d",
+   "name": "Website task 16",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-17",
+   "id": "c82b33e5-4750-49fb-b645-464c0b1d0909",
+   "name": "Website task 17",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-18",
+   "id": "473133f1-7237-4325-8d97-86e31c79a194",
+   "name": "Website task 18",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-19",
+   "id": "3f0e6ccb-8317-4fcd-b90a-2a02ed8c8b56",
+   "name": "Website task 19",
+   "state": "Done",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-20",
+   "id": "f2d25f0c-b22c-46b1-b954-38414259555a",
+   "name": "Translate the pricing page",
+   "state": "Backlog",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-21",
+   "id": "bf0fa529-a8d6-4d92-b835-e50de7f63ca4",
+   "name": "Website task 21",
+   "state": "Backlog",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-22",
+   "id": "580c3a44-53dc-4ea8-878a-cc2fe24df34e",
+   "name": "Website task 22",
+   "state": "Backlog",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-23",
+   "id": "5e7ff218-c7ef-4d25-856f-fcc693e535d2",
+   "name": "Website task 23",
+   "state": "Backlog",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-24",
+   "id": "8fde8280-29f6-48ee-ac25-7fc2bd58618e",
+   "name": "Website task 24",
+   "state": "Backlog",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-25",
+   "id": "1be6462c-b16c-4e6a-b4be-53bbcd714f38",
+   "name": "Website task 25",
+   "state": "Backlog",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-26",
+   "id": "abb0b392-8162-48e4-b156-5f111d0f315a",
+   "name": "Website task 26",
+   "state": "Backlog",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-27",
+   "id": "11bb72e5-b5e7-4a43-a034-0412a9f6fc04",
+   "name": "Website task 27",
+   "state": "Backlog",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-28",
+   "id": "84c440ed-1a94-4e37-b36e-347ba4ebf26c",
+   "name": "Website task 28",
+   "state": "Backlog",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-29",
+   "id": "79f0358f-3c45-43fd-98ff-7dad0acc884e",
+   "name": "Website task 29",
+   "state": "Backlog",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-30",
+   "id": "51418502-0f8e-494f-86b3-61869a6932b7",
+   "name": "Show delivery estimate on product page",
+   "state": "Todo",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-31",
+   "id": "45238622-aaa7-4cfd-8645-5a9587f037ea",
+   "name": "Remember the cart between visits",
+   "state": "Todo",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-32",
+   "id": "a7931749-de86-45d5-b960-d831ec35abc8",
+   "name": "Add order summary to checkout",
+   "state": "Todo",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-33",
+   "id": "6f13cf1e-4379-4079-9978-2ab73f3bc489",
+   "name": "Validate postcode before payment",
+   "state": "In Progress",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-34",
+   "id": "2436bdd7-e249-4189-8fd3-ceb57d36563b",
+   "name": "Show card errors next to the field",
+   "state": "In Progress",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-35",
+   "id": "5caf4562-982c-4218-9f94-ab5c94da9ec3",
+   "name": "Support Apple Pay on checkout",
+   "state": "In Progress",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-36",
+   "id": "8d070f86-8bff-46cb-937f-e505c246c74a",
+   "name": "Add a guest checkout option",
+   "state": "In Progress",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-37",
+   "id": "c19152ed-3a41-40c1-9c25-8fadf51d7fae",
+   "name": "Fix total rounding on discounted items",
+   "state": "In Progress",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-38",
+   "id": "767feddc-cd45-49b6-af06-c15e4bd9551d",
+   "name": "Improve the empty-cart message",
+   "state": "Todo",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-39",
+   "id": "a91a7b7b-cff8-4f4f-8c6c-4a27f444faa0",
+   "name": "Speed up the checkout page",
+   "state": "In QA",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-40",
+   "id": "64211cb5-7519-42d4-bb20-5ef872bac225",
+   "name": "Increase tap target size of quantity buttons",
+   "state": "Todo",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-41",
+   "id": "5b05e0da-1bc0-40e2-b95a-99a102630480",
+   "name": "Keep focus visible on checkout controls",
+   "state": "In Progress",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-42",
+   "id": "53486230-16eb-4c87-afc4-ffeb2339a1a9",
+   "name": "Make the checkout button visible on small screens",
+   "state": "Done",
+   "labels": [
+    "frontend",
+    "accessibility"
+   ],
+   "assignees": [
+    "6a57833d-4e43-49be-924c-f093cddfae76"
+   ]
+  },
+  {
+   "key": "WEB-44",
+   "id": "f19a4a55-c98c-4829-af86-1505b5001d16",
+   "name": "Add rate limiting to the login form",
+   "state": "Todo",
+   "labels": [
+    "github"
+   ],
+   "assignees": [
+    "6a57833d-4e43-49be-924c-f093cddfae76"
+   ]
+  },
+  {
+   "key": "WEB-45",
+   "id": "7ddc71bc-a6e7-44ac-b1bb-5be60e5da720",
+   "name": "Document the release checklist",
+   "state": "Todo",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "API-1",
+   "id": "125fc32b-3ec5-4d31-ba60-c407887f7fc9",
+   "name": "Publish the OpenAPI document",
+   "state": "Todo",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "DES-7",
+   "id": "9e3c4d5e-8ff0-4bae-80ae-b7e08c113859",
+   "name": "Define the colour tokens",
+   "state": "In Progress",
+   "labels": [],
+   "assignees": [
+    "6a57833d-4e43-49be-924c-f093cddfae76"
+   ]
+  },
+  {
+   "key": "WEB-46",
+   "id": "50b5ef6b-6077-4578-a943-8bb8db2d6cc9",
+   "name": "WEB-NEW Add rate limiting to the sign-up form",
+   "state": "In Progress",
+   "labels": [],
+   "assignees": []
+  },
+  {
+   "key": "WEB-47",
+   "id": "7a2b5e69-aca5-49cb-8b4b-b71966c58b01",
+   "name": "Coupon field accepts expired codes",
+   "state": "Backlog",
+   "labels": [
+    "bug"
+   ],
+   "assignees": []
+  }
+ ],
+ "comments": {
+  "WEB-33": [
+   "<p>Shared validation helper for the checkout form</p><p><small>via <a href=\"https://github.com/acme/website/commit/a13b45e38deb0264973ff72615c7de8995a274aa\">a13b45e</a> by alex-dev</small></p>"
+  ],
+  "WEB-34": [
+   "<p>Shared validation helper for the checkout form</p><p><small>via <a href=\"https://github.com/acme/website/commit/a13b45e38deb0264973ff72615c7de8995a274aa\">a13b45e</a> by alex-dev</small></p>"
+  ],
+  "WEB-35": [
+   "<p>Git sync could not complete this action:</p><ul><li><code>WEB-35: #shipped matches no Plane state.</code></li></ul>"
+  ],
+  "WEB-47": [
+   "<p>Mirrored from GitHub issue <a href=\"https://github.com/acme/website/issues/131\">acme/website#131</a>.</p>",
+   "<p><strong>sam-reviews</strong> commented on <a href=\"https://github.com/acme/website/issues/131#issuecomment-77001\">GitHub</a>:</p><p>Reproduced on staging. <mention-component entity_identifier=\"6a57833d-4e43-49be-924c-f093cddfae76\" entity_name=\"user_mention\"></mention-component> can you take this?</p>"
+  ],
+  "WEB-44": [
+   "<p>Mirrored to GitHub issue acme/website#120.</p>"
+  ],
+  "WEB-42": [
+   "<p>Checked at 320, 375 and 390 px widths; the button stays visible.</p><p><small>via <a href=\"https://github.com/acme/website/commit/3b2335d710bf1b0ba856a9ca334a2fd2e8a27ac6\">3b2335d</a> by alex-dev</small></p>",
+   "<p>Time logged: 1h 30m (90 minutes)</p><p><small>via <a href=\"https://github.com/acme/website/commit/7b7ebfdd2c7657165f8c339cbace6cef32e140b6\">7b7ebfd</a> by alex-dev</small></p>",
+   "<p>Addressed review: focus ring restored.</p><p><small>via <a href=\"https://github.com/acme/website/commit/b8adc27db0e8ecc17b0be2414d2a09b42039b748\">b8adc27</a> by alex-dev</small></p>"
+  ]
+ },
+ "links": {
+  "WEB-33": [
+   "[Branch] WEB-33-validate-postcode -> https://github.com/acme/website/tree/WEB-33-validate-postcode"
+  ],
+  "WEB-35": [
+   "[Branch] WEB-35-apple-pay -> https://github.com/acme/website/tree/WEB-35-apple-pay"
+  ],
+  "WEB-41": [
+   "[PR] #118 Tidy checkout focus styles · OPEN · REVIEW -> https://github.com/acme/website/pull/118"
+  ],
+  "WEB-40": [
+   "[PR] #119 Shared button component · OPEN · REVIEW -> https://github.com/acme/website/pull/119"
+  ],
+  "WEB-46": [
+   "[PR] #122 WEB-NEW Add rate limiting to the sign-up form · OPEN · REVIEW -> https://github.com/acme/website/pull/122"
+  ],
+  "WEB-37": [
+   "[PR] #123 WEB-37 Fix total rounding on discounted items · OPEN · REVIEW -> https://github.com/acme/website/pull/123",
+   "[CI] Build · fail -> https://github.com/acme/website/pull/123/checks"
+  ],
+  "WEB-36": [
+   "[PR] #124 WEB-36 Guest checkout: backend · MERGED -> https://github.com/acme/website/pull/124",
+   "[PR] #125 WEB-36 Guest checkout: form · OPEN · REVIEW -> https://github.com/acme/website/pull/125"
+  ],
+  "WEB-39": [
+   "[PR] #126 WEB-39 Speed up the checkout page · MERGED -> https://github.com/acme/website/pull/126"
+  ],
+  "WEB-47": [
+   "GitHub issue acme/website#131 -> https://github.com/acme/website/issues/131"
+  ],
+  "WEB-44": [
+   "GitHub issue acme/website#120 -> https://github.com/acme/website/issues/120"
+  ],
+  "WEB-42": [
+   "[Branch] WEB-42-make-the-checkout-button-visible-on-small-screens -> https://github.com/acme/website/tree/WEB-42-make-the-checkout-button-visible-on-small-screens",
+   "[PR] #121 WEB-42 Keep the checkout button visible on small screens · MERGED -> https://github.com/acme/website/pull/121",
+   "[CI] Build · pass -> https://github.com/acme/website/pull/121/checks",
+   "[Deploy] Preview · success -> https://website-git-web-42-acme.vercel.app",
+   "[Preview] Vercel -> https://website-git-web-42-acme.vercel.app"
+  ]
+ },
+ "github": {
+  "branches": [
+   "main",
+   "staging",
+   "WEB-33-validate-postcode",
+   "WEB-35-apple-pay",
+   "WEB-37-rounding",
+   "WEB-42-make-the-checkout-button-visible-on-small-screens"
+  ],
+  "prs": [
+   "#118 open Tidy checkout focus styles",
+   "#119 open Shared button component",
+   "#122 open WEB-NEW Add rate limiting to the sign-up form",
+   "#123 open WEB-37 Fix total rounding on discounted items",
+   "#124 closed merged WEB-36 Guest checkout: backend",
+   "#125 open WEB-36 Guest checkout: form",
+   "#126 closed merged WEB-39 Speed up the checkout page",
+   "#121 closed merged WEB-42 Keep the checkout button visible on small screens"
+  ],
+  "comments": [
+   "POST /repos/{owner}/{repo}/commits/{commit_sha}/comments \"Git sync could not complete this action:\\n\\n- ` WEB-35: #shipped matches no Plane state. `\\n- ` WEB-35: #time needs a duration such as 1h 30m. `\\n\\n<!-- git-sync-problem:335cb1f0e2d4a0553b75594c2f37db84080b71fdd0384aae13861f03c2702eef -->\"",
+   "POST /repos/{owner}/{repo}/commits/{commit_sha}/comments \"Git sync could not complete this action:\\n\\n- ` Unknown work item WEB-999. `\\n\\n<!-- git-sync-problem:45ad5a57b0cc6187557b7ce2831b81d68e1fd832391e292f1156a66bccc89631 -->\"",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments \"Linked Plane work item:\\n- WEB-41: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/5b05e0da-1bc0-40e2-b95a-99a102630480\"",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments \"Linked Plane work item:\\n- WEB-40: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/64211cb5-7519-42d4-bb20-5ef872bac225\"",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments \"Linked Plane work item:\\n- WEB: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/50b5ef6b-6077-4578-a943-8bb8db2d6cc9\"",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments \"Linked Plane work item:\\n- WEB-37: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/c19152ed-3a41-40c1-9c25-8fadf51d7fae\"",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments \"Linked Plane work item:\\n- WEB-36: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/8d070f86-8bff-46cb-937f-e505c246c74a\"",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments \"Linked Plane work item:\\n- WEB-36: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/8d070f86-8bff-46cb-937f-e505c246c74a\"",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments \"Linked Plane work item:\\n- WEB-39: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/a91a7b7b-cff8-4f4f-8c6c-4a27f444faa0\"",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments \"Linked to Plane work item: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/7a2b5e69-aca5-49cb-8b4b-b71966c58b01\"",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments \"Linked to Plane work item: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/f19a4a55-c98c-4829-af86-1505b5001d16\"",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments \"Linked Plane work item:\\n- WEB-42: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/53486230-16eb-4c87-afc4-ffeb2339a1a9\""
+  ],
+  "writes": [
+   "POST /repos/{owner}/{repo}/commits/{commit_sha}/comments",
+   "POST /repos/{owner}/{repo}/commits/{commit_sha}/comments",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+   "POST /repos/{owner}/{repo}/issues",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments",
+   "POST /repos/{owner}/{repo}/git/refs",
+   "POST /repos/{owner}/{repo}/issues/{issue_number}/comments"
+  ],
+  "issues": [
+   {
+    "number": 131,
+    "title": "Coupon field accepts expired codes",
+    "body": "Steps:\n1. Add any item\n2. Enter `SUMMER24`\n\nExpected: *Code expired*.\n\ncc @sam-reviews",
+    "state": "open",
+    "labels": [
+     {
+      "name": "plane"
+     },
+     {
+      "name": "bug"
+     }
+    ],
+    "assignees": [
+     {
+      "login": "alex-dev"
+     }
+    ],
+    "html_url": "https://github.com/acme/website/issues/131",
+    "user": {
+     "login": "sam-reviews"
+    }
+   },
+   {
+    "number": 120,
+    "title": "Add rate limiting to the login form",
+    "body": "Limit failed sign-ins to **5 per minute**.\n\n---\nMirrored from Plane: http://plane.example.com/acme/projects/bb57e81d-c161-441f-b50e-907af28f08c2/issues/f19a4a55-c98c-4829-af86-1505b5001d16",
+    "state": "open",
+    "labels": [
+     {
+      "name": "plane"
+     }
+    ],
+    "assignees": [],
+    "html_url": "https://github.com/acme/website/issues/120"
+   }
+  ],
+  "unknown": []
+ }
+}

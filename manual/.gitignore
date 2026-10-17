@@ -1,0 +1,10 @@
+.auth/
+.env
+reports/build/
+reports/debug-*.png
+reports/demo-server.log
+reports/labels.json
+reports/verify.json
+reports/build.json
+reports/capture-report-partial.md
+!dist/

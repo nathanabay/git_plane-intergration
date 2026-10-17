@@ -1,0 +1,6 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "ignoreRegExpList": ["/`[^`]*`/g", "/```[\\s\\S]*?```/g", "/\\]\\([^)]*\\)/g", "/<[^>]+>/g", "/https?:\\/\\/\\S+/g", "/[A-Z]{2,}-\\d+/g"],
+  "words": ["gitsync","Plane's","webhook","webhooks","Octokit","PGlite","Valkey","OAuth","PATs","YAML","dedupe","deduplication","Vercel","Netlify","Amplify","Gantt","subissue","repo","repos","idempotent","Idempotency","idempotency","regex","Mermaid","backfill","Backfill","healthz","linkback","allowlist","Smart","unmapped","reauth","reauthorization","signup","runbook","God","Bespo","EMS","BullMQ","Redis","Postgres","Caddy","nginx","iframe","iframes","PKCE","HMAC","SHA","GHES","GHEC","enum","admins","roadmap","kanban","subitems","workspaces","dropdown","checkbox","Addis","Ababa","APPLY","WEB","Jordan","Riley","Alex","Sam","acme","Acme","sam","alex","jordan","riley","unarchive","Unarchive","prereqs","README","walkthrough","rebased","rebase","rebases","Hotfix","hotfix","popover","unlink","Unlink","unlinked","Unlinks","codebase","toolchain","rollup","Rollup","rollups","upsert","PKCS","PEM","truthy","resync","reconciler","CODEOWNERS","Dependabot","noreply","signoff","tunnelling","denylist","unstarted","multi","keypair","subresource","Sentry"]
+}
